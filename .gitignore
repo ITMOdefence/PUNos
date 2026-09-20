@@ -1,0 +1,53 @@
+# macOS Finder metadata
+.DS_Store
+
+# Obsidian: keep vault settings in version control, ignore personal workspace state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache/
+.obsidian/.trash/
+
+# Editor and IDE local state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Native build directories and CMake-generated files
+build/
+out/
+bin/
+obj/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Native compiler and linker outputs
+*.o
+*.obj
+*.d
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.elf
+*.map
+*.img
+*.iso
+
+# Other language build outputs used by project tools
+target/
+.gradle/
+*.class
+
+# Runtime, test, and temporary files
+*.log
+*.tmp
+*.bak
+.cache/
+tmp/
