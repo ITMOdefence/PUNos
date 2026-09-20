@@ -11,3 +11,5 @@
 | [libsync](libsync.md)           | Mutex, события и condition variable.                      | `<sys/sync.h>`      |
 | [libtime](libtime.md)           | Время, deadline и сон потока.                             | `<sys/time.h>`      |
 | [libeventloop](libeventloop.md) | События FD, таймеры и пробуждение цикла.                  | `<sys/eventloop.h>` |
+| [libv4l2](libv4l2.md)           | V4L2 video capture и MMAP-буферы.                         | `<sys/v4l2.h>`     |
+| [libinputdevice](libinputdevice.md) | Linux input devices и raw evdev-события.               | `<sys/input-device.h>` |

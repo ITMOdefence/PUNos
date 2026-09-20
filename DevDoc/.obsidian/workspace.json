@@ -12,10 +12,14 @@
             "id": "82503224bdaa7211",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "SpecialLibs/_LibsList.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "Новая вкладка"
+              "title": "_LibsList"
             }
           }
         ]
@@ -199,11 +203,25 @@
       "daily-notes:Сегодняшняя заметка": false,
       "templates:Вставить шаблон": false,
       "command-palette:Открыть палитру команд": false,
-      "bases:Создать новую базу": false
+      "bases:Создать новую базу": false,
+      "obsidian-git:Open Git source control": false
     }
   },
   "active": "82503224bdaa7211",
   "lastOpenFiles": [
+    "SpecialLibs/loglib.md",
+    "SpecialLibs/servicelib.md",
+    "SpecialLibs/ipclib.md",
+    "SpecialLibs/inputlib.md",
+    "SpecialLibs/gpslib.md",
+    "SpecialLibs/displaylib.md",
+    "SpecialLibs/directionlib.md",
+    "SpecialLibs/camlib.md",
+    "SystemLibs/libinputdevice.md",
+    "SystemLibs/libv4l2.md",
+    "SpecialLibs/_LibsList.md",
+    "arcitecture.jpg",
+    "SpecialLibs",
     "DevDoc/SystemLibs/libstr.md",
     "DevDoc/arcitecture.jpg",
     "DevDoc/SpecialLibs/directionlib.md",
@@ -221,16 +239,6 @@
     "DevDoc/SpecialLibs/_LibsList.md",
     "DevDoc/SpecialLibs",
     "DevDoc/SystemLibs/libthread.md",
-    "DevDoc/SystemLibs/libsync.md",
-    "DevDoc/SystemLibs/libprocess.md",
-    "DevDoc/SystemLibs/libmath.md",
-    "DevDoc/SystemLibs/libfile.md",
-    "DevDoc/SystemLibs/libeventloop.md",
-    "DevDoc/NativeRuntime/CRT.md",
-    "spec/PUN os/VM.md",
-    "Пиздец.md",
-    "tech-spec-platform.md",
-    "DevDoc/NativeRuntime/Syscall Wrappers.md",
     "DevDoc/NativeRuntime",
     "DevDoc/SystemLibs",
     "DevDoc",

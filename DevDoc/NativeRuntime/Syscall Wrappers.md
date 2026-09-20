@@ -38,7 +38,7 @@ glibc не используются. Значения относятся име�
 | Часы и таймеры | `CLOCK_REALTIME = 0`, `CLOCK_MONOTONIC = 1`, `TFD_NONBLOCK = 2048`, `TFD_CLOEXEC = 524288`, `TFD_TIMER_ABSTIME = 1` |
 | Потоки | `CLONE_VM = 0x00000100`, `CLONE_FS = 0x00000200`, `CLONE_FILES = 0x00000400`, `CLONE_SIGHAND = 0x00000800`, `CLONE_THREAD = 0x00010000`, `CLONE_SYSVSEM = 0x00040000`, `CLONE_SETTLS = 0x00080000`, `CLONE_PARENT_SETTID = 0x00100000`, `CLONE_CHILD_CLEARTID = 0x00200000`, `CLONE_CHILD_SETTID = 0x01000000` |
 | Futex | `FUTEX_WAIT = 0`, `FUTEX_WAKE = 1`, `FUTEX_PRIVATE_FLAG = 128`, `FUTEX_WAIT_PRIVATE = 128`, `FUTEX_WAKE_PRIVATE = 129` |
-| Сокеты | `AF_UNIX = 1`, `AF_INET = 2`, `AF_INET6 = 10`, `SOCK_STREAM = 1`, `SOCK_NONBLOCK = 2048`, `SOCK_CLOEXEC = 524288`, `SOL_SOCKET = 1`, `SO_REUSEADDR = 2`, `SHUT_RD = 0`, `SHUT_WR = 1`, `SHUT_RDWR = 2`, `MSG_NOSIGNAL = 16384` |
+| Сокеты | `AF_UNIX = 1`, `AF_INET = 2`, `AF_INET6 = 10`, `SOCK_STREAM = 1`, `SOCK_NONBLOCK = 2048`, `SOCK_CLOEXEC = 524288`, `SOL_SOCKET = 1`, `SO_REUSEADDR = 2`, `SO_ERROR = 4`, `SHUT_RD = 0`, `SHUT_WR = 1`, `SHUT_RDWR = 2`, `MSG_NOSIGNAL = 16384` |
 | Epoll и eventfd | `EPOLLIN = 1`, `EPOLLOUT = 4`, `EPOLLERR = 8`, `EPOLLHUP = 16`, `EPOLL_CTL_ADD = 1`, `EPOLL_CTL_DEL = 2`, `EPOLL_CTL_MOD = 3`, `EPOLL_CLOEXEC = 524288`, `EFD_NONBLOCK = 2048`, `EFD_CLOEXEC = 524288` |
 
 ### ЖЦ процессов
@@ -107,7 +107,9 @@ glibc не используются. Значения относятся име�
 | `bind()` | `int sockfd` — сокет; `const struct sockaddr *addr` — локальный адрес; `socklen_t addrlen` — размер адреса | `int`: `0` при успехе; `-1` при ошибке | Привязывает серверный сокет к локальному адресу |
 | `listen()` | `int sockfd` — связанный серверный сокет; `int backlog` — длина очереди подключений | `int`: `0` при успехе; `-1` при ошибке | Переводит серверный сокет в режим ожидания подключений |
 | `accept()` | `int sockfd` — серверный сокет; `struct sockaddr *addr` — адрес клиента или `NULL`; `socklen_t *addrlen` — размер адреса или `NULL` | `int` — файловый дескриптор соединения; `-1` при ошибке | Принимает очередное клиентское подключение |
+| `accept4()` | `int sockfd` — серверный сокет; `struct sockaddr *addr` — адрес клиента или `NULL`; `socklen_t *addrlen` — размер адреса или `NULL`; `int flags` — `SOCK_NONBLOCK` и/или `SOCK_CLOEXEC` | `int` — файловый дескриптор соединения; `-1` при ошибке | Принимает подключение и назначает новому сокету флаги неблокирующего режима и закрытия при `exec()` |
 | `connect()` | `int sockfd` — сокет; `const struct sockaddr *addr` — адрес сервера; `socklen_t addrlen` — размер адреса | `int`: `0` при успехе; `-1` при ошибке | Подключает клиентский сокет к серверу |
+| `getsockopt()` | `int sockfd` — сокет; `int level` — уровень опции; `int optname` — имя опции; `void *optval` — буфер результата; `socklen_t *optlen` — размер буфера и фактический размер результата | `int`: `0` при успехе; `-1` при ошибке | Получает значение socket-опции; `SOL_SOCKET` и `SO_ERROR` проверяют итог неблокирующего `connect()` |
 | `send()` | `int sockfd` — сокет; `const void *buf` — данные; `size_t len` — размер данных; `int flags` — флаги отправки | `ssize_t` — число отправленных байтов; `-1` при ошибке | Передаёт байты через соединение |
 | `recv()` | `int sockfd` — сокет; `void *buf` — буфер; `size_t len` — размер буфера; `int flags` — флаги чтения | `ssize_t` — число полученных байтов, `0` при закрытии соединения, `-1` при ошибке | Получает байты из соединения |
 | `shutdown()` | `int sockfd` — сокет; `int how` — закрываемое направление | `int`: `0` при успехе; `-1` при ошибке | Завершает приём, передачу или обе стороны соединения |
