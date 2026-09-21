@@ -2,10 +2,10 @@
 .DS_Store
 
 # Obsidian: keep vault settings in version control, ignore personal workspace state
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/cache/
-.obsidian/.trash/
+**/.obsidian/workspace.json
+**/.obsidian/workspace-mobile.json
+**/.obsidian/cache/
+**/.obsidian/.trash/
 
 # Editor and IDE local state
 .idea/
