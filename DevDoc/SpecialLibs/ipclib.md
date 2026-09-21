@@ -30,10 +30,12 @@
 7. Библиотека владеет файловыми дескрипторами сервера и соединения. Дескриптор,
    возвращённый `ipc_server_get_fd()` или `ipc_connection_get_fd()`, является
    невладеющим; вызывающий код не должен закрывать его.
-8. Сервер не удаляет существующий файл endpoint при создании. Если путь уже
-   существует, `ipc_server_create()` возвращает `CORE_ALREADY_EXISTS`.
-   `ipc_server_close()` удаляет endpoint только того сервера, который был
-   успешно создан этой библиотекой.
+8. Перед созданием сервера `ipc_server_create()` безусловно удаляет объект,
+   уже существующий по пути endpoint, через `unlink()`. Это позволяет
+   сервису занять прежний endpoint после аварийного завершения предыдущего
+   экземпляра. Для учебной ОС v1 библиотека не проверяет, принадлежал ли
+   удалённый endpoint живому серверу. `ipc_server_close()` удаляет endpoint
+   успешно созданного сервера.
 9. Все сокеты создаются с `SOCK_NONBLOCK` и `SOCK_CLOEXEC`. Ни одна операция
    библиотеки не ожидает данные, подключение или освобождение места в буфере
    ядра.
@@ -115,7 +117,7 @@
 
 | Операция | Аргументы | Возвращаемое значение | Назначение |
 | --- | --- | --- | --- |
-| `ipc_server_create(endpoint, out_server)` | `const IpcEndpoint *endpoint`, `IpcServerHandle *out_server` | `ErrorCode` | Создаёт неблокирующий Unix socket server, привязывает его к endpoint и переводит в состояние ожидания подключений |
+| `ipc_server_create(endpoint, out_server)` | `const IpcEndpoint *endpoint`, `IpcServerHandle *out_server` | `ErrorCode` | Безусловно удаляет существующий объект по endpoint, создаёт неблокирующий Unix socket server, привязывает его к endpoint и переводит в состояние ожидания подключений |
 | `ipc_server_get_fd(server, out_fd)` | `IpcServerHandle server`, `i32 *out_fd` | `ErrorCode` | Возвращает невладеющий файловый дескриптор сервера для регистрации в event loop |
 | `ipc_server_accept(server, out_connection)` | `IpcServerHandle server`, `IpcConnectionHandle *out_connection` | `ErrorCode` | Принимает одно ожидающее подключение через `accept4()` с `SOCK_NONBLOCK` и `SOCK_CLOEXEC`; возвращает `CORE_WOULD_BLOCK`, если очередь подключений пуста |
 | `ipc_server_close(server)` | `IpcServerHandle *server` | `ErrorCode` | Закрывает сервер, удаляет созданный им endpoint и записывает `NULL` |
@@ -135,7 +137,7 @@
 | `CORE_INVALID_ARGUMENT` | Передан `NULL`, пустой endpoint, недопустимый размер сообщения или значение вне контракта операции |
 | `CORE_INVALID_PATH` | Endpoint не может быть представлен в `sockaddr_un` |
 | `CORE_INVALID_STATE` | Операция не допускается в текущем состоянии server или connection |
-| `CORE_ALREADY_EXISTS` | При создании сервера endpoint уже существует |
+| `CORE_ALREADY_EXISTS` | Endpoint появился повторно между его удалением и `bind()` |
 | `CORE_NOT_FOUND` | Endpoint удалён до подключения или больше не существует |
 | `CORE_OUT_OF_MEMORY` | Невозможно выделить handle, входящий буфер или очередь исходящих кадров |
 | `CORE_WOULD_BLOCK` | Неблокирующая операция не может немедленно принять соединение |

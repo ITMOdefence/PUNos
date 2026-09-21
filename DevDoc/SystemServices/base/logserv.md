@@ -33,6 +33,9 @@ logserv — системный сервис структурированного
 
 | Зависимость | Использование |
 | --- | --- |
+| sys/core | ErrorCode, Bytes, базовые типы и проверка размеров очереди и IPC payload |
+| sys/memory | Узлы очереди, копии component и message, состояния соединений |
+| sys/string | UTF-8 component, message, путь журнала и IPC endpoint |
 | special/ipc | Endpoint, соединения, сообщения и исходящие очереди |
 | special/log | Открытие, append, flush и закрытие LogStoreHandle |
 | sys/event | IPC event loop и пробуждение потока-владельца |
@@ -53,11 +56,24 @@ logserv добавляет напрямую в свою очередь, а не 
 | --- | --- |
 | Готовые сервисы до запуска | Нет |
 | Аргумент | --log-path=/var/log/punos/system.log |
-| Успех | Открыт LogStoreHandle, создан поток записи, создан endpoint и event loop |
+| Успех | Поток записи открыл LogStoreHandle и сигнализировал готовность; после этого созданы endpoint и event loop |
 | Ошибка LogStoreHandle, потока, endpoint или event loop | Завершение с PROCESS_EXIT_INITIALIZATION_FAILED |
 
 Путь журнала передаёт initserv. Каталог должен существовать до запуска:
 logserv не создаёт каталоги в v1.
+
+Последовательность запуска фиксирована:
+
+1. Основной поток создаёт mutex и condition variable очереди, затем запускает
+   поток записи.
+2. Поток записи создаёт и открывает единственный LogStoreHandle через
+   log_store_open.
+3. При успехе поток записи сигнализирует основному потоку состояние WorkerReady;
+   при ошибке — WorkerFailed.
+4. Только после WorkerReady основной поток создаёт event loop и IPC endpoint.
+
+Поэтому доступный endpoint logserv означает, что LogStoreHandle уже открыт и
+принадлежит работающему потоку записи. При WorkerFailed endpoint не создаётся.
 
 ### Остановка и восстановление
 
@@ -92,9 +108,10 @@ initserv решает, перезапускать ли logserv. Неполный
 | Очередь записей и копии строк | logserv | При принятии записи | После append либо при остановке |
 | Mutex и condition variable очереди | logserv | При запуске | После join потока записи |
 
-LogStoreHandle никогда не передаётся IPC-потоку. Payload сообщения копируется
-в очередь до ipc_message_destroy; затем worker формирует LogRecordInput,
-вызывает log_store_append и освобождает копии строк.
+LogStoreHandle создаётся, открывается, используется и закрывается только
+потоком записи; он никогда не передаётся IPC-потоку. Payload сообщения
+копируется в очередь до ipc_message_destroy; затем worker формирует
+LogRecordInput, вызывает log_store_append и освобождает копии строк.
 
 ## IPC-контракт
 

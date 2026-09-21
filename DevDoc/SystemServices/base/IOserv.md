@@ -38,6 +38,9 @@ windowserv.
 
 | Зависимость | Использование |
 | --- | --- |
+| sys/core | ErrorCode, базовые типы, Bytes и проверка размеров IPC payload |
+| sys/memory | Таблица устройств, состояния подписок и временные буферы сериализации |
+| sys/string | Пути устройств, IPC endpoint и проверка UTF-8 строк конфигурации |
 | special/input | Открытие, чтение и закрытие InputDeviceHandle |
 | special/ipc | Endpoint, соединения, кадрирование и исходящие очереди |
 | sys/event | Один event loop для endpoint, соединений и устройств |

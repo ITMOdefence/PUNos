@@ -7,4 +7,4 @@
 | [loglib](loglib.md)             | Последовательное хранение и чтение структурированных журналов для `logserv`.                    | `<special/log.h>`       |
 | [gpslib](gpslib.md)             | WIP<br><br>Приём и разбор GPS-данных; протокол и контракт ещё не зафиксированы.                 | `<special/gps.h>`       |
 | [directionlib](directionlib.md) | WIP<br><br>Назначение и контракт ещё не зафиксированы.                                          | `<special/direction.h>` |
-| [servicelib](servicelib.md)     | WIP<br><br>Зарезервирована для общего runtime системных сервисов; контракт ещё не зафиксирован. | `<special/service.h>`   |
+
