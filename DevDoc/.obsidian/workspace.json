@@ -6,37 +6,19 @@
       {
         "id": "419c2f687e41cebe",
         "type": "tabs",
-        "dimension": 81.7258883248731,
         "children": [
           {
             "id": "82503224bdaa7211",
             "type": "leaf",
             "state": {
-              "type": "markdown",
+              "type": "split-diff-view",
               "state": {
-                "file": "SpecialLibs/_LibsList.md",
-                "mode": "source",
-                "source": false
+                "aFile": "DevDoc/.obsidian/workspace.json",
+                "bFile": "DevDoc/.obsidian/workspace.json",
+                "aRef": ""
               },
-              "icon": "lucide-file",
-              "title": "_LibsList"
-            }
-          }
-        ]
-      },
-      {
-        "id": "08bae7a629c13591",
-        "type": "tabs",
-        "dimension": 18.274111675126903,
-        "children": [
-          {
-            "id": "e00470e478dc32cf",
-            "type": "leaf",
-            "state": {
-              "type": "empty",
-              "state": {},
-              "icon": "lucide-file",
-              "title": "Новая вкладка"
+              "icon": "diff",
+              "title": "Diff: workspace.json  (Working Tree)"
             }
           }
         ]
@@ -117,7 +99,6 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "tech-spec-platform.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -187,13 +168,23 @@
               "icon": "lucide-list",
               "title": "Структура"
             }
+          },
+          {
+            "id": "5e15cdc210a71a34",
+            "type": "leaf",
+            "state": {
+              "type": "git-view",
+              "state": {},
+              "icon": "git-pull-request",
+              "title": "Source Control"
+            }
           }
-        ]
+        ],
+        "currentTab": 5
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 613.125
   },
   "left-ribbon": {
     "hiddenItems": {
@@ -209,40 +200,44 @@
   },
   "active": "82503224bdaa7211",
   "lastOpenFiles": [
-    "SpecialLibs/loglib.md",
-    "SpecialLibs/servicelib.md",
-    "SpecialLibs/ipclib.md",
-    "SpecialLibs/inputlib.md",
-    "SpecialLibs/gpslib.md",
-    "SpecialLibs/displaylib.md",
+    "SystemLibs/libcore.md",
+    "architecture.png",
+    "PUNos_architecute.drawio.crswap",
+    "SystemLibs/libfile.md",
     "SpecialLibs/directionlib.md",
+    "SystemServices/UI/windowserv.md",
+    "SystemServices/_ServList.md",
+    "SystemServices/UI/displayserv.md",
+    "SystemServices/UI/compositorserv.md",
+    "SystemServices/abilities/locationserv.md",
+    "SystemServices/UI",
+    "SystemServices/UI.md",
+    "SystemServices/abilities/camserv.md",
+    "SystemServices/abilities",
+    "SystemServices/base/appserv.md",
+    "SystemServices/base",
+    "SystemServices/base/IOserv.md",
+    "SystemServices/base/logserv.md",
+    "SystemServices/base/initserv.md",
+    "SystemServices",
     "SpecialLibs/camlib.md",
-    "SystemLibs/libinputdevice.md",
+    "SpecialLibs/displaylib.md",
+    "SpecialLibs/gpslib.md",
+    "SpecialLibs/inputlib.md",
+    "SpecialLibs/ipclib.md",
+    "SystemLibs/libeventloop.md",
+    "architecute.drawio.png",
+    "PUNos_architecute.drawio",
+    "unaOS-architecture-draft.drawio.crswap",
+    "unaOS-architecture-draft.drawio",
     "SystemLibs/libv4l2.md",
+    "SystemLibs/libinputdevice.md",
+    "SpecialLibs/servicelib.md",
+    "SpecialLibs/loglib.md",
     "SpecialLibs/_LibsList.md",
-    "arcitecture.jpg",
     "SpecialLibs",
-    "DevDoc/SystemLibs/libstr.md",
+    "arcitecture.jpg",
     "DevDoc/arcitecture.jpg",
-    "DevDoc/SpecialLibs/directionlib.md",
-    "DevDoc/SpecialLibs/gpslib.md",
-    "DevDoc/SpecialLibs/displaylib.md",
-    "DevDoc/SystemLibs/_LibsList.md",
-    "DevDoc/SpecialLibs/libipc.md",
-    "DevDoc/SystemLibs/libmem.md",
-    "DevDoc/SystemLibs/libtime.md",
-    "DevDoc/SystemLibs/libcore.md",
-    "DevDoc/SpecialLibs/libservice.md",
-    "DevDoc/SpecialLibs/liblog.md",
-    "DevDoc/SpecialLibs/inputlib.md",
-    "DevDoc/SpecialLibs/camlib.md",
-    "DevDoc/SpecialLibs/_LibsList.md",
-    "DevDoc/SpecialLibs",
-    "DevDoc/SystemLibs/libthread.md",
-    "DevDoc/NativeRuntime",
-    "DevDoc/SystemLibs",
-    "DevDoc",
-    "unaOS.drawio.crswap",
-    "unaOS.drawio"
+    "DevDoc/SpecialLibs"
   ]
 }

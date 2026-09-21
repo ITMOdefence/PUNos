@@ -78,29 +78,23 @@
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-25" parent="1" style="html=1;whiteSpace=wrap;" value="initserv" vertex="1">
           <mxGeometry height="200" width="110" x="530" as="geometry" />
         </mxCell>
-        <mxCell id="9XhUlyXPrlzpMWk90Qxp-26" parent="1" style="html=1;whiteSpace=wrap;" value="logserv" vertex="1">
-          <mxGeometry height="100" width="110" x="200" as="geometry" />
-        </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-27" parent="1" style="html=1;whiteSpace=wrap;" value="logserv" vertex="1">
           <mxGeometry height="100" width="110" x="310" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-28" parent="1" style="html=1;whiteSpace=wrap;" value="camserv" vertex="1">
-          <mxGeometry height="100" width="110" x="420" as="geometry" />
+          <mxGeometry height="100" width="110" x="70" y="100" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-29" parent="1" style="html=1;whiteSpace=wrap;" value="locationserv" vertex="1">
-          <mxGeometry height="100" width="110" x="90" as="geometry" />
+          <mxGeometry height="100" width="110" x="70" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-30" parent="1" style="html=1;whiteSpace=wrap;" value="IOserv" vertex="1">
-          <mxGeometry height="100" width="110" x="90" y="100" as="geometry" />
+          <mxGeometry height="100" width="110" x="420" y="100" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-31" parent="1" style="html=1;whiteSpace=wrap;" value="displayserv" vertex="1">
-          <mxGeometry height="100" width="110" x="200" y="100" as="geometry" />
-        </mxCell>
-        <mxCell id="9XhUlyXPrlzpMWk90Qxp-32" parent="1" style="html=1;whiteSpace=wrap;" value="displayserv" vertex="1">
-          <mxGeometry height="100" width="110" x="310" y="100" as="geometry" />
+          <mxGeometry height="100" width="110" x="-170" y="100" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-33" parent="1" style="html=1;whiteSpace=wrap;" value="appserv" vertex="1">
-          <mxGeometry height="100" width="110" x="420" y="100" as="geometry" />
+          <mxGeometry height="100" width="110" x="420" as="geometry" />
         </mxCell>
         <mxCell id="9XhUlyXPrlzpMWk90Qxp-34" parent="1" style="html=1;whiteSpace=wrap;" value="UIlib" vertex="1">
           <mxGeometry height="100" width="360" x="-200" y="-300" as="geometry" />
