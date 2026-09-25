@@ -25,6 +25,12 @@ CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
 
+# PUNos system image: downloaded sources and generated trees
+/System/download/
+/System/linux-[0-9]*/
+/System/linux-build/
+/System/rootfs/
+
 # Native compiler and linker outputs
 *.o
 *.obj
