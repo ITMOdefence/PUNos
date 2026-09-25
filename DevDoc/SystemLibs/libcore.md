@@ -14,6 +14,12 @@
 4. При возврате ошибки значение в `out_*` не определено и не используется.
 5. `CORE_OK` — единственный код успешного выполнения.
 6. `usize` и `isize` имеют размер указателя целевой платформы Linux x86_64.
+7. System Libs преобразуют `errno` Syscall Wrappers в `ErrorCode` только через
+   `core_error_from_errno()`, если их собственный контракт не определяет более
+   точную контекстную интерпретацию.
+8. После ошибки Syscall Wrapper библиотека сохраняет значение `errno` до
+   любого следующего wrapper и передаёт сохранённое значение в
+   `core_error_from_errno()`.
 
 ## Типы
 
@@ -81,3 +87,25 @@
 | `core_is_ok(code)` | `ErrorCode code` | `bool` | Возвращает `true`, только если `code` равен `CORE_OK` |
 | `core_size_add(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Складывает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW` |
 | `core_size_multiply(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Умножает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW` |
+| `core_error_from_errno(errno_value)` | `i32 errno_value` | `ErrorCode` | Преобразует положительный код Linux errno в общий `ErrorCode`; не читает глобальный `errno` самостоятельно |
+
+## Преобразование `errno`
+
+| Linux errno | `ErrorCode` |
+| --- | --- |
+| `EINVAL` | `CORE_INVALID_ARGUMENT` |
+| `EISDIR`, `ENOTDIR` | `CORE_INVALID_PATH` |
+| `ENOENT`, `ESRCH`, `ECHILD`, `ENODEV` | `CORE_NOT_FOUND` |
+| `EEXIST`, `EADDRINUSE` | `CORE_ALREADY_EXISTS` |
+| `EPERM`, `EACCES` | `CORE_PERMISSION_DENIED` |
+| `ENOMEM` | `CORE_OUT_OF_MEMORY` |
+| `ETIMEDOUT` | `CORE_TIMEOUT` |
+| `EINTR` | `CORE_INTERRUPTED` |
+| `EAGAIN`, `EINPROGRESS` | `CORE_WOULD_BLOCK` |
+| `ENOSYS`, `ENOTTY`, `EOPNOTSUPP` | `CORE_UNSUPPORTED` |
+| `EOVERFLOW` | `CORE_OVERFLOW` |
+| Любое другое положительное значение | `CORE_IO_ERROR` |
+
+Значение `0` не является errno ошибки и преобразуется в `CORE_OK`. Отрицательное
+или неизвестное значение не передаётся в эту операцию; при нарушении условия
+она возвращает `CORE_INVALID_ARGUMENT`.
