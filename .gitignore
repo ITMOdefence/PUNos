@@ -2,10 +2,10 @@
 .DS_Store
 
 # Obsidian: keep vault settings in version control, ignore personal workspace state
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/cache/
-.obsidian/.trash/
+**/.obsidian/workspace.json
+**/.obsidian/workspace-mobile.json
+**/.obsidian/cache/
+**/.obsidian/.trash/
 
 # Editor and IDE local state
 .idea/
@@ -13,6 +13,7 @@
 *.swp
 *.swo
 *~
+.~lock.*#
 
 # Native build directories and CMake-generated files
 build/
@@ -24,6 +25,13 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
+
+# PUNos system image: downloaded sources and generated trees
+/System/download/
+/System/linux-[0-9]*/
+/System/linux-build/
+/System/rootfs/
+/System/images/
 
 # Native compiler and linker outputs
 *.o

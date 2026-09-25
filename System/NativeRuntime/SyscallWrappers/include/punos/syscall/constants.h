@@ -1,0 +1,142 @@
+#ifndef PUNOS_SYSCALL_CONSTANTS_H
+#define PUNOS_SYSCALL_CONSTANTS_H
+
+#include <punos/syscall/types.h>
+
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+
+#define O_RDONLY 0
+#define O_WRONLY 1
+#define O_RDWR 2
+#define O_CREAT 64
+#define O_TRUNC 512
+#define O_APPEND 1024
+#define O_NONBLOCK 2048
+#define O_CLOEXEC 524288
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#define S_IFMT 0170000
+#define S_IFREG 0100000
+#define S_IFDIR 0040000
+#define S_IFCHR 0020000
+#define S_IFBLK 0060000
+
+#define PROT_NONE 0
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define PROT_EXEC 4
+#define MAP_SHARED 1
+#define MAP_PRIVATE 2
+#define MAP_ANONYMOUS 32
+#define MAP_FAILED ((void *)-1)
+
+#define WNOHANG 1
+
+#define SIG_DFL ((sighandler_t)0)
+#define SIG_IGN ((sighandler_t)1)
+#define SIGINT 2
+#define SIGKILL 9
+#define SIGPIPE 13
+#define SIGTERM 15
+#define SIGCHLD 17
+#define SIG_BLOCK 0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+#define SA_RESTORER 0x04000000UL
+#define SA_RESTART 0x10000000UL
+
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+#define TFD_NONBLOCK 2048
+#define TFD_CLOEXEC 524288
+#define TFD_TIMER_ABSTIME 1
+
+#define CLONE_VM 0x00000100UL
+#define CLONE_FS 0x00000200UL
+#define CLONE_FILES 0x00000400UL
+#define CLONE_SIGHAND 0x00000800UL
+#define CLONE_THREAD 0x00010000UL
+#define CLONE_SYSVSEM 0x00040000UL
+#define CLONE_SETTLS 0x00080000UL
+#define CLONE_PARENT_SETTID 0x00100000UL
+#define CLONE_CHILD_CLEARTID 0x00200000UL
+#define CLONE_CHILD_SETTID 0x01000000UL
+
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_PRIVATE_FLAG 128
+#define FUTEX_WAIT_PRIVATE (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAKE_PRIVATE (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
+
+#define AF_UNIX 1
+#define AF_INET 2
+#define AF_INET6 10
+#define SOCK_STREAM 1
+#define SOCK_NONBLOCK 2048
+#define SOCK_CLOEXEC 524288
+#define SOL_SOCKET 1
+#define SO_REUSEADDR 2
+#define SO_ERROR 4
+#define SHUT_RD 0
+#define SHUT_WR 1
+#define SHUT_RDWR 2
+#define MSG_NOSIGNAL 16384
+
+#define EPOLLIN 1
+#define EPOLLOUT 4
+#define EPOLLERR 8
+#define EPOLLHUP 16
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
+#define EPOLL_CLOEXEC 524288
+#define EFD_NONBLOCK 2048
+#define EFD_CLOEXEC 524288
+
+#define MS_RDONLY 1UL
+#define MS_NOSUID 2UL
+#define MS_NODEV 4UL
+#define MS_NOEXEC 8UL
+#define MS_SYNCHRONOUS 16UL
+#define MS_REMOUNT 32UL
+#define MS_BIND 4096UL
+#define MS_REC 16384UL
+#define MS_PRIVATE 262144UL
+
+#define EPERM 1
+#define ENOENT 2
+#define ESRCH 3
+#define EINTR 4
+#define EIO 5
+#define EBADF 9
+#define ECHILD 10
+#define EAGAIN 11
+#define EWOULDBLOCK EAGAIN
+#define ENOMEM 12
+#define EACCES 13
+#define EFAULT 14
+#define EBUSY 16
+#define EEXIST 17
+#define ENODEV 19
+#define ENOTDIR 20
+#define EISDIR 21
+#define EINVAL 22
+#define ENOTTY 25
+#define ENOSPC 28
+#define EPIPE 32
+#define ENOSYS 38
+#define ENOTEMPTY 39
+#define EOVERFLOW 75
+#define ENOTSOCK 88
+#define EOPNOTSUPP 95
+#define EADDRINUSE 98
+#define ETIMEDOUT 110
+#define ECONNREFUSED 111
+#define EINPROGRESS 115
+
+#endif
