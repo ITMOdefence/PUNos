@@ -13,6 +13,7 @@
 *.swp
 *.swo
 *~
+.~lock.*#
 
 # Native build directories and CMake-generated files
 build/
