@@ -31,6 +31,7 @@ compile_commands.json
 /System/linux-[0-9]*/
 /System/linux-build/
 /System/rootfs/
+/System/images/
 
 # Native compiler and linker outputs
 *.o

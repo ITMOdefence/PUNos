@@ -11,6 +11,17 @@ PlatformRegistry и жизненным циклом остальных System Se
 Формат и состав архива, содержащего `/init`, описаны отдельно в документе
 [initramfs](initramfs.md).
 
+## Текущий статус реализации
+
+`/init` реализован и проверен в QEMU с Linux 6.12.111-punos. Он выполняет
+проверку PID 1, монтирует файловые системы из контракта, создаёт `/run/punos`,
+запускает `/punos/bin/initserv` через `fork()`/`execve()` и освобождает
+завершившиеся дочерние процессы через `waitpid()`.
+
+Текущий initramfs содержит `initserv` smoke-test stub, который только сообщает
+об успешном запуске и остаётся живым. Это временный проверочный компонент, а
+не реализация initserv и PlatformRegistry из документации System Services.
+
 ## Имя компонента
 
 | Поле | Значение |
@@ -49,7 +60,7 @@ PlatformRegistry и жизненным циклом остальных System Se
 | Зависимость | Использование |
 | --- | --- |
 | CRT | Вход `_start` и передача управления в `main()` |
-| Syscall Wrappers | `getpid()`, `mount()`, `mkdir()`, `open()`, `write()`, `close()`, `fork()`, `execve()`, `waitpid()` и `nanosleep()` |
+| Syscall Wrappers | `getpid()`, `mount()`, `mkdir()`, `open()`, `write()`, `close()`, `fork()`, `execve()`, `waitpid()`, `nanosleep()` и аварийный `exit()` в дочернем процессе после ошибки `execve()` |
 
 `/init` не использует System Libs, Special Libs, IPC и System Services. Это
 сохраняет раннюю загрузку независимой от компонентов, которые она должна

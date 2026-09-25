@@ -14,11 +14,27 @@
 1. Скачать и проверить исходники зафиксированной версии Linux.
 2. Восстановить эталонную конфигурацию ядра PUNos.
 3. Собрать `bzImage`.
-4. Запустить голое ядро в QEMU.
+4. Собрать Syscall Wrappers, CRT, `/init` и воспроизводимый initramfs.
+5. Запустить ядро и первый userspace PUNos в QEMU.
 
-Rootfs, initramfs, `/init`, CRT и Syscall Wrappers пока не подключены. Поэтому
-загрузка заканчивается kernel panic из-за отсутствия корневой файловой системы.
-На данном этапе это ожидаемый результат, а не ошибка сборки.
+Настоящий initserv и остальные System Services пока не реализованы. В образ
+включается явно обозначенный initserv smoke-test stub, подтверждающий работу
+границы `/init` → `fork()` → `execve()`.
+
+## Быстрый запуск
+
+После установки зависимостей выполните из корня репозитория:
+
+```bash
+./System/scripts/prepare-kernel.sh
+./System/scripts/build-kernel.sh
+./System/scripts/build-initramfs.sh
+./System/scripts/run-qemu-initramfs.sh
+```
+
+Первые три команды подготавливают локальные артефакты, последняя запускает
+PUNos в QEMU. При повторном запуске скачивать исходники ядра заново не нужно.
+Все команды, кроме установки системных пакетов, выполняются без `sudo`.
 
 ## Зафиксированное окружение
 
@@ -41,6 +57,12 @@ Rootfs, initramfs, `/init`, CRT и Syscall Wrappers пока не подключ
 Инструкция проверена на Debian 13. Команды установки рассчитаны на Debian и
 Ubuntu; совместимость с конкретным выпуском Ubuntu необходимо подтверждать в
 CI команды. Требуется x86_64-компьютер и не менее 4 ГиБ свободного места.
+
+Под воспроизводимостью v1 понимается одинаковый результат из одинаковых
+входных файлов на эталонном окружении Debian 13 с совместимым toolchain.
+Сборка пока не герметична: точные версии GCC, binutils, cpio и gzip не
+закреплены контейнером или образом виртуальной машины. Поэтому побайтовое
+совпадение артефактов между разными дистрибутивами пока не гарантируется.
 
 Установите необходимые пакеты:
 
@@ -65,7 +87,7 @@ sudo apt-get install -y \
   qemu-utils
 ```
 
-Сценарии следует запускать из клонированного репозитория PUNos. Они вычисляют
+Сценарии следует запускать из корня клонированного репозитория PUNos. Они вычисляют
 пути относительно собственного расположения, поэтому репозиторий может
 находиться в любом каталоге.
 
@@ -75,7 +97,8 @@ sudo apt-get install -y \
 ```bash
 ./System/scripts/prepare-kernel.sh
 ./System/scripts/build-kernel.sh
-./System/scripts/run-qemu.sh
+./System/scripts/build-initramfs.sh
+./System/scripts/run-qemu-initramfs.sh
 ```
 
 Не используйте `sudo` перед этими командами. Иначе сгенерированные файлы будут
@@ -145,9 +168,10 @@ System/linux-build/arch/x86/boot/bzImage
 
 Каталог `System/linux-build` является локальным и игнорируется Git.
 
-## 3. Запуск в QEMU
+## 3. Необязательная проверка голого ядра
 
-После успешной сборки выполните:
+Этот шаг нужен только для диагностики ядра и не является обычным запуском
+PUNos. После успешной сборки выполните:
 
 ```bash
 ./System/scripts/run-qemu.sh
@@ -173,6 +197,70 @@ initramfs.
 
 Для выхода из QEMU нажмите `Ctrl+A`, отпустите клавиши, затем нажмите `X`.
 
+## 4. Обычный запуск PUNos
+
+Соберите userspace и архив:
+
+```bash
+./System/scripts/build-initramfs.sh
+```
+
+Сценарий создаёт staging-дерево `System/rootfs` и архив:
+
+```text
+System/images/punos-initramfs.cpio.gz
+```
+
+После этого запустите полный текущий образ:
+
+```bash
+./System/scripts/run-qemu-initramfs.sh
+```
+
+Успешная загрузка содержит следующие сообщения:
+
+```text
+PUNos init: userspace started
+PUNos init: filesystems ready
+PUNos init: initserv started
+PUNos initserv stub: smoke-test process is running
+full syscall wrappers runtime test passed
+PUNos initserv stub: syscall self-test passed
+```
+
+Виртуальная машина продолжает работать, поскольку PID 1 и stub остаются
+живыми. Для выхода нажмите `Ctrl+A`, затем `X`.
+
+Smoke-test stub занимает путь `/punos/bin/initserv` только для проверки
+загрузочной цепочки. Команда, разрабатывающая настоящий initserv, заменяет этот
+исполняемый файл на этапе интеграции своего слоя; остальным командам изменять
+stub для запуска текущего образа не требуется.
+
+## Проверка NativeRuntime перед интеграцией
+
+Команда следующего слоя может независимо проверить публичную границу CRT и
+Syscall Wrappers из корня репозитория:
+
+```bash
+make -C System/NativeRuntime/SyscallWrappers check
+make -C System/NativeRuntime/CRT check
+```
+
+Первая команда выполняет ABI-проверки и freestanding runtime-тесты всех групп
+wrappers. Вторая собирает минимальный статический ELF, проверяет вход в
+`main()`, готовность thread-local `errno` и завершение через `exit()`.
+
+Полная интеграционная проверка выполняется командами:
+
+```bash
+./System/scripts/build-initramfs.sh
+./System/scripts/run-qemu-initramfs.sh
+```
+
+Она подтверждает работу той же границы на зафиксированном ядре Linux
+6.12.111-punos. Настоящий `initserv`, System Libs и System Services не являются
+частью этой приёмки.
+
 ## Проверка воспроизводимости
 
 После подготовки и сборки выполните из корня репозитория:
@@ -187,8 +275,31 @@ test -s System/linux-build/arch/x86/boot/bzImage
 `0`. Финальная ручная проверка — запуск `run-qemu.sh`: версия ядра должна
 совпасть, а загрузка должна дойти до ожидаемого сообщения об отсутствии rootfs.
 
-Это критерий готовности только текущего этапа. Он не подтверждает наличие
-initramfs, `/init`, CRT или Syscall Wrappers.
+Для проверки userspace дополнительно соберите initramfs и убедитесь, что QEMU
+выводит контрольные сообщения из предыдущего раздела. Это подтверждает
+текущий boot-срез, но не готовность настоящего initserv или System Services.
+
+Для проверки воспроизводимости initramfs выполните две сборки и сравните
+контрольные суммы:
+
+```bash
+./System/scripts/build-initramfs.sh
+sha256sum System/images/punos-initramfs.cpio.gz
+./System/scripts/build-initramfs.sh
+sha256sum System/images/punos-initramfs.cpio.gz
+```
+
+Обе строки SHA-256 должны совпасть.
+
+Архив initramfs можно проверить без QEMU:
+
+```bash
+gzip -t System/images/punos-initramfs.cpio.gz
+gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
+```
+
+Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
+`init` и `punos/bin/initserv` с владельцем `root:root` и правами `0755`.
 
 ## Рабочая структура
 
@@ -203,11 +314,16 @@ System/
 ├── scripts/
 │   ├── prepare-kernel.sh
 │   ├── build-kernel.sh
-│   └── run-qemu.sh
+│   ├── build-initramfs.sh
+│   ├── run-qemu.sh
+│   └── run-qemu-initramfs.sh
+├── Boot/                     # исходники /init и smoke-test initserv
+├── NativeRuntime/            # CRT и Syscall Wrappers
+├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует
 ├── linux-build/              # генерируется, Git игнорирует
-└── rootfs/                   # будет генерироваться на следующем этапе
+└── rootfs/                   # staging initramfs, Git игнорирует
 ```
 
 ## Типичные ошибки
@@ -237,6 +353,20 @@ rm System/download/linux-6.12.111.tar.xz
 ```bash
 ./System/scripts/build-kernel.sh
 ```
+
+### `Initramfs image not found`
+
+Соберите userspace и архив перед полным запуском:
+
+```bash
+./System/scripts/build-initramfs.sh
+```
+
+### QEMU запущен, но сообщений `PUNos init` нет
+
+Убедитесь, что используется `run-qemu-initramfs.sh`, а не диагностический
+`run-qemu.sh`. Затем пересоберите архив и проверьте его содержимое командами из
+раздела проверки воспроизводимости.
 
 ### Сборка завершилась из-за нехватки памяти
 
@@ -288,7 +418,10 @@ mv System/linux-6.12.111 System/linux-6.12.111.incomplete
 ./System/scripts/prepare-kernel.sh
 ```
 
-## Следующий этап
+## Граница ответственности этого окружения
 
-Следующей контрольной точкой будет минимальный initramfs с исполняемым `/init`.
-Он позволит ядру завершить загрузку и впервые выполнить userspace-код PUNos.
+Этот репозиторный срез предоставляет зафиксированное ядро, Syscall Wrappers,
+CRT, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
+PlatformRegistry и последующих System Services принадлежит соответствующим
+командам. Smoke-test stub существует только как проверяемая точка передачи
+управления следующему слою.

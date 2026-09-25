@@ -8,6 +8,7 @@ KERNEL_DIR="${SYSTEM_DIR}/kernel"
 DOWNLOAD_DIR="${SYSTEM_DIR}/download"
 BUILD_DIR="${SYSTEM_DIR}/linux-build"
 ROOTFS_DIR="${SYSTEM_DIR}/rootfs"
+IMAGES_DIR="${SYSTEM_DIR}/images"
 
 VERSION_FILE="${KERNEL_DIR}/version"
 CHECKSUM_FILE="${KERNEL_DIR}/SHA256SUMS"
@@ -42,7 +43,7 @@ for command_name in make sha256sum tar; do
     fi
 done
 
-mkdir -p "${DOWNLOAD_DIR}" "${BUILD_DIR}" "${ROOTFS_DIR}"
+mkdir -p "${DOWNLOAD_DIR}" "${BUILD_DIR}" "${ROOTFS_DIR}" "${IMAGES_DIR}"
 
 if [[ ! -f "${ARCHIVE_PATH}" ]]; then
     if ! command -v curl >/dev/null 2>&1; then
