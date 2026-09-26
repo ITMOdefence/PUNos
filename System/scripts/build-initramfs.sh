@@ -18,6 +18,17 @@ done
 
 make --directory "${BOOT_DIR}" all
 
+# Self-tests run by the initserv smoke-test stub: "<built file>:<name in /punos/bin>".
+SELF_TESTS=(
+    "NativeRuntime/SyscallWrappers/build/full_wrappers_runtime:syscall-selftest"
+    "SystemLibs/libcore/build/core_runtime:libcore-selftest"
+    "SystemLibs/libmem/build/memory_runtime:libmem-selftest"
+    "SystemLibs/libstr/build/string_runtime:libstr-selftest"
+    "SystemLibs/libtime/build/time_runtime:libtime-selftest"
+    "SystemLibs/libprocess/build/process_runtime:libprocess-selftest"
+    "SystemLibs/libthread/build/thread_runtime:libthread-selftest"
+)
+
 verify_elf() {
     local executable="$1"
 
@@ -38,7 +49,9 @@ verify_elf() {
 
 verify_elf "${BOOT_DIR}/build/init"
 verify_elf "${BOOT_DIR}/build/initserv"
-verify_elf "${SYSTEM_DIR}/NativeRuntime/SyscallWrappers/build/full_wrappers_runtime"
+for self_test in "${SELF_TESTS[@]}"; do
+    verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
+done
 
 mkdir -p "${ROOTFS_DIR}" "${IMAGES_DIR}"
 find "${ROOTFS_DIR}" -mindepth 1 -delete
@@ -59,9 +72,10 @@ install -d -m 01777 "${ROOTFS_DIR}/tmp"
 install -m 0755 "${BOOT_DIR}/build/init" "${ROOTFS_DIR}/init"
 install -m 0755 "${BOOT_DIR}/build/initserv" \
     "${ROOTFS_DIR}/punos/bin/initserv"
-install -m 0755 \
-    "${SYSTEM_DIR}/NativeRuntime/SyscallWrappers/build/full_wrappers_runtime" \
-    "${ROOTFS_DIR}/punos/bin/syscall-selftest"
+for self_test in "${SELF_TESTS[@]}"; do
+    install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
+        "${ROOTFS_DIR}/punos/bin/${self_test##*:}"
+done
 
 # Normalize mtimes and archive order. cpio records uid/gid as root explicitly.
 find "${ROOTFS_DIR}" -exec touch --no-dereference --date=@0 {} +

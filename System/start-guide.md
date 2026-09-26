@@ -14,7 +14,8 @@
 1. Скачать и проверить исходники зафиксированной версии Linux.
 2. Восстановить эталонную конфигурацию ядра PUNos.
 3. Собрать `bzImage`.
-4. Собрать Syscall Wrappers, CRT, `/init` и воспроизводимый initramfs.
+4. Собрать Syscall Wrappers, CRT, System Libs, `/init` и воспроизводимый
+   initramfs.
 5. Запустить ядро и первый userspace PUNos в QEMU.
 
 Настоящий initserv и остальные System Services пока не реализованы. В образ
@@ -226,7 +227,23 @@ PUNos init: initserv started
 PUNos initserv stub: smoke-test process is running
 full syscall wrappers runtime test passed
 PUNos initserv stub: syscall self-test passed
+libcore runtime test passed
+PUNos initserv stub: libcore self-test passed
+libmem runtime test passed
+PUNos initserv stub: libmem self-test passed
+libstr runtime test passed
+PUNos initserv stub: libstr self-test passed
+libtime runtime test passed
+PUNos initserv stub: libtime self-test passed
+libprocess runtime test passed
+PUNos initserv stub: libprocess self-test passed
+libthread runtime test passed
+PUNos initserv stub: libthread self-test passed
 ```
+
+Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
+результат каждого. Строка `... self-test failed` означает, что тест упал;
+номер упавшей проверки выводится строкой выше.
 
 Виртуальная машина продолжает работать, поскольку PID 1 и stub остаются
 живыми. Для выхода нажмите `Ctrl+A`, затем `X`.
@@ -258,8 +275,22 @@ wrappers. Вторая собирает минимальный статичес�
 ```
 
 Она подтверждает работу той же границы на зафиксированном ядре Linux
-6.12.111-punos. Настоящий `initserv`, System Libs и System Services не являются
-частью этой приёмки.
+6.12.111-punos. Настоящий `initserv` и System Services не являются частью этой
+приёмки.
+
+## Проверка System Libs
+
+System Libs собираются и тестируются одной командой из корня репозитория:
+
+```bash
+make -C System/SystemLibs check
+```
+
+Команда для каждой библиотеки собирает compile-time проверки ABI и запускает
+runtime-тест на хосте. Отдельная библиотека проверяется так же, например
+`make -C System/SystemLibs/libcore check`. Те же runtime-тесты входят в
+initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
+структуре библиотек и тестов описаны в `System/SystemLibs/README.md`.
 
 ## Проверка воспроизводимости
 
@@ -299,13 +330,15 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 ```
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
-`init` и `punos/bin/initserv` с владельцем `root:root` и правами `0755`.
+`init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
+(`syscall`, `libcore`, `libmem`, `libstr`, `libtime`, `libprocess`,
+`libthread`) с владельцем `root:root` и правами `0755`.
 
 ## Рабочая структура
 
 ```text
 System/
-├── README.md
+├── start-guide.md
 ├── kernel/
 │   ├── version
 │   ├── SHA256SUMS
@@ -319,6 +352,7 @@ System/
 │   └── run-qemu-initramfs.sh
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
+├── SystemLibs/               # System Libs (libcore, libmem, libstr, libtime, libprocess, libthread, ...)
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует
@@ -421,7 +455,7 @@ mv System/linux-6.12.111 System/linux-6.12.111.incomplete
 ## Граница ответственности этого окружения
 
 Этот репозиторный срез предоставляет зафиксированное ядро, Syscall Wrappers,
-CRT, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
+CRT, реализованные System Libs, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
 PlatformRegistry и последующих System Services принадлежит соответствующим
 командам. Smoke-test stub существует только как проверяемая точка передачи
 управления следующему слою.
