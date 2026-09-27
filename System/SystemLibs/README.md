@@ -8,11 +8,17 @@ and the code must match it.
 | Library | Header | Archive | Status |
 | --- | --- | --- | --- |
 | [libcore](libcore/README.md) | `<sys/core.h>` | `libpunos_core.a` | Implemented |
+| [libmath](libmath/README.md) | `<sys/math.h>` | `libpunos_math.a` | Implemented |
 | [libmem](libmem/README.md) | `<sys/memory.h>` | `libpunos_mem.a` | Implemented |
 | [libstr](libstr/README.md) | `<sys/string.h>` | `libpunos_str.a` | Implemented |
+| [libfile](libfile/README.md) | `<sys/file.h>` | `libpunos_file.a` | Implemented |
 | [libtime](libtime/README.md) | `<sys/time.h>` | `libpunos_time.a` | Implemented |
 | [libprocess](libprocess/README.md) | `<sys/process.h>` | `libpunos_process.a` | Implemented |
 | [libthread](libthread/README.md) | `<sys/thread.h>` | `libpunos_thread.a` | Implemented |
+| [libsync](libsync/README.md) | `<sys/sync.h>` | `libpunos_sync.a` | Implemented |
+| [libeventloop](libeventloop/README.md) | `<sys/eventloop.h>` | `libpunos_eventloop.a` | Implemented |
+| [libinputdevice](libinputdevice/README.md) | `<sys/input-device.h>` | `libpunos_inputdevice.a` | Implemented |
+| [libv4l2](libv4l2/README.md) | `<sys/v4l2.h>` | `libpunos_v4l2.a` | Implemented |
 
 The full list of planned libraries is in `DevDoc/SystemLibs/_LibsList.md`.
 
@@ -36,11 +42,17 @@ and look for:
 
 ```text
 PUNos initserv stub: libcore self-test passed
+PUNos initserv stub: libmath self-test passed
 PUNos initserv stub: libmem self-test passed
 PUNos initserv stub: libstr self-test passed
+PUNos initserv stub: libfile self-test passed
 PUNos initserv stub: libtime self-test passed
 PUNos initserv stub: libprocess self-test passed
 PUNos initserv stub: libthread self-test passed
+PUNos initserv stub: libsync self-test passed
+PUNos initserv stub: libeventloop self-test passed
+PUNos initserv stub: libinputdevice self-test passed
+PUNos initserv stub: libv4l2 self-test passed
 ```
 
 ## Conventions for every library

@@ -10,11 +10,17 @@ SYSCALL_SELFTEST := $(SYSCALL_DIR)/build/full_wrappers_runtime
 SYSTEM_LIBS_DIR := ../SystemLibs
 # Runtime tests of System Libs, packaged as /punos/bin/<library>-selftest.
 SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
+                         $(SYSTEM_LIBS_DIR)/libmath/build/math_runtime \
                          $(SYSTEM_LIBS_DIR)/libmem/build/memory_runtime \
                          $(SYSTEM_LIBS_DIR)/libstr/build/string_runtime \
+                         $(SYSTEM_LIBS_DIR)/libfile/build/file_runtime \
                          $(SYSTEM_LIBS_DIR)/libtime/build/time_runtime \
                          $(SYSTEM_LIBS_DIR)/libprocess/build/process_runtime \
-                         $(SYSTEM_LIBS_DIR)/libthread/build/thread_runtime
+                         $(SYSTEM_LIBS_DIR)/libthread/build/thread_runtime \
+                         $(SYSTEM_LIBS_DIR)/libsync/build/sync_runtime \
+                         $(SYSTEM_LIBS_DIR)/libeventloop/build/eventloop_runtime \
+                         $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
+                         $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 
 CPPFLAGS := -I$(NATIVE_DIR)/include -I$(SYSCALL_DIR)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \

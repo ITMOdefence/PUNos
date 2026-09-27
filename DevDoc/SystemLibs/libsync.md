@@ -2,6 +2,29 @@
 
 Системная библиотека для синхронизации потоков через mutex, события и condition
 variable.
+
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libsync`. Готовы:
+
+- публичный заголовок `<sys/sync.h>` со всеми типами и константами;
+- статическая библиотека `libpunos_sync.a` со всеми операциями из таблицы
+  ниже: трёхсостояньевый futex-mutex (Дреппер, «Futexes Are Tricky»),
+  ручное событие и condition variable на счётчике поколений;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест (`tests/sync_runtime.c`) с реальными потоками (через
+  `libthread`, только для теста — сама библиотека потоков не создаёт):
+  контролируемая гонка на mutex (4 потока по 20000 инкрементов), таймауты
+  `mutex_lock`/`condition_wait`, несколько потоков, разбуженных одним
+  `event_signal()`/`condition_signal_all()`. Выполняется на хосте командой
+  `make -C System/SystemLibs/libsync check` (30 раз подряд — гонки
+  проявляются не каждый раз) и внутри PUNos в QEMU как
+  `/punos/bin/libsync-selftest`.
+
+Библиотека вызывает только `futex()` (контракт 1); память для handle'ов —
+через `libmem`. Решения, принятые при реализации, описаны в
+`System/SystemLibs/libsync/README.md`.
+
 ## Имя библиотеки
 `sys/sync`
 ## Контракты

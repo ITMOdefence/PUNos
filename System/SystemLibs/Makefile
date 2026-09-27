@@ -1,5 +1,5 @@
 # Builds and tests every System Lib. Libraries are listed in dependency order.
-LIBS := libcore libmem libstr libtime libprocess libthread
+LIBS := libcore libmath libmem libstr libfile libtime libprocess libthread libsync libeventloop libinputdevice libv4l2
 
 .PHONY: all check clean
 

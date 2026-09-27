@@ -229,16 +229,28 @@ full syscall wrappers runtime test passed
 PUNos initserv stub: syscall self-test passed
 libcore runtime test passed
 PUNos initserv stub: libcore self-test passed
+libmath runtime test passed
+PUNos initserv stub: libmath self-test passed
 libmem runtime test passed
 PUNos initserv stub: libmem self-test passed
 libstr runtime test passed
 PUNos initserv stub: libstr self-test passed
+libfile runtime test passed
+PUNos initserv stub: libfile self-test passed
 libtime runtime test passed
 PUNos initserv stub: libtime self-test passed
 libprocess runtime test passed
 PUNos initserv stub: libprocess self-test passed
 libthread runtime test passed
 PUNos initserv stub: libthread self-test passed
+libsync runtime test passed
+PUNos initserv stub: libsync self-test passed
+libeventloop runtime test passed
+PUNos initserv stub: libeventloop self-test passed
+libinputdevice runtime test passed
+PUNos initserv stub: libinputdevice self-test passed
+libv4l2 runtime test passed
+PUNos initserv stub: libv4l2 self-test passed
 ```
 
 Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
@@ -331,8 +343,9 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
 `init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
-(`syscall`, `libcore`, `libmem`, `libstr`, `libtime`, `libprocess`,
-`libthread`) с владельцем `root:root` и правами `0755`.
+(`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
+`libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
+`libv4l2`) с владельцем `root:root` и правами `0755`.
 
 ## Рабочая структура
 
@@ -352,7 +365,7 @@ System/
 │   └── run-qemu-initramfs.sh
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
-├── SystemLibs/               # System Libs (libcore, libmem, libstr, libtime, libprocess, libthread, ...)
+├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует

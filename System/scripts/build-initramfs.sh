@@ -22,11 +22,17 @@ make --directory "${BOOT_DIR}" all
 SELF_TESTS=(
     "NativeRuntime/SyscallWrappers/build/full_wrappers_runtime:syscall-selftest"
     "SystemLibs/libcore/build/core_runtime:libcore-selftest"
+    "SystemLibs/libmath/build/math_runtime:libmath-selftest"
     "SystemLibs/libmem/build/memory_runtime:libmem-selftest"
     "SystemLibs/libstr/build/string_runtime:libstr-selftest"
+    "SystemLibs/libfile/build/file_runtime:libfile-selftest"
     "SystemLibs/libtime/build/time_runtime:libtime-selftest"
     "SystemLibs/libprocess/build/process_runtime:libprocess-selftest"
     "SystemLibs/libthread/build/thread_runtime:libthread-selftest"
+    "SystemLibs/libsync/build/sync_runtime:libsync-selftest"
+    "SystemLibs/libeventloop/build/eventloop_runtime:libeventloop-selftest"
+    "SystemLibs/libinputdevice/build/input_device_runtime:libinputdevice-selftest"
+    "SystemLibs/libv4l2/build/v4l2_runtime:libv4l2-selftest"
 )
 
 verify_elf() {
