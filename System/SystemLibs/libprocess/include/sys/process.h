@@ -35,7 +35,9 @@ typedef struct ProcessHandle *ProcessHandle;
  *
  * The child's argv is executable, then arguments[0 .. argument_count). Its
  * environment is exactly environment[0 .. environment_count), each entry in
- * "NAME=value" form. An array may be NULL when its count is 0.
+ * "NAME=value" form: a non-empty NAME, then the first "=", then any value
+ * ("NAME=" and "NAME=a=b" are valid; "", "NAME" and "=value" are not).
+ * An array may be NULL when its count is 0.
  */
 typedef struct ProcessLaunch {
     const String *executable;
@@ -87,7 +89,8 @@ ErrorCode process_current_id(ProcessId *out_pid);
  * with any execve().
  *
  * Errors: CORE_INVALID_ARGUMENT if launch or out_process is NULL, a string is
- * not a valid String, or an array is NULL with a non-zero count;
+ * not a valid String, an environment entry is not in "NAME=value" form, or an
+ * array is NULL with a non-zero count (no child is started in these cases);
  * CORE_OVERFLOW if the counts are too large; errors of libmem;
  * core_error_from_errno() of fork().
  */

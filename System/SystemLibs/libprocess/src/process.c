@@ -48,6 +48,37 @@ static bool fill_vector(char **slots, const String *strings, usize count)
 }
 
 /*
+ * An environment entry is a non-empty name, "=", then any value: the first
+ * "=" must exist and must not be the first byte. "NAME=" and "NAME=a=b" are
+ * valid; "", "NAME" and "=value" are not.
+ */
+static bool is_environment_entry(const char *entry)
+{
+    usize index = 0;
+
+    while (entry[index] != '\0' && entry[index] != '=') {
+        ++index;
+    }
+    return entry[index] == '=' && index != 0;
+}
+
+/* Same as fill_vector(), and every entry must also be in NAME=value form. */
+static bool fill_environment(char **slots, const String *strings, usize count)
+{
+    usize index;
+
+    if (!fill_vector(slots, strings, count)) {
+        return false;
+    }
+    for (index = 0; index < count; ++index) {
+        if (!is_environment_entry(slots[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
  * Builds argv (executable, arguments..., NULL) followed by envp
  * (environment..., NULL) in one block. The pointers refer to the caller's
  * strings, which stay valid until process_start() returns; the child's
@@ -85,7 +116,7 @@ static ErrorCode build_vectors(const ProcessLaunch *launch, MemoryBlock *out_blo
 
     argv[0] = (char *)executable;
     if (!fill_vector(argv + 1, launch->arguments, launch->argument_count) ||
-        !fill_vector(envp, launch->environment, launch->environment_count)) {
+        !fill_environment(envp, launch->environment, launch->environment_count)) {
         (void)memory_free(out_block);
         return CORE_INVALID_ARGUMENT;
     }

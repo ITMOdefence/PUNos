@@ -4,12 +4,14 @@
  * Each check has its own number; see System/SystemLibs/testing/check.h.
  * Check numbers are grouped: 1-9 current id, 10-39 start and wait,
  * 40-59 argv and environment, 60-79 poll and terminate,
- * 80-99 interrupted wait, 100-119 invalid arguments.
+ * 80-99 interrupted wait, 100-119 invalid arguments,
+ * 120-139 environment format.
  *
  * The test starts itself (/proc/self/exe) as the child program. The first
  * argument selects what the child does:
  *   exit <N>        exit with status N
  *   check-launch    verify its own argv and environment, exit 0 if they match
+ *   check-env       verify that the edge-case environment arrived unchanged
  *   sleep <ms>      sleep, then exit 0
  *   hang            sleep until a signal kills it
  */
@@ -71,6 +73,17 @@ static i32 check_launch(i32 argc, char **argv, char **envp)
     return 0;
 }
 
+/* envp must be exactly: NAME=value, EMPTY=, EQ=a=b. */
+static i32 check_env(char **envp)
+{
+    if (envp[0] == NULL || !text_equals(envp[0], "NAME=value") ||
+        envp[1] == NULL || !text_equals(envp[1], "EMPTY=") ||
+        envp[2] == NULL || !text_equals(envp[2], "EQ=a=b") || envp[3] != NULL) {
+        return 12;
+    }
+    return 0;
+}
+
 static bool run_child_mode(i32 argc, char **argv, char **envp, i32 *out_status)
 {
     if (argc < 2) {
@@ -80,6 +93,8 @@ static bool run_child_mode(i32 argc, char **argv, char **envp, i32 *out_status)
         *out_status = parse_number(argv[2]);
     } else if (text_equals(argv[1], "check-launch")) {
         *out_status = check_launch(argc, argv, envp);
+    } else if (text_equals(argv[1], "check-env")) {
+        *out_status = check_env(envp);
     } else if (text_equals(argv[1], "sleep") && argc == 3) {
         sleep_ms(parse_number(argv[2]));
         *out_status = 0;
@@ -211,6 +226,92 @@ static void test_launch_vectors(void)
     EXPECT(47, status.value == 0);
 }
 
+/* Reads the total mapped size in pages, the first field of /proc/self/statm. */
+static usize mapped_pages(void)
+{
+    char buffer[64];
+    ssize_t length;
+    usize pages = 0;
+    ssize_t index;
+    i32 fd = open("/proc/self/statm", O_RDONLY, 0);
+
+    EXPECT(120, fd >= 0);
+    length = read(fd, buffer, sizeof(buffer));
+    (void)close(fd);
+    EXPECT(121, length > 0);
+    for (index = 0; index < length && buffer[index] >= '0' && buffer[index] <= '9';
+         ++index) {
+        pages = pages * 10 + (usize)(buffer[index] - '0');
+    }
+    return pages;
+}
+
+static void test_environment_format(void)
+{
+    /* Valid: a value may be empty and may contain further "=". */
+    const char *valid[3] = { "NAME=value", "EMPTY=", "EQ=a=b" };
+    /* Invalid alone: empty, no "=", empty name. */
+    const char *invalid[3] = { "", "NAME", "=value" };
+    String arguments[1];
+    String environment[3];
+    ProcessLaunch launch = { &self_path, arguments, 1, environment, 3 };
+    ProcessHandle process = NULL;
+    ProcessHandle untouched;
+    ProcessExitStatus status;
+    usize before;
+    usize round;
+    usize index;
+
+    arguments[0] = make("check-env");
+    for (index = 0; index < 3; ++index) {
+        environment[index] = make(valid[index]);
+    }
+    EXPECT(122, process_start(&launch, &process) == CORE_OK);
+    EXPECT(123, process_wait(&process, &status) == CORE_OK);
+    /* 12: the environment did not arrive unchanged. */
+    EXPECT(124, status.kind == PROCESS_TERMINATION_KIND_EXITED && status.value != 12);
+    EXPECT(125, status.value == 0);
+
+    /* Each invalid entry alone, then in the middle of valid entries. */
+    for (index = 0; index < 3; ++index) {
+        EXPECT(132, string_destroy(&environment[index]) == CORE_OK);
+        environment[index] = make(invalid[index]);
+    }
+    untouched = (ProcessHandle)&launch;
+    before = mapped_pages();
+    for (round = 0; round < 64; ++round) {
+        for (index = 0; index < 3; ++index) {
+            launch.environment = &environment[index];
+            launch.environment_count = 1;
+            process = untouched;
+            EXPECT(126, process_start(&launch, &process) == CORE_INVALID_ARGUMENT);
+            EXPECT(127, process == untouched);
+        }
+    }
+    for (index = 0; index < 3; ++index) {
+        String mixed[3];
+
+        mixed[0] = make(valid[0]);
+        mixed[1] = make(invalid[index]);
+        mixed[2] = make(valid[2]);
+        launch.environment = mixed;
+        launch.environment_count = 3;
+        process = untouched;
+        EXPECT(128, process_start(&launch, &process) == CORE_INVALID_ARGUMENT);
+        EXPECT(129, process == untouched);
+        EXPECT(130, string_destroy(&mixed[0]) == CORE_OK &&
+                       string_destroy(&mixed[1]) == CORE_OK &&
+                       string_destroy(&mixed[2]) == CORE_OK);
+    }
+    /* The argv/envp block and the handle block of every rejected start were freed. */
+    EXPECT(131, mapped_pages() == before);
+
+    for (index = 0; index < 3; ++index) {
+        EXPECT(133, string_destroy(&environment[index]) == CORE_OK);
+    }
+    EXPECT(133, string_destroy(&arguments[0]) == CORE_OK);
+}
+
 static void test_poll_and_terminate(void)
 {
     ProcessHandle process = NULL;
@@ -340,6 +441,7 @@ int main(int argc, char **argv, char **envp)
     test_current_id();
     test_start_and_wait();
     test_launch_vectors();
+    test_environment_format();
     test_poll_and_terminate();
     test_interrupted_wait();
     test_invalid_arguments();
