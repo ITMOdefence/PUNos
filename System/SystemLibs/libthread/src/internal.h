@@ -22,7 +22,11 @@ struct ThreadHandle {
      * exited and no longer uses its stack (CLONE_CHILD_CLEARTID).
      */
     volatile i32 tid;
-    ThreadExitStatus result;       /* written by the thread before it exits */
+    /*
+     * Written by the thread before it exits (atomic release store), read by
+     * thread_join() after tid is 0 (atomic acquire load).
+     */
+    ThreadExitStatus result;
     ThreadEntry entry;
     void *argument;
     MemoryBlock handle_block;      /* the block holding this structure */

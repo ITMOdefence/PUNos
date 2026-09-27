@@ -20,7 +20,12 @@ static i32 thread_trampoline(void *context)
     ThreadHandle handle = context;
     ThreadExitStatus result = handle->entry(handle->argument);
 
-    handle->result = result;
+    /*
+     * Publish the result for thread_join(), which reads it on another thread.
+     * The release store pairs with the acquire load there, so the read is
+     * ordered after this write without a data race.
+     */
+    __atomic_store_n(&handle->result, result, __ATOMIC_RELEASE);
     return result;
 }
 
@@ -120,7 +125,7 @@ ErrorCode thread_join(ThreadHandle *thread, ThreadExitStatus *out_status)
     }
 
     /* The thread has exited: its result is final and its stack is unused. */
-    *out_status = handle->result;
+    *out_status = __atomic_load_n(&handle->result, __ATOMIC_ACQUIRE);
     release(handle);
     *thread = NULL;
     return CORE_OK;
