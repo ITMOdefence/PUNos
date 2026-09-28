@@ -21,7 +21,10 @@ PUNos — нативная userspace-платформа поверх **неиз�
 ./System/scripts/build-initramfs.sh     # собирает Boot/ и NativeRuntime, наполняет System/rootfs, пишет System/images/punos-initramfs.cpio.gz
 ./System/scripts/run-qemu-initramfs.sh  # обычная загрузка (serial-консоль; выход — Ctrl+A, X)
 ./System/scripts/run-qemu.sh            # диагностика голого ядра; завершается ожидаемой паникой "Unable to mount root fs"
+./System/scripts/check-qemu-boot.sh     # загрузка без терминала: ждёт все строки self-test по порядку, код выхода 0/1 (BOOT_TIMEOUT, по умолчанию 900 с)
 ```
+
+CI — `.github/workflows/ci.yml` (контейнер `debian:trixie`): host-тесты (потоковые ×30), двойная сборка initramfs со сравнением SHA-256, ядро с кэшем `bzImage` по `System/kernel/**`, `check-qemu-boot.sh`; тег `v*` публикует GitHub Release с `bzImage`, initramfs и `SHA256SUMS`.
 
 Тесты (freestanding-бинарники запускаются на хосте, QEMU не нужен):
 

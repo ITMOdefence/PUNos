@@ -270,6 +270,19 @@ Stub по очереди запускает self-test'ы из `/punos/bin/*-self
 Виртуальная машина продолжает работать, поскольку PID 1 и stub остаются
 живыми. Для выхода нажмите `Ctrl+A`, затем `X`.
 
+Ту же проверку можно выполнить без ручного просмотра журнала:
+
+```bash
+./System/scripts/check-qemu-boot.sh
+```
+
+Сценарий запускает QEMU в фоне, пишет serial-журнал в
+`System/images/qemu-boot.log` и ждёт, пока все строки выше появятся по
+порядку. Список self-test'ов он берёт из `initserv_stub.c`. При строке
+`... failed`, панике ядра или истечении `BOOT_TIMEOUT` секунд (по умолчанию
+`900`) сценарий завершается с кодом `1`, в остальных случаях — с кодом `0`,
+после чего останавливает QEMU.
+
 Smoke-test stub занимает путь `/punos/bin/initserv` только для проверки
 загрузочной цепочки. Команда, разрабатывающая настоящий initserv, заменяет этот
 исполняемый файл на этапе интеграции своего слоя; остальным командам изменять
@@ -313,6 +326,27 @@ runtime-тест на хосте. Отдельная библиотека про
 `make -C System/SystemLibs/libcore check`. Те же runtime-тесты входят в
 initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
 структуре библиотек и тестов описаны в `System/SystemLibs/README.md`.
+
+## Непрерывная интеграция
+
+Workflow `.github/workflows/ci.yml` запускается на каждый push, pull request
+и вручную. Все сборки идут в контейнере `debian:trixie`, эталонном окружении
+этого руководства:
+
+| Job | Что проверяет |
+| --- | --- |
+| Host tests | `check` для SyscallWrappers, CRT и всех System Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд |
+| Reproducible initramfs | Две сборки `build-initramfs.sh` дают одинаковый SHA-256 |
+| Kernel | `prepare-kernel.sh` и `build-kernel.sh`; `bzImage` кэшируется по содержимому `System/kernel/` и пересобирается только при его изменении |
+| QEMU boot | `check-qemu-boot.sh` на собранных ядре и initramfs; журнал загрузки сохраняется как artifact |
+
+Push тега вида `v*` после успешной проверки загрузки публикует GitHub Release с
+`bzImage`, `punos-initramfs.cpio.gz` и файлом `SHA256SUMS`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Проверка воспроизводимости
 
@@ -372,7 +406,8 @@ System/
 │   ├── build-kernel.sh
 │   ├── build-initramfs.sh
 │   ├── run-qemu.sh
-│   └── run-qemu-initramfs.sh
+│   ├── run-qemu-initramfs.sh
+│   └── check-qemu-boot.sh
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
 ├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
