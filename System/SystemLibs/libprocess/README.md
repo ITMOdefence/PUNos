@@ -94,6 +94,12 @@ inherit the caller's signal mask and ignored signals, as every `execve()` does.
 - **Interrupted wait.** If a signal handler interrupts `process_wait()`, it
   returns `CORE_INTERRUPTED` and keeps the handle, like `time_sleep()` in
   libtime. The caller decides whether to wait again.
+- **Environment format.** Every `environment` entry must have the form
+  `NAME=value`: it must contain `=`, and the name before the first `=` must
+  not be empty. `NAME=` and `NAME=a=b` are valid; `""`, `NAME` and `=value`
+  give `CORE_INVALID_ARGUMENT` (contract 10). The name's characters are not
+  checked. The check runs before `fork()`, so a rejected launch creates no
+  child and releases everything it allocated.
 - **Errors keep the handle.** `process_wait()` and `process_poll()` release
   the handle and set it to `NULL` only when the child's status has been
   collected.
@@ -116,7 +122,10 @@ inherit the caller's signal mask and ignored signals, as every `execve()` does.
   children), `40–59` argv and environment (spaces, empty and non-ASCII
   arguments; the child checks them and reports through its exit code),
   `60–79` poll and terminate, `80–99` wait interrupted by signals, `100–119`
-  invalid arguments and "no stray children left".
+  invalid arguments and "no stray children left", `120–139` environment
+  format (valid `NAME=value` entries reach the child unchanged; `""`,
+  `NAME` and `=value`, alone or among valid entries, are rejected before
+  `fork()` without leaking pages).
 
 The test was checked against 13 deliberately broken versions of
 `process.c`. 12 are caught: 10 by their check number, 2 by hanging (a test

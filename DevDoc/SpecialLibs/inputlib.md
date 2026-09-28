@@ -33,7 +33,7 @@ subsystem через `/dev/input/event*`. Библиотека читает фи
    `input_device_read_frame()` не ожидает данные от ядра: при отсутствии
    полного кадра он возвращает статус `NoFrame`.
 8. Вызывающий код регистрирует дескриптор из `input_device_get_fd()` в
-   `sys/event`. При `EVENT_READABLE` допустимо вызвать
+   `sys/eventloop`. При `EVENT_READABLE` допустимо вызвать
    `input_device_read_frame()`. `EVENT_HANGUP` или `EVENT_ERROR` требуют
    повторного вызова чтения для получения статуса `DeviceLost`, после чего
    handle должен быть закрыт.

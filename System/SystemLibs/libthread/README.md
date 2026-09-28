@@ -85,6 +85,10 @@ thread_join()                                  handle->result = result
   `CLONE_CHILD_CLEARTID`, sets it to `0` and wakes the futex when the thread
   has exited. Only at that point is the thread no longer using its stack, so
   only then does `thread_join()` free it (contracts 16–17).
+- **The result** is published by the thread with an atomic release store
+  (`__atomic_store_n(..., __ATOMIC_RELEASE)`) and read by `thread_join()`
+  with an atomic acquire load only after it has seen `tid == 0`, so handing
+  the result over is not a data race under the C memory model (contract 17).
 - **The futex** is waited on with plain `FUTEX_WAIT`, not the private variant:
   the kernel's wake-up on thread exit is a shared-futex wake, and a private
   waiter would not receive it.

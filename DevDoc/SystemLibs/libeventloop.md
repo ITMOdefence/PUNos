@@ -7,10 +7,8 @@
 
 Контракт реализован полностью в `System/SystemLibs/libeventloop`. Готовы:
 
-- публичный заголовок `<sys/eventloop.h>` (именно так, по `_LibsList.md`; в
-  разделе «Имя библиотеки» этой страницы указано `sys/event` — используется
-  первое, как того требует `System/SystemLibs/README.md`) со всеми типами,
-  константами и операциями из таблиц ниже;
+- публичный заголовок `<sys/eventloop.h>` со всеми типами, константами и
+  операциями из таблиц ниже;
 - статическая библиотека `libpunos_eventloop.a`: таблица источников
   (fd/timerfd/внутренний eventfd) растёт через `libmem`, `EventSourceId` —
   это `epoll_data.u64`, буфер под `epoll_wait()` переиспользуется между
@@ -26,11 +24,15 @@
 
 Библиотека вызывает только `epoll_create1()`, `epoll_ctl()`, `epoll_wait()`,
 `eventfd()`, `timerfd_create()`, `timerfd_settime()`, `read()`, `write()` и
-`close()` (контракт 1). Решения, принятые при реализации, описаны в
+`close()` (контракт 1); кроме wrappers она использует `libcore`, `libmem`
+(таблица источников и буфер `epoll_wait()`) и `libtime` (тип `DurationMs`).
+Решения, принятые при реализации, описаны в
 `System/SystemLibs/libeventloop/README.md`.
 
 ## Имя библиотеки
-`sys/event`
+`sys/eventloop`
+
+Заголовок — `<sys/eventloop.h>`, как в `_LibsList.md`.
 ## Контракты
 
 1. Библиотека использует только Syscall Wrappers `epoll_create1()`, `epoll_ctl()`,

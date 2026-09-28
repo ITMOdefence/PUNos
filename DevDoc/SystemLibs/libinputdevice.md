@@ -15,9 +15,10 @@
   `/usr/include/linux/input.h` и `input-event-codes.h`;
 - compile-time проверки ABI (`tests/abi_compile.c`);
 - runtime-тест (`tests/input_device_runtime.c`), который адаптируется к
-  машине: без прав проверяет `CORE_NOT_FOUND`/`CORE_PERMISSION_DENIED` на
-  реальном `/dev/input/event*`, под root (внутри PUNos или через `sudo`)
-  проверяет полный успешный путь на реальном устройстве. Выполняется на
+  машине: всегда проверяет `CORE_NOT_FOUND` для заведомо несуществующего
+  пути и все проверки `NULL`-аргументов; без прав — `CORE_PERMISSION_DENIED`
+  на реальном `/dev/input/event*`; под root (внутри PUNos или через `sudo`)
+  — полный успешный путь на реальном устройстве. Выполняется на
   хосте командой `make -C System/SystemLibs/libinputdevice check` и внутри
   PUNos в QEMU как `/punos/bin/libinputdevice-selftest`.
 

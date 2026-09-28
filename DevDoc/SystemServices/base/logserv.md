@@ -38,7 +38,7 @@ logserv — системный сервис структурированного
 | sys/string | UTF-8 component, message, путь журнала и IPC endpoint |
 | special/ipc | Endpoint, соединения, сообщения и исходящие очереди |
 | special/log | Открытие, append, flush и закрытие LogStoreHandle |
-| sys/event | IPC event loop и пробуждение потока-владельца |
+| sys/eventloop | IPC event loop и пробуждение потока-владельца |
 | sys/thread | Создание, join и идентификатор единственного потока записи |
 | sys/sync | Mutex, condition variable и сигнал остановки очереди |
 | sys/time | Получение WallClockTime при принятии записи |

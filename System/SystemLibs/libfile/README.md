@@ -67,7 +67,7 @@ crt0.o <objects> libpunos_file.a libpunos_str.a libpunos_mem.a libpunos_core.a l
   reusing the same fixed path across runs (`directory_create()` on an
   already-existing directory returns `CORE_ALREADY_EXISTS`, which the test
   checks for directly) instead of creating a fresh one every time.
-  A `directory_remove()` operation the following the `unlink()`/`rmdir()`
+  A `directory_remove()` operation following the `unlink()`/`rmdir()`
   split would need a specification update.
 - **`file_write_all()` on a `write()` that returns `0`.** Linux `write()` is
   not documented to return `0` for a non-empty request on a regular,

@@ -43,7 +43,7 @@ windowserv.
 | sys/string | Пути устройств, IPC endpoint и проверка UTF-8 строк конфигурации |
 | special/input | Открытие, чтение и закрытие InputDeviceHandle |
 | special/ipc | Endpoint, соединения, кадрирование и исходящие очереди |
-| sys/event | Один event loop для endpoint, соединений и устройств |
+| sys/eventloop | Один event loop для endpoint, соединений и устройств |
 | logserv | Журналирование запуска, отказов устройств и ошибок протокола |
 
 IOserv не зависит от windowserv, compositorserv или displayserv. Они могут

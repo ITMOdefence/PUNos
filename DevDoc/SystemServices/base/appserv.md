@@ -44,7 +44,7 @@ PUNos. Он предоставляет доверенному Desktop или app
 | sys/memory | Состояния экземпляров, IPC-ответы и временные таблицы каталога |
 | sys/string | application_id, display_name, executable, arguments, environment и IPC endpoint |
 | sys/process | Запуск, неблокирующий контроль и SIGTERM дочерних приложений |
-| sys/event | Один event loop для endpoint, соединений и таймера process_poll |
+| sys/eventloop | Один event loop для endpoint, соединений и таймера process_poll |
 | sys/time | Период мониторинга дочерних процессов |
 | special/ipc | Endpoint, соединения, сообщения и исходящие очереди |
 | logserv | Журналирование запуска, остановки и завершения экземпляра |

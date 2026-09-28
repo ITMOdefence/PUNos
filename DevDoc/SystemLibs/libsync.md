@@ -17,20 +17,24 @@ variable.
   контролируемая гонка на mutex (4 потока по 20000 инкрементов), таймауты
   `mutex_lock`/`condition_wait`, несколько потоков, разбуженных одним
   `event_signal()`/`condition_signal_all()`. Выполняется на хосте командой
-  `make -C System/SystemLibs/libsync check` (30 раз подряд — гонки
-  проявляются не каждый раз) и внутри PUNos в QEMU как
-  `/punos/bin/libsync-selftest`.
+  `make -C System/SystemLibs/libsync check` и внутри PUNos в QEMU как
+  `/punos/bin/libsync-selftest`. Команда запускает тест один раз; так как
+  гонки проявляются не каждый раз, тест дополнительно прогонялся 30 раз
+  подряд (цикл приведён в `System/SystemLibs/libsync/README.md`).
 
-Библиотека вызывает только `futex()` (контракт 1); память для handle'ов —
-через `libmem`. Решения, принятые при реализации, описаны в
+Библиотека сама вызывает только Syscall Wrapper `futex()` (контракт 1);
+память для handle'ов выделяется через `libmem`, а deadline для timeout
+вычисляются через `libtime` (`time_deadline_after()`,
+`time_deadline_remaining()`, `time_deadline_expired()`, которые читают
+`CLOCK_MONOTONIC` через `clock_gettime()`). Решения, принятые при реализации, описаны в
 `System/SystemLibs/libsync/README.md`.
 
 ## Имя библиотеки
 `sys/sync`
 ## Контракты
 
-1. Библиотека использует только Syscall Wrapper `futex()` и типы с `ErrorCode`
-   из `libcore`.
+1. Библиотека использует только Syscall Wrapper `futex()`, типы и `ErrorCode`
+   из `libcore`, память из `libmem` и deadline из `libtime`.
 2. Все операции возвращают `ErrorCode` из `libcore`.
 3. `Mutex`, `SyncEvent` и `Condition` создаются и уничтожаются ровно один раз.
 4. Mutex является нерекурсивным: поток не должен повторно захватывать уже

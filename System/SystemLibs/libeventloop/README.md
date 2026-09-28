@@ -3,10 +3,7 @@
 System Lib for waiting on file descriptors, timers and other threads in one
 loop (`sys/eventloop`).
 
-Specification: `DevDoc/SystemLibs/libeventloop.md` — its own "Library name"
-section says `sys/event`, but `DevDoc/SystemLibs/_LibsList.md` (the
-authoritative source for header names per `System/SystemLibs/README.md`)
-lists `<sys/eventloop.h>`, which this library uses. Depends on
+Specification: `DevDoc/SystemLibs/libeventloop.md`. Depends on
 [libcore](../libcore/README.md), [libmem](../libmem/README.md) (the growable
 source table and the reusable `epoll_wait()` scratch buffer) and
 [libtime](../libtime/README.md) (`DurationMs`). `libpunos_eventloop.a` itself

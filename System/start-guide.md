@@ -119,7 +119,8 @@ sudo apt-get install -y \
 2. Скачивает архив с `cdn.kernel.org`, если архив ещё не существует.
 3. Проверяет SHA-256 архива.
 4. Распаковывает исходники в `System/linux-6.12.111`.
-5. Создаёт локальные каталоги `System/linux-build` и `System/rootfs`.
+5. Создаёт локальные каталоги `System/linux-build`, `System/rootfs` и
+   `System/images`.
 
 Архив сначала загружается во временный файл с расширением `.part` и становится
 рабочим только после успешного завершения загрузки. Повторный запуск безопасен:
@@ -132,6 +133,7 @@ sudo apt-get install -y \
 System/
 ├── download/
 │   └── linux-6.12.111.tar.xz
+├── images/
 ├── kernel/
 ├── linux-6.12.111/
 ├── linux-build/
@@ -139,8 +141,8 @@ System/
 └── scripts/
 ```
 
-Каталоги `download`, `linux-6.12.111`, `linux-build` и `rootfs` игнорируются
-Git.
+Каталоги `download`, `images`, `linux-6.12.111`, `linux-build` и `rootfs`
+игнорируются Git.
 
 ## 2. Сборка ядра
 
@@ -210,6 +212,14 @@ initramfs.
 
 ```text
 System/images/punos-initramfs.cpio.gz
+```
+
+Сценарий проверяет ELF-файлы, разбирая вывод `readelf`, а он переводится на
+язык локали. На машине с нелатинской локалью (например, `ru_RU.UTF-8`)
+запускайте его с `LC_ALL=C`:
+
+```bash
+LC_ALL=C ./System/scripts/build-initramfs.sh
 ```
 
 После этого запустите полный текущий образ:
@@ -408,6 +418,13 @@ rm System/download/linux-6.12.111.tar.xz
 ```bash
 ./System/scripts/build-initramfs.sh
 ```
+
+### `Not a Linux x86_64 ELF` при сборке initramfs
+
+Если сообщение относится к только что собранному файлу из `System/Boot/build`
+или `build/` компонента, причина почти всегда в локали: `readelf` вывел
+переведённый заголовок, и проверка его не распознала. Повторите сборку с
+`LC_ALL=C ./System/scripts/build-initramfs.sh`.
 
 ### QEMU запущен, но сообщений `PUNos init` нет
 

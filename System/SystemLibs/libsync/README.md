@@ -7,7 +7,8 @@ Specification: `DevDoc/SystemLibs/libsync.md`. Depends on
 [libcore](../libcore/README.md), [libmem](../libmem/README.md) (handle
 storage) and [libtime](../libtime/README.md) (`DurationMs`/`Deadline`).
 `libpunos_sync.a` itself calls only the `futex()` Syscall Wrapper, as
-contract 1 requires; [libthread](../libthread/README.md) is listed as a
+contract 1 requires (libtime's deadline functions it uses read the clock
+through `clock_gettime()`); [libthread](../libthread/README.md) is listed as a
 Makefile dependency only so `tests/sync_runtime.c` can spawn real threads to
 create contention — `src/sync.c` never calls a libthread function.
 
@@ -107,7 +108,8 @@ libthread directly).
   to `futex(FUTEX_WAKE)`'s count argument, to stay clear of the kernel's
   internal (signed) wake counter.
 - **No dependency on wrapper code beyond the contract.** `libpunos_sync.a`
-  calls only `futex()`, as contract 1 requires.
+  calls only `futex()` directly, as contract 1 requires; the clock is read
+  only inside libtime.
 
 ## Tests
 

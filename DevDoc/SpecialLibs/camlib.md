@@ -32,7 +32,7 @@
 7. Камера открывается с `O_NONBLOCK` и `O_CLOEXEC`. Операция
    `camera_dequeue_frame()` не ожидает кадр: при отсутствии готового кадра она
    возвращает статус `NoFrame`.
-8. `camserv` регистрирует дескриптор из `camera_get_fd()` в `sys/event`. При
+8. `camserv` регистрирует дескриптор из `camera_get_fd()` в `sys/eventloop`. При
    `EVENT_READABLE` он вызывает `camera_dequeue_frame()`. При `EVENT_HANGUP`
    или `EVENT_ERROR` он повторяет чтение для получения `DeviceLost`, затем
    закрывает handle.
