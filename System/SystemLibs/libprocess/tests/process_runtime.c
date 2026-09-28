@@ -309,7 +309,7 @@ static void test_environment_format(void)
     for (index = 0; index < 3; ++index) {
         EXPECT(133, string_destroy(&environment[index]) == CORE_OK);
     }
-    EXPECT(133, string_destroy(&arguments[0]) == CORE_OK);
+    EXPECT(134, string_destroy(&arguments[0]) == CORE_OK);
 }
 
 static void test_poll_and_terminate(void)
