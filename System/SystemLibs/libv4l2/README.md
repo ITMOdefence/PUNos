@@ -136,43 +136,31 @@ crt0.o <objects> libpunos_v4l2.a libpunos_time.a libpunos_str.a libpunos_mem.a l
 - `tests/abi_compile.c`: `V4L2_BUFFER_COUNT`/`V4L2_MIN_*`, the ABI numbering
   this library chose for the unpinned `V4l2DequeueStatus`, and the layout
   of `V4l2StreamConfig` and `V4l2Buffer`.
-- `tests/v4l2_runtime.c` adapts to the machine it runs on:
+- `tests/v4l2_runtime.c` requires a usable capture device:
   - `1–15`: always run — `v4l2_open()` against a path guaranteed not to
     exist (`CORE_NOT_FOUND`), every `NULL`-argument check for every
     operation, and that a request with `max_frame_bytes != 0` is rejected
     before a device is even needed.
-  - `20–45`: only if a real, read/write-openable `/dev/video*` exists (a
-    real capture device, or a virtual one such as `v4l2loopback`) — the
-    full `open`/`get_fd`/`get_capture_configurations`/`configure_capture`/
+  - `19`: a real, read/write-openable `/dev/video*` must exist (a real capture
+    device, or a virtual one such as `v4l2loopback`), otherwise the test fails;
+  - `20–45`: the full `open`/`get_fd`/`get_capture_configurations`/`configure_capture`/
     `start_capture`/`dequeue_buffer`/`queue_buffer`/`stop_capture`/
     `stream_config_list_destroy`/`close` success path, checked against it.
     A non-blocking dequeue accepts both `NoBuffer` (nothing captured yet,
     the expected case for an idle virtual device) and `BufferReady`.
-  - If no usable `/dev/video*` exists at all, only `1–15` run.
 
 ### Verifying the hardware-backed path
 
-This machine has no `/dev/video*` device at all (checked with
-`ls /dev/video*`), so an unmodified `make check` here only reaches checks
-`1–15`. Unlike `libinputdevice`'s `/dev/input/event*` (present but
-permission-restricted, so `sudo` was enough), there is no real or virtual
-V4L2 device on this host to open at all, with or without extra privileges.
+`make check` and the QEMU self-test now require a usable `/dev/video*` device.
+If no real or virtual V4L2 capture device is available, the test stops at
+check `19`; it no longer reports success after exercising only checks `1–15`.
 
-Checks `20–45` were instead verified by construction: every `Raw*` struct's
-size and the field offsets the code actually reads were cross-checked
-against the real kernel header (see "Implementation decisions" above), and
-the ioctl sequencing follows the standard V4L2 streaming I/O flow
-(`VIDIOC_S_FMT` → `VIDIOC_S_PARM` → `VIDIOC_REQBUFS` → `VIDIOC_QUERYBUF` +
-`mmap()` per buffer → `VIDIOC_QBUF` × N → `VIDIOC_STREAMON` →
-`VIDIOC_DQBUF`/`VIDIOC_QBUF` in a loop → `VIDIOC_STREAMOFF` →
-`VIDIOC_REQBUFS` with `count = 0`) documented in the V4L2 API. Running
-`tests/v4l2_runtime.c`'s `20–45` block against a real capture device (a
-webcam) or a virtual one (the `v4l2loopback` kernel module, installable
-with `sudo apt-get install v4l2loopback-dkms` and `sudo modprobe
-v4l2loopback`) would exercise this path directly; that was not done here
-without the repository owner's go-ahead, since it changes the host
-machine's installed software and loaded kernel modules, not just files
-inside this repository.
+Checks `20–45` exercise the standard V4L2 streaming I/O flow against the
+selected device: `VIDIOC_S_FMT` → `VIDIOC_S_PARM` → `VIDIOC_REQBUFS` →
+`VIDIOC_QUERYBUF` + `mmap()` per buffer → `VIDIOC_QBUF` × N →
+`VIDIOC_STREAMON` → `VIDIOC_DQBUF`/`VIDIOC_QBUF` → `VIDIOC_STREAMOFF` →
+`VIDIOC_REQBUFS` with `count = 0`. Use a real webcam for the QEMU hardware
+test, or a virtual device such as `v4l2loopback` for a host-side test.
 
 Checks `1–15` were checked against a deliberately broken `v4l2_open()`
 (the `open()` failure path replaced with `return CORE_OK`, leaving

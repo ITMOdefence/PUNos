@@ -3,13 +3,11 @@
  *
  * Each check has its own number; see System/SystemLibs/testing/check.h.
  * This library is inherently hardware-bound: the test always exercises the
- * CORE_NOT_FOUND and NULL-argument paths (no device needed), and adapts to
- * whatever /dev/video* it can find:
- *   - none present, or present but not readable/writable by this process:
- *     only the not-found/argument checks run;
- *   - present and usable (a real capture device, or a virtual one such as
- *     v4l2loopback): the full open/configure/start/dequeue/stop/close
- *     success path is checked against it.
+ * CORE_NOT_FOUND and NULL-argument paths, then requires a readable/writable
+ * /dev/video* device (a real capture device, or a virtual one such as
+ * v4l2loopback) and checks the full open/configure/start/dequeue/stop/close
+ * success path against it. Check 19 fails when no usable device is present,
+ * so a passing QEMU self-test proves that the hardware-backed path ran.
  */
 #define CHECK_TEST_NAME "libv4l2"
 #include "../../testing/check.h"
@@ -147,9 +145,7 @@ static void test_real_device(void)
     i32 fd = -1;
     V4l2StreamConfigList configurations;
 
-    if (!find_candidate_device(path_buffer)) {
-        return; /* no usable /dev/video* on this machine */
-    }
+    EXPECT(19, find_candidate_device(path_buffer));
 
     path = str(path_buffer);
     config.path = &path;

@@ -33,5 +33,7 @@ exec qemu-system-x86_64 \
     -kernel "${KERNEL_IMAGE}" \
     -initrd "${INITRAMFS_IMAGE}" \
     -append "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 rdinit=/init panic=-1" \
+    -device usb-ehci,id=ehci \
+    -device usb-host,bus=ehci.0,vendorid=0x0bda,productid=0x58b0 \
     -nographic \
     -no-reboot
