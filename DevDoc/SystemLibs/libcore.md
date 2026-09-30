@@ -6,6 +6,24 @@
 ABI-типы получает из публичного заголовка Syscall Wrappers; это зависимость от
 контракта типов, а не от объектного кода wrappers.
 
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libcore`. Готовы:
+
+- публичный заголовок `<sys/core.h>` со всеми типами и константами из таблиц
+  ниже;
+- статическая библиотека `libpunos_core.a` с операциями `core_is_ok()`,
+  `core_size_add()`, `core_size_multiply()` и `core_error_from_errno()`;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест всех операций (`tests/core_runtime.c`), который выполняется на
+  хосте командой `make -C System/SystemLibs/libcore check` и внутри PUNos в
+  QEMU как `/punos/bin/libcore-selftest`.
+
+Библиотека не содержит неразрешённых символов: от Syscall Wrappers она
+использует только заголовки типов и констант, но не их объектный код.
+Решения, принятые при реализации, описаны в
+`System/SystemLibs/libcore/README.md`.
+
 ## Имя библиотеки
 `sys/core`
 ## Контракты
@@ -70,7 +88,7 @@ ABI-типы получает из публичного заголовка Sysca
 | `USIZE_MAX` | Максимальное значение типа `usize` |
 | `ISIZE_MIN` | Минимальное значение типа `isize` |
 | `ISIZE_MAX` | Максимальное значение типа `isize` |
-| `CORE_OK` | Операция выполнена успешно |
+| `CORE_OK` | Операция выполнена успешно (`0`) |
 | `CORE_INVALID_ARGUMENT` | Передан недопустимый аргумент |
 | `CORE_INVALID_PATH` | Путь имеет недопустимый формат |
 | `CORE_INVALID_STATE` | Операция недопустима в текущем состоянии объекта |
@@ -85,13 +103,19 @@ ABI-типы получает из публичного заголовка Sysca
 | `CORE_UNSUPPORTED` | Операция не поддерживается |
 | `CORE_OVERFLOW` | Результат не представим в целевом числовом типе |
 
+Числовые значения `ErrorCode` входят в ABI: `CORE_OK` равен `0`, остальные коды
+нумеруются подряд с `1` в порядке этой таблицы (`CORE_INVALID_ARGUMENT` = `1`,
+…, `CORE_OVERFLOW` = `13`). Коды могут пересекать границы процессов через IPC
+и журналы, поэтому существующие значения не перенумеровываются, а новые коды
+добавляются только в конец. Размер `ErrorCode` — 4 байта.
+
 ## Операции
 
 | Операция | Аргументы | Возвращаемое значение | Назначение |
 | -------- | --------- | --------------------- | ---------- |
 | `core_is_ok(code)` | `ErrorCode code` | `bool` | Возвращает `true`, только если `code` равен `CORE_OK` |
-| `core_size_add(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Складывает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW` |
-| `core_size_multiply(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Умножает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW` |
+| `core_size_add(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Складывает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW`, при `out_value == NULL` — `CORE_INVALID_ARGUMENT` |
+| `core_size_multiply(left, right, out_value)` | `usize left`, `usize right`, `usize *out_value` | `ErrorCode` | Умножает размеры без переполнения; при переполнении возвращает `CORE_OVERFLOW`, при `out_value == NULL` — `CORE_INVALID_ARGUMENT` |
 | `core_error_from_errno(errno_value)` | `i32 errno_value` | `ErrorCode` | Преобразует положительный код Linux errno в общий `ErrorCode`; не читает глобальный `errno` самостоятельно |
 
 ## Преобразование `errno`
@@ -109,8 +133,19 @@ ABI-типы получает из публичного заголовка Sysca
 | `EAGAIN`, `EINPROGRESS` | `CORE_WOULD_BLOCK` |
 | `ENOSYS`, `ENOTTY`, `EOPNOTSUPP` | `CORE_UNSUPPORTED` |
 | `EOVERFLOW` | `CORE_OVERFLOW` |
-| Любое другое положительное значение | `CORE_IO_ERROR` |
+| Любое другое значение из диапазона `1` … `4095` | `CORE_IO_ERROR` |
 
 Значение `0` не является errno ошибки и преобразуется в `CORE_OK`. Отрицательное
 или неизвестное значение не передаётся в эту операцию; при нарушении условия
 она возвращает `CORE_INVALID_ARGUMENT`.
+
+Неизвестным считается значение вне диапазона Linux errno `1` … `4095`
+(`MAX_ERRNO` ядра; ту же границу Syscall Wrappers используют для распознавания
+ошибки syscall). Итоговые правила:
+
+| Значение | Результат |
+| --- | --- |
+| `0` | `CORE_OK` |
+| `1` … `4095`, есть в таблице выше | Код из таблицы |
+| `1` … `4095`, нет в таблице | `CORE_IO_ERROR` |
+| Меньше `0` или больше `4095` | `CORE_INVALID_ARGUMENT` |

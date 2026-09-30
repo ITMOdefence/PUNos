@@ -7,6 +7,20 @@ CRT0 := $(CRT_DIR)/build/crt0.o
 CRT_LIBRARY := $(CRT_DIR)/build/libpunos_crt.a
 SYSCALL_LIBRARY := $(SYSCALL_DIR)/build/libpunos_syscall.a
 SYSCALL_SELFTEST := $(SYSCALL_DIR)/build/full_wrappers_runtime
+SYSTEM_LIBS_DIR := ../SystemLibs
+# Runtime tests of System Libs, packaged as /punos/bin/<library>-selftest.
+SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
+                         $(SYSTEM_LIBS_DIR)/libmath/build/math_runtime \
+                         $(SYSTEM_LIBS_DIR)/libmem/build/memory_runtime \
+                         $(SYSTEM_LIBS_DIR)/libstr/build/string_runtime \
+                         $(SYSTEM_LIBS_DIR)/libfile/build/file_runtime \
+                         $(SYSTEM_LIBS_DIR)/libtime/build/time_runtime \
+                         $(SYSTEM_LIBS_DIR)/libprocess/build/process_runtime \
+                         $(SYSTEM_LIBS_DIR)/libthread/build/thread_runtime \
+                         $(SYSTEM_LIBS_DIR)/libsync/build/sync_runtime \
+                         $(SYSTEM_LIBS_DIR)/libeventloop/build/eventloop_runtime \
+                         $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
+                         $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 
 CPPFLAGS := -I$(NATIVE_DIR)/include -I$(SYSCALL_DIR)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
@@ -17,9 +31,9 @@ STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv
 
-.PHONY: all clean native-runtime
+.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS)
 
-all: $(INIT) $(STUB) $(SYSCALL_SELFTEST)
+all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS)
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -32,6 +46,9 @@ $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY): native-runtime
 
 $(SYSCALL_SELFTEST):
 	$(MAKE) -C $(SYSCALL_DIR) full-test
+
+$(SYSTEM_LIBS_SELFTESTS):
+	$(MAKE) -C $(dir $(@D)) runtime-test
 
 $(INIT_OBJECT): Init/init.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

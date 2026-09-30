@@ -43,7 +43,7 @@ camserv — системный сервис захвата изображени�
 | sys/string | Путь камеры, IPC endpoint и аргументы конфигурации |
 | special/camera | Открытие, настройка, запуск, чтение и закрытие CameraHandle |
 | special/ipc | IPC endpoint, соединения, сообщения и исходящие очереди |
-| sys/event | Один event loop для endpoint, соединений и FD камеры |
+| sys/eventloop | Один event loop для endpoint, соединений и FD камеры |
 | logserv | Запуск, остановка, отказ камеры и ошибки протокола |
 
 ## Жизненный цикл

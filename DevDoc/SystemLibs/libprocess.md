@@ -2,8 +2,31 @@
 
 Системная библиотека для запуска, ожидания и остановки нативных компонентов
 платформы: VM и системных сервисов.
+
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libprocess`. Готовы:
+
+- публичный заголовок `<sys/process.h>` со всеми типами и константами;
+- статическая библиотека `libpunos_process.a` со всеми операциями из таблицы
+  ниже;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест (`tests/process_runtime.c`), который запускает сам себя как
+  дочерний процесс и проверяет коды выхода, сигналы, argv и окружение, poll,
+  terminate и прерванное ожидание. Выполняется на хосте командой
+  `make -C System/SystemLibs/libprocess check` и внутри PUNos в QEMU как
+  `/punos/bin/libprocess-selftest`.
+
+Библиотека сама вызывает только `getpid()`, `fork()`, `execve()`,
+`waitpid()`, `exit()` и `kill()` (контракт 1); память для handle и массивов
+argv/envp выделяется через `libmem`. Решения, принятые при реализации,
+описаны в `System/SystemLibs/libprocess/README.md`.
+
 ## Имя библиотеки
-`sys/proc`
+`sys/process`
+
+Заголовок — `<sys/process.h>`, как в `_LibsList.md` и спецификациях
+потребителей.
 ## Контракты
 
 1. Библиотека использует только Syscall Wrappers `getpid()`, `fork()`,
@@ -26,6 +49,25 @@
    фактического завершения.
 9. `ProcessLaunch` и строки, на которые он указывает, не переходят во владение
    библиотеки и должны быть действительны только на время `process_start()`.
+10. `argv` дочернего процесса — `executable`, затем `arguments[0 …
+    argument_count)`; окружение — ровно `environment[0 … environment_count)`
+    в форме `ИМЯ=значение`, ничего не наследуется неявно. Массив может быть
+    `NULL`, если его длина `0`. Каждый элемент окружения обязан содержать
+    `=`, а имя перед первым `=` не может быть пустым; значение может быть
+    пустым (`NAME=`) и может содержать `=` (`NAME=a=b`). Состав символов имени
+    не проверяется. Элементы `""`, `NAME` и `=value` дают
+    `CORE_INVALID_ARGUMENT`; проверка выполняется до `fork()`, дочерний процесс
+    при этом не создаётся.
+11. Всё, что может завершиться ошибкой (массивы argv/envp, handle), готовится
+    до `fork()`. Если `execve()` в дочернем процессе не удался, он завершается
+    с кодом `PROCESS_EXIT_EXEC_FAILED` (`127`); `process_start()` в этом случае
+    уже вернул `CORE_OK`, и ошибка видна через `process_wait()`.
+12. Если `process_wait()` прерван обработчиком сигнала, он возвращает
+    `CORE_INTERRUPTED` и сохраняет handle. `process_wait()` и `process_poll()`
+    освобождают handle и записывают `NULL` только после получения статуса;
+    при ошибке handle остаётся действительным.
+13. Нулевые указатели и строки, не являющиеся действительными `String`, дают
+    `CORE_INVALID_ARGUMENT`; слишком большие длины массивов — `CORE_OVERFLOW`.
 
 ## Типы
 
@@ -35,7 +77,7 @@
 | `ProcessId`              | `i32` из `libcore`                                                                                                            | Положительный идентификатор процесса          | Идентификатор нативного процесса                    |
 | `ProcessHandle`          | Непрозрачный указатель: `struct ProcessHandle *`                                                                              | `NULL` или только запущенный дочерний процесс | Handle дочернего процесса                           |
 | `ProcessLaunch`          | Структура: `const String *executable`, `const String *arguments`, `usize argument_count`, `const String *environment`, `usize environment_count` | Только зарегистрированный компонент платформы | Параметры запуска процесса                          |
-| `ProcessTerminationKind` | Перечисление                                                                                                                  | `Exited`, `Signaled`                          | Причина завершения процесса                         |
+| `ProcessTerminationKind` | Перечисление                                                                                                                  | `Exited` (`0`), `Signaled` (`1`)              | Причина завершения процесса; в C — `PROCESS_TERMINATION_KIND_EXITED`, `PROCESS_TERMINATION_KIND_SIGNALED` |
 | `ProcessExitStatus`      | Структура: `ProcessTerminationKind kind`, `i32 value`                                                                         | Код выхода или номер сигнала                  | Результат завершения дочернего процесса             |
 
 ## Константы
@@ -46,6 +88,7 @@
 | `PROCESS_EXIT_FAILURE` | Код общей ошибки процесса: `1` |
 | `PROCESS_EXIT_INVALID_ARGUMENT` | Код завершения при недопустимых аргументах запуска: `2` |
 | `PROCESS_EXIT_INITIALIZATION_FAILED` | Код завершения при ошибке инициализации компонента: `3` |
+| `PROCESS_EXIT_EXEC_FAILED` | Код завершения дочернего процесса, если `execve()` не удался: `127` |
 
 ## Операции
 

@@ -52,7 +52,7 @@
 | `sys/core` | `ErrorCode`, базовые типы, `Bytes` и проверки данных |
 | `sys/memory` | `AppHandle`, очередь запросов и копии ответов |
 | `sys/string` | `application_id`, сообщения журнала и IPC endpoint |
-| `sys/event` | Event loop, IPC-дескрипторы и таймеры |
+| `sys/eventloop` | Event loop, IPC-дескрипторы и таймеры |
 | Syscall Wrappers | `sigaction()` для `SIGTERM` |
 | `special/ipc` | Неблокирующие клиентские IPC-соединения |
 | `logserv` | Записи `app_log()` через `/run/punos/logserv.sock` |
@@ -136,7 +136,7 @@ main()
 
 ## Модель событий
 
-Один поток-владелец `AppHandle` ожидает события через `sys/event` и
+Один поток-владелец `AppHandle` ожидает события через `sys/eventloop` и
 последовательно вызывает обработчики.
 
 | Источник | Кто регистрирует | Действие framework |

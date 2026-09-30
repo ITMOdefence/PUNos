@@ -1,0 +1,196 @@
+# CI: host tests, reproducible initramfs, kernel build and a QEMU boot check.
+# CD: a pushed tag v* publishes bzImage and the initramfs as a GitHub Release.
+#
+# Build jobs run in debian:trixie, the reference environment of
+# System/start-guide.md. Scripts run as root inside the container, which is
+# fine there: nothing is written back to a developer's clone.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  LC_ALL: C
+
+jobs:
+  tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    steps:
+      - name: Install toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential
+
+      - uses: actions/checkout@v4
+
+      - name: Syscall Wrappers
+        run: make -C System/NativeRuntime/SyscallWrappers check
+
+      - name: CRT
+        run: make -C System/NativeRuntime/CRT check
+
+      - name: System Libs
+        run: make -C System/SystemLibs check
+
+      # Races in thread and signal code do not show up on every run.
+      - name: Repeat thread, sync and signal tests
+        run: |
+          for test in libthread/build/thread_runtime \
+                      libsync/build/sync_runtime \
+                      libprocess/build/process_runtime \
+                      libeventloop/build/eventloop_runtime \
+                      libtime/build/time_runtime; do
+              for run in $(seq 30); do
+                  "System/SystemLibs/${test}" > /dev/null \
+                      || { echo "${test} failed on run ${run}"; exit 1; }
+              done
+          done
+
+  initramfs:
+    name: Reproducible initramfs
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    steps:
+      - name: Install toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential cpio
+
+      - uses: actions/checkout@v4
+
+      - name: Build twice and compare
+        run: |
+          ./System/scripts/build-initramfs.sh
+          first="$(sha256sum System/images/punos-initramfs.cpio.gz)"
+          ./System/scripts/build-initramfs.sh
+          second="$(sha256sum System/images/punos-initramfs.cpio.gz)"
+          echo "${first}"
+          echo "${second}"
+          test "${first}" = "${second}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: initramfs
+          path: System/images/punos-initramfs.cpio.gz
+          if-no-files-found: error
+
+  kernel:
+    name: Kernel
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image depends only on the pinned version, checksum and config.
+      - name: Restore kernel image
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: System/linux-build/arch/x86/boot/bzImage
+          key: bzImage-trixie-${{ hashFiles('System/kernel/**') }}
+
+      - name: Install kernel build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential bc bison flex perl python3 libssl-dev libelf-dev \
+            libncurses-dev dwarves cpio curl ca-certificates xz-utils
+
+      - name: Prepare kernel sources
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./System/scripts/prepare-kernel.sh
+
+      - name: Build kernel
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./System/scripts/build-kernel.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bzImage
+          path: System/linux-build/arch/x86/boot/bzImage
+          if-no-files-found: error
+
+  boot:
+    name: QEMU boot
+    needs: [tests, initramfs, kernel]
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    steps:
+      - name: Install QEMU
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends qemu-system-x86
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bzImage
+          path: System/linux-build/arch/x86/boot
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: initramfs
+          path: System/images
+
+      - name: Boot and check self-tests
+        run: ./System/scripts/check-qemu-boot.sh
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-boot-log
+          path: System/images/qemu-boot.log
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: boot
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bzImage
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: initramfs
+          path: dist
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum bzImage punos-initramfs.cpio.gz > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "${TAG}" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "PUNos ${TAG}" \
+            --generate-notes \
+            --verify-tag

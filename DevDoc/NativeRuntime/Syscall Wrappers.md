@@ -317,8 +317,8 @@ wrapper недопустим. Trampoline вызывает `entry(argument)` и �
 | `sys/memory` | `mmap()`, `mprotect()`, `munmap()` | Реализовано |
 | `sys/thread`, `sys/sync` | `clone()`, `gettid()`, `thread_exit()`, `futex()` | Реализовано |
 | `sys/file`, `sys/time` | файлы, каталоги, часы и sleep | Реализовано |
-| `sys/event` | epoll, eventfd и timerfd | Реализовано |
-| `sys/input`, `sys/v4l2` | `open()`, `read()`, `ioctl()`, mmap | Реализовано |
+| `sys/eventloop` | epoll, eventfd и timerfd | Реализовано |
+| `sys/input-device`, `sys/v4l2` | `open()`, `read()`, `ioctl()`, mmap | Реализовано |
 | `special/ipc` | Unix sockets и файловые операции endpoint | Реализовано |
 | `appframework` | `sigaction()` и signal trampoline | Реализовано |
 

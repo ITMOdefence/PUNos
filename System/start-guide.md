@@ -14,7 +14,8 @@
 1. Скачать и проверить исходники зафиксированной версии Linux.
 2. Восстановить эталонную конфигурацию ядра PUNos.
 3. Собрать `bzImage`.
-4. Собрать Syscall Wrappers, CRT, `/init` и воспроизводимый initramfs.
+4. Собрать Syscall Wrappers, CRT, System Libs, `/init` и воспроизводимый
+   initramfs.
 5. Запустить ядро и первый userspace PUNos в QEMU.
 
 Настоящий initserv и остальные System Services пока не реализованы. В образ
@@ -118,7 +119,8 @@ sudo apt-get install -y \
 2. Скачивает архив с `cdn.kernel.org`, если архив ещё не существует.
 3. Проверяет SHA-256 архива.
 4. Распаковывает исходники в `System/linux-6.12.111`.
-5. Создаёт локальные каталоги `System/linux-build` и `System/rootfs`.
+5. Создаёт локальные каталоги `System/linux-build`, `System/rootfs` и
+   `System/images`.
 
 Архив сначала загружается во временный файл с расширением `.part` и становится
 рабочим только после успешного завершения загрузки. Повторный запуск безопасен:
@@ -131,6 +133,7 @@ sudo apt-get install -y \
 System/
 ├── download/
 │   └── linux-6.12.111.tar.xz
+├── images/
 ├── kernel/
 ├── linux-6.12.111/
 ├── linux-build/
@@ -138,8 +141,8 @@ System/
 └── scripts/
 ```
 
-Каталоги `download`, `linux-6.12.111`, `linux-build` и `rootfs` игнорируются
-Git.
+Каталоги `download`, `images`, `linux-6.12.111`, `linux-build` и `rootfs`
+игнорируются Git.
 
 ## 2. Сборка ядра
 
@@ -211,6 +214,14 @@ initramfs.
 System/images/punos-initramfs.cpio.gz
 ```
 
+Сценарий проверяет ELF-файлы, разбирая вывод `readelf`, а он переводится на
+язык локали. На машине с нелатинской локалью (например, `ru_RU.UTF-8`)
+запускайте его с `LC_ALL=C`:
+
+```bash
+LC_ALL=C ./System/scripts/build-initramfs.sh
+```
+
 После этого запустите полный текущий образ:
 
 ```bash
@@ -226,10 +237,51 @@ PUNos init: initserv started
 PUNos initserv stub: smoke-test process is running
 full syscall wrappers runtime test passed
 PUNos initserv stub: syscall self-test passed
+libcore runtime test passed
+PUNos initserv stub: libcore self-test passed
+libmath runtime test passed
+PUNos initserv stub: libmath self-test passed
+libmem runtime test passed
+PUNos initserv stub: libmem self-test passed
+libstr runtime test passed
+PUNos initserv stub: libstr self-test passed
+libfile runtime test passed
+PUNos initserv stub: libfile self-test passed
+libtime runtime test passed
+PUNos initserv stub: libtime self-test passed
+libprocess runtime test passed
+PUNos initserv stub: libprocess self-test passed
+libthread runtime test passed
+PUNos initserv stub: libthread self-test passed
+libsync runtime test passed
+PUNos initserv stub: libsync self-test passed
+libeventloop runtime test passed
+PUNos initserv stub: libeventloop self-test passed
+libinputdevice runtime test passed
+PUNos initserv stub: libinputdevice self-test passed
+libv4l2 runtime test passed
+PUNos initserv stub: libv4l2 self-test passed
 ```
+
+Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
+результат каждого. Строка `... self-test failed` означает, что тест упал;
+номер упавшей проверки выводится строкой выше.
 
 Виртуальная машина продолжает работать, поскольку PID 1 и stub остаются
 живыми. Для выхода нажмите `Ctrl+A`, затем `X`.
+
+Ту же проверку можно выполнить без ручного просмотра журнала:
+
+```bash
+./System/scripts/check-qemu-boot.sh
+```
+
+Сценарий запускает QEMU в фоне, пишет serial-журнал в
+`System/images/qemu-boot.log` и ждёт, пока все строки выше появятся по
+порядку. Список self-test'ов он берёт из `initserv_stub.c`. При строке
+`... failed`, панике ядра или истечении `BOOT_TIMEOUT` секунд (по умолчанию
+`900`) сценарий завершается с кодом `1`, в остальных случаях — с кодом `0`,
+после чего останавливает QEMU.
 
 Smoke-test stub занимает путь `/punos/bin/initserv` только для проверки
 загрузочной цепочки. Команда, разрабатывающая настоящий initserv, заменяет этот
@@ -258,8 +310,43 @@ wrappers. Вторая собирает минимальный статичес�
 ```
 
 Она подтверждает работу той же границы на зафиксированном ядре Linux
-6.12.111-punos. Настоящий `initserv`, System Libs и System Services не являются
-частью этой приёмки.
+6.12.111-punos. Настоящий `initserv` и System Services не являются частью этой
+приёмки.
+
+## Проверка System Libs
+
+System Libs собираются и тестируются одной командой из корня репозитория:
+
+```bash
+make -C System/SystemLibs check
+```
+
+Команда для каждой библиотеки собирает compile-time проверки ABI и запускает
+runtime-тест на хосте. Отдельная библиотека проверяется так же, например
+`make -C System/SystemLibs/libcore check`. Те же runtime-тесты входят в
+initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
+структуре библиотек и тестов описаны в `System/SystemLibs/README.md`.
+
+## Непрерывная интеграция
+
+Workflow `.github/workflows/ci.yml` запускается на каждый push, pull request
+и вручную. Все сборки идут в контейнере `debian:trixie`, эталонном окружении
+этого руководства:
+
+| Job | Что проверяет |
+| --- | --- |
+| Host tests | `check` для SyscallWrappers, CRT и всех System Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд |
+| Reproducible initramfs | Две сборки `build-initramfs.sh` дают одинаковый SHA-256 |
+| Kernel | `prepare-kernel.sh` и `build-kernel.sh`; `bzImage` кэшируется по содержимому `System/kernel/` и пересобирается только при его изменении |
+| QEMU boot | `check-qemu-boot.sh` на собранных ядре и initramfs; журнал загрузки сохраняется как artifact |
+
+Push тега вида `v*` после успешной проверки загрузки публикует GitHub Release с
+`bzImage`, `punos-initramfs.cpio.gz` и файлом `SHA256SUMS`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Проверка воспроизводимости
 
@@ -299,13 +386,16 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 ```
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
-`init` и `punos/bin/initserv` с владельцем `root:root` и правами `0755`.
+`init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
+(`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
+`libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
+`libv4l2`) с владельцем `root:root` и правами `0755`.
 
 ## Рабочая структура
 
 ```text
 System/
-├── README.md
+├── start-guide.md
 ├── kernel/
 │   ├── version
 │   ├── SHA256SUMS
@@ -316,9 +406,11 @@ System/
 │   ├── build-kernel.sh
 │   ├── build-initramfs.sh
 │   ├── run-qemu.sh
-│   └── run-qemu-initramfs.sh
+│   ├── run-qemu-initramfs.sh
+│   └── check-qemu-boot.sh
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
+├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует
@@ -361,6 +453,13 @@ rm System/download/linux-6.12.111.tar.xz
 ```bash
 ./System/scripts/build-initramfs.sh
 ```
+
+### `Not a Linux x86_64 ELF` при сборке initramfs
+
+Если сообщение относится к только что собранному файлу из `System/Boot/build`
+или `build/` компонента, причина почти всегда в локали: `readelf` вывел
+переведённый заголовок, и проверка его не распознала. Повторите сборку с
+`LC_ALL=C ./System/scripts/build-initramfs.sh`.
 
 ### QEMU запущен, но сообщений `PUNos init` нет
 
@@ -421,7 +520,7 @@ mv System/linux-6.12.111 System/linux-6.12.111.incomplete
 ## Граница ответственности этого окружения
 
 Этот репозиторный срез предоставляет зафиксированное ядро, Syscall Wrappers,
-CRT, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
+CRT, реализованные System Libs, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
 PlatformRegistry и последующих System Services принадлежит соответствующим
 командам. Smoke-test stub существует только как проверяемая точка передачи
 управления следующему слою.

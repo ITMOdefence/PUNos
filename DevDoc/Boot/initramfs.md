@@ -11,19 +11,22 @@ Initramfs является загрузочным артефактом PUNos, а
 Контракт исполняемого файла `/init`, его жизненный цикл и зависимости описаны
 отдельно в документе [init](init.md).
 Пошаговые команды для подготовки чистого клона, сборки и запуска в QEMU
-находятся в [руководстве системного слоя](../../System/README.md).
+находятся в [руководстве системного слоя](../../System/start-guide.md).
 
 ## Текущий статус реализации
 
-Сборщик initramfs реализован. Он собирает CRT, Syscall Wrappers, `/init` и
-временный initserv smoke-test stub, проверяет ELF64 x86_64 и отсутствие
-`PT_INTERP`, формирует staging rootfs с заданными правами и создаёт
-воспроизводимый `newc`+gzip архив. Две последовательные сборки с одинаковыми
+Сборщик initramfs реализован. Он собирает CRT, Syscall Wrappers, System Libs,
+`/init` и временный initserv smoke-test stub, проверяет у каждого ELF
+архитектуру x86_64, отсутствие `PT_INTERP` и неразрешённых символов,
+формирует staging rootfs с заданными правами и создаёт воспроизводимый
+`newc`+gzip архив. Две последовательные сборки с одинаковыми
 входами обязаны давать одинаковый SHA-256.
 
-Проверочный образ также содержит `/punos/bin/syscall-selftest`. Временный
-initserv stub запускает его один раз и сообщает результат. Этот файл является
-тестом системного ABI и не относится к составу будущего production-образа.
+Проверочный образ также содержит self-test'ы `/punos/bin/*-selftest`:
+`syscall-selftest` (Syscall Wrappers) и `lib<имя>-selftest` для каждой
+реализованной System Lib. Временный initserv stub запускает каждый из них один
+раз и сообщает результат. Эти файлы являются тестами и не относятся к составу
+будущего production-образа.
 
 Архив успешно проверен загрузкой в QEMU: ядро запустило `/init` как PID 1,
 обязательные виртуальные файловые системы были смонтированы, а initserv stub —
@@ -96,7 +99,8 @@ punos-initramfs.cpio.gz
 └── punos/
     ├── bin/
     │   ├── initserv          # временный smoke-test stub
-    │   └── syscall-selftest  # только development-образ
+    │   ├── syscall-selftest  # только development-образ
+    │   └── lib*-selftest     # только development-образ, по одному на System Lib
     ├── apps/
     └── config/
 ```
@@ -106,7 +110,7 @@ punos-initramfs.cpio.gz
 ## Целевой production-состав v1
 
 После интеграции следующего слоя smoke-test stub заменяется настоящим
-`initserv`, `syscall-selftest` удаляется, а сборка размещает сервисы из
+`initserv`, self-test'ы `*-selftest` удаляются, а сборка размещает сервисы из
 PlatformRegistry:
 
 ```text
@@ -167,9 +171,10 @@ initramfs.
 2. Все каталоги создаются с явно заданными правами.
 3. Компоненты копируются только после успешной сборки и проверки.
 4. Текущая development-сборка завершается ошибкой, если `/init`, initserv stub
-   или `syscall-selftest` отсутствует. Production-сборка дополнительно обязана
+   или любой из self-test'ов отсутствует. Production-сборка дополнительно обязана
    проверять все включённые в PlatformRegistry System Services.
-5. Сборка проверяет тип, архитектуру и отсутствие `PT_INTERP` у каждого ELF.
+5. Сборка проверяет архитектуру, отсутствие `PT_INTERP` и отсутствие
+   неразрешённых символов у каждого ELF.
 6. После интеграции PlatformRegistry пути production-сервисов должны точно
    совпадать с путями реестра. Текущий builder реестр ещё не читает.
 7. Архив создаётся только после успешной проверки полного staging-каталога.
@@ -186,7 +191,7 @@ QEMU получает отдельно собранное ядро и initramfs:
 ```text
 -kernel System/linux-build/arch/x86/boot/bzImage
 -initrd <путь к punos-initramfs.cpio.gz>
--append "console=ttyS0,115200 rdinit=/init"
+-append "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 rdinit=/init panic=-1"
 ```
 
 Параметр `rdinit=/init` явно фиксирует начальный процесс initramfs. Отсутствие

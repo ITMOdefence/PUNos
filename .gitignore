@@ -15,6 +15,10 @@
 *~
 .~lock.*#
 
+# Claude Code: personal settings stay local, shared project settings are tracked
+.claude/settings.local.json
+CLAUDE.local.md
+
 # Native build directories and CMake-generated files
 build/
 out/

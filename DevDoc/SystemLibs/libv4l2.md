@@ -4,6 +4,35 @@
 Инкапсулирует V4L2 ABI, настройку видеопотока и MMAP-буферы, не определяя
 политику использования камеры.
 
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libv4l2`. Готовы:
+
+- публичный заголовок `<sys/v4l2.h>` со всеми типами и константами;
+- статическая библиотека `libpunos_v4l2.a`: V4L2 ABI (структуры
+  `v4l2_capability/fmtdesc/frmsizeenum/frmivalenum/format/pix_format/
+  requestbuffers/buffer/streamparm` и номера `VIDIOC_*`) написан вручную (в
+  PUNos нет `<linux/videodev2.h>`) и сверен по `sizeof`/`offsetof` с
+  `/usr/include/linux/videodev2.h` на хосте сборки — размеры структур
+  напрямую влияют на закодированный номер ioctl, поэтому сверялись не по
+  тексту, а числами;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест (`tests/v4l2_runtime.c`), адаптирующийся к машине: без
+  реального `/dev/video*` проверяет только `CORE_NOT_FOUND` и все
+  `NULL`-аргументные пути; на реальном или виртуальном (`v4l2loopback`)
+  устройстве проверяет полный цикл `open → get_capture_configurations →
+  configure_capture → start_capture → dequeue/queue_buffer → stop_capture →
+  close`. На машине, где это делалось, `/dev/video*` не оказалось, поэтому
+  выполнялась только первая часть; вторая проверена конструктивно (сверка
+  ABI, соответствие последовательности ioctl документированному V4L2
+  streaming I/O). Выполняется на хосте командой
+  `make -C System/SystemLibs/libv4l2 check` и внутри PUNos в QEMU как
+  `/punos/bin/libv4l2-selftest`.
+
+Библиотека вызывает только `open()`, `close()`, `ioctl()`, `mmap()` и
+`munmap()` (контракт 1). Решения, принятые при реализации, описаны в
+`System/SystemLibs/libv4l2/README.md`.
+
 ## Имя библиотеки
 
 `sys/v4l2`

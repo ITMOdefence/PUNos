@@ -4,6 +4,29 @@
 через `/dev/input/event*`. Инкапсулирует Linux evdev ABI, чтение сырых событий
 и запрос базовых возможностей устройства, не интерпретируя их для UI.
 
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libinputdevice`. Готовы:
+
+- публичный заголовок `<sys/input-device.h>` со всеми типами и константами;
+- статическая библиотека `libpunos_inputdevice.a`: Linux evdev ABI
+  (`struct input_event`, `struct input_id`, `EVIOCGID`, `EVIOCGBIT`)
+  написан вручную (в PUNos нет `<linux/input.h>`) и сверен построчно с
+  `/usr/include/linux/input.h` и `input-event-codes.h`;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест (`tests/input_device_runtime.c`), который адаптируется к
+  машине: всегда проверяет `CORE_NOT_FOUND` для заведомо несуществующего
+  пути и все проверки `NULL`-аргументов; без прав — `CORE_PERMISSION_DENIED`
+  на реальном `/dev/input/event*`; под root (внутри PUNos или через `sudo`)
+  — полный успешный путь на реальном устройстве. Выполняется на
+  хосте командой `make -C System/SystemLibs/libinputdevice check` и внутри
+  PUNos в QEMU как `/punos/bin/libinputdevice-selftest`.
+
+Библиотека вызывает только `open()`, `close()`, `read()` и `ioctl()`
+(контракт 1). Решения, принятые при реализации (включая перепроверку
+кодировки `ioctl` через `sudo` на реальном оборудовании), описаны в
+`System/SystemLibs/libinputdevice/README.md`.
+
 ## Имя библиотеки
 
 `sys/input-device`

@@ -2,8 +2,37 @@
 
 Системная библиотека для ожидания событий от файловых дескрипторов, таймеров и
 других потоков в одном цикле обработки.
+
+## Текущий статус реализации
+
+Контракт реализован полностью в `System/SystemLibs/libeventloop`. Готовы:
+
+- публичный заголовок `<sys/eventloop.h>` со всеми типами, константами и
+  операциями из таблиц ниже;
+- статическая библиотека `libpunos_eventloop.a`: таблица источников
+  (fd/timerfd/внутренний eventfd) растёт через `libmem`, `EventSourceId` —
+  это `epoll_data.u64`, буфер под `epoll_wait()` переиспользуется между
+  вызовами вместо `mmap`/`munmap` на каждый `eventloop_wait()`;
+- compile-time проверки ABI (`tests/abi_compile.c`);
+- runtime-тест (`tests/eventloop_runtime.c`): регистрация/снятие
+  внешнего fd (через `eventfd()` напрямую — `pipe()` в Syscall Wrappers
+  нет), однократный и периодический таймер (включая `delay_ms = 0`),
+  `eventloop_wake()` из настоящего второго потока (через `libthread`,
+  только для теста). Выполняется на хосте командой
+  `make -C System/SystemLibs/libeventloop check` и внутри PUNos в QEMU как
+  `/punos/bin/libeventloop-selftest`.
+
+Библиотека вызывает только `epoll_create1()`, `epoll_ctl()`, `epoll_wait()`,
+`eventfd()`, `timerfd_create()`, `timerfd_settime()`, `read()`, `write()` и
+`close()` (контракт 1); кроме wrappers она использует `libcore`, `libmem`
+(таблица источников и буфер `epoll_wait()`) и `libtime` (тип `DurationMs`).
+Решения, принятые при реализации, описаны в
+`System/SystemLibs/libeventloop/README.md`.
+
 ## Имя библиотеки
-`sys/event`
+`sys/eventloop`
+
+Заголовок — `<sys/eventloop.h>`, как в `_LibsList.md`.
 ## Контракты
 
 1. Библиотека использует только Syscall Wrappers `epoll_create1()`, `epoll_ctl()`,

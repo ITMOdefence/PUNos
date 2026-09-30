@@ -18,9 +18,11 @@ PlatformRegistry и жизненным циклом остальных System Se
 запускает `/punos/bin/initserv` через `fork()`/`execve()` и освобождает
 завершившиеся дочерние процессы через `waitpid()`.
 
-Текущий initramfs содержит `initserv` smoke-test stub, который только сообщает
-об успешном запуске и остаётся живым. Это временный проверочный компонент, а
-не реализация initserv и PlatformRegistry из документации System Services.
+Текущий initramfs содержит `initserv` smoke-test stub, который сообщает о
+своём запуске, по очереди запускает self-test'ы `/punos/bin/*-selftest`
+(Syscall Wrappers и все реализованные System Libs), печатает результат
+каждого и остаётся живым. Это временный проверочный компонент, а не
+реализация initserv и PlatformRegistry из документации System Services.
 
 ## Имя компонента
 

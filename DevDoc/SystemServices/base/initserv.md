@@ -40,7 +40,7 @@ initserv не выполняет работу сервисов: не пишет 
 | Зависимость | Использование |
 | --- | --- |
 | sys/process | process_start, process_poll и process_terminate для дочерних сервисов |
-| sys/event | Таймер периодического мониторинга ProcessHandle |
+| sys/eventloop | Таймер периодического мониторинга ProcessHandle |
 | sys/time | Интервал и задержка повторного запуска |
 | sys/thread | ThreadId собственной пробной записи в logserv |
 | special/ipc | Проверка доступности endpoint logserv и отправка собственных журналов |

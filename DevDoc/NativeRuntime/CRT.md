@@ -14,9 +14,10 @@ Bytecode-приложения CRT не используют: их запуска
 - завершение процесса с кодом, возвращённым `main()`;
 - freestanding-тест минимальной программы без libc и ELF-интерпретатора.
 
-CRT подключён к `/init`, временному initserv smoke-test stub и
-`syscall-selftest`; все три файла статически линкуются с CRT, помещаются в
-проверочный initramfs и успешно запускаются в QEMU. Отдельный минимальный тест
+CRT подключён к `/init`, временному initserv smoke-test stub,
+`syscall-selftest` и self-test'ам System Libs (`/punos/bin/lib*-selftest`);
+все эти файлы статически линкуются с CRT, помещаются в проверочный initramfs
+и успешно запускаются в QEMU. Отдельный минимальный тест
 CRT дополнительно выполняется как статический Linux ELF в host-среде с тем же
 ABI x86_64.
 
@@ -142,6 +143,7 @@ System/NativeRuntime/CRT/build/libpunos_crt.a
 ```text
 crt0.o
 объектные файлы компонента с main()
+архивы System Libs, если они используются (зависимые раньше зависимостей)
 libpunos_crt.a
 libpunos_syscall.a
 ```
