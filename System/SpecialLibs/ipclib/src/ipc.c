@@ -527,7 +527,7 @@ static ErrorCode ipc_take_buffered_frame(IpcConnectionHandle *connection, bool *
 
 ErrorCode ipc_connection_receive(IpcConnectionHandle *connection, IpcReceiveStatus *out_status, IpcMessage *out_message)
 {
-    if (connection == NULL || out_status == NULL) {
+    if (connection == NULL || out_status == NULL || out_message == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
     if (connection->state != IPC_CONNECTION_STATE_OPEN) {

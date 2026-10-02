@@ -69,7 +69,9 @@ jobs:
       - name: Repeat Special Lib tests
         run: |
           for test in ipclib/build/ipc_runtime \
-                      loglib/build/log_runtime; do
+                      loglib/build/log_runtime \
+                      inputlib/build/input_runtime \
+                      camlib/build/camera_runtime; do
               for run in $(seq 30); do
                   "System/SpecialLibs/${test}" > /dev/null \
                       || { echo "${test} failed on run ${run}"; exit 1; }
