@@ -4,9 +4,9 @@
 | [logserv](base/logserv.md) | Принимает и хранит структурированные журнальные записи системных компонентов. | Базовый |
 | [appserv](base/appserv.md) | Управляет каталогом и жизненным циклом нативных пользовательских приложений. | Базовый |
 | [IOserv](base/IOserv.md) | Получает физические события устройств ввода Linux и публикует их по IPC. | Базовый |
-| [displayserv](../GUI/Services/displayserv.md) | Управляет дисплеями и показом готовых кадров. | GUI |
-| [compositorserv](../GUI/Services/compositorserv.md) | Управляет поверхностями и композицией сцены. | GUI |
-| [windowserv](../GUI/Services/windowserv.md) | Управляет окнами, фокусом и маршрутизацией ввода. | GUI |
+| [displayserv](../GUI/Display/displayserv.md) | Управляет дисплеями и показом готовых кадров. | GUI |
+| [compositorserv](../GUI/Compositor/compositorserv.md) | Управляет поверхностями и композицией сцены. | GUI |
+| [windowserv](../GUI/Windowing/windowserv.md) | Управляет окнами, фокусом и маршрутизацией ввода. | GUI |
 | [camserv](abilities/camserv.md) | Предоставляет приложениям системную возможность работы с камерой. | Возможности |
 | [locationserv](abilities/locationserv.md) | Предоставляет приложениям системную возможность определения местоположения. | Возможности |
 
