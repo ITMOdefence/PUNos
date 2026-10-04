@@ -51,7 +51,8 @@ shared-memory буферов, подключает IPC к event loop `appframewo
 15. `ui_window_damage()` накапливает pending damage до present. Если damage не
     указан после configure, библиотека отправляет full damage.
 16. `CloseRequested` является запросом и не уничтожает окно автоматически.
-    Решение о закрытии принимает приложение.
+    Приложение отвечает `Allow`, `Deny` или `Defer`; при `Allow` завершает
+    сохранение и уничтожает окно.
 17. При разрыве соединения объект переходит в `Suspended`, освобождает
     server-side идентификаторы и уведомляет приложение событием `ServiceLost`.
     После восстановления библиотека пересоздаёт объекты и требует полный redraw.
@@ -111,6 +112,7 @@ shared-memory буферов, подключает IPC к event loop `appframewo
 | `UiWindowConfig` | title, preferred size, role, parent, flags, callback и user data | Валидные UTF-8 и ненулевой callback | Конфигурация нового окна |
 | `UiWindowState` | Перечисление | `Normal`, `Minimized`, `Maximized`, `Fullscreen` | Запрошенное или подтверждённое состояние |
 | `UiWindowRole` | Перечисление | `TopLevel`, `Dialog`, `Popup` | Политическая роль окна |
+| `UiCloseResponse` | Перечисление | `Allow`, `Deny`, `Defer` | Ответ на `CloseRequested` с его serial |
 | `UiWindowEventKind` | Перечисление | configure, close, focus, pointer, key, touch, frame, service | Вид события callback |
 | `UiWindowEvent` | Tagged union | Соответствует `kind` | Невладеющее событие окна |
 | `UiMappedBuffer` | `UiBufferHandle buffer`, `MutableBytes pixels`, `u32 stride`, `GuiSize size`, format | Writable только в состоянии `Acquired` | Отображение для software rendering |
@@ -138,6 +140,7 @@ shared-memory буферов, подключает IPC к event loop `appframewo
 | `ui_window_hide(window)` | `UiWindowHandle window` | `ErrorCode` | Скрывает окно без уничтожения buffer pool |
 | `ui_window_set_title(window, title)` | `UiWindowHandle window`, `const String *title` | `ErrorCode` | Копирует и отправляет новый UTF-8 заголовок |
 | `ui_window_request_state(window, state)` | `UiWindowHandle window`, `UiWindowState state` | `ErrorCode` | Запрашивает изменение состояния; результат приходит configure-событием |
+| `ui_window_respond_close(window, serial, response)` | окно, serial `CloseRequested`, `UiCloseResponse response` | `ErrorCode` | Разрешает, отклоняет или откладывает закрытие |
 | `ui_window_set_constraints(window, min_size, max_size)` | окно и допустимые размеры | `ErrorCode` | Устанавливает ограничения клиентской области |
 | `ui_window_acquire_buffer(window, out_mapping)` | `UiWindowHandle window`, `UiMappedBuffer *out_mapping` | `ErrorCode` | Возвращает свободный writable buffer либо `CORE_WOULD_BLOCK` |
 | `ui_window_damage(window, rects, count)` | окно, массив `GuiRect`, `usize count` | `ErrorCode` | Добавляет области к pending damage |

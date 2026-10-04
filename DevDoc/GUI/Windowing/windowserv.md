@@ -38,6 +38,7 @@ windowserv — системный сервис графической подси
 | sys/string | Заголовки окон и IPC endpoint |
 | sys/math | Geometry, hit testing, display bounds и ограничения размера |
 | sys/event | Event loop endpoint, клиентов, IOserv и compositorserv |
+| sys/time | Монотонное время dispatch для оконных input events |
 | special/ipc | IPC-соединения, сообщения и исходящие очереди |
 | IOserv | Device events и InputFrame keyboard/pointer/touch |
 | compositorserv | Scene binding, geometry, visibility, stack и outputs |
@@ -50,7 +51,7 @@ windowserv — системный сервис графической подси
 | Параметр | Значение |
 | --- | --- |
 | Готовые сервисы до запуска | logserv, IOserv, compositorserv |
-| Параметры | Controller secret compositorserv и политика начального workspace |
+| Параметры | ControllerToken compositorserv, ShellToken и политика начального workspace |
 | Успех | Создан event loop; выполнены IOserv subscribe и controller bind; создан endpoint |
 | IOserv временно недоступен | Ошибка запуска v1; initserv повторяет запуск |
 | Ошибка compositor controller bind | Завершение с PROCESS_EXIT_INITIALIZATION_FAILED |
@@ -87,7 +88,7 @@ compositorserv окна сохраняются логически, перехо�
 | Minimized | Объект сохранён, surface unmapped |
 | Maximized | Окно занимает рабочую область display |
 | Fullscreen | Окно занимает выбранный display |
-| Closing | Отправлен close_requested; новые state requests отклоняются |
+| Closing | Клиент ответил ALLOW на close_requested; новые операции и ввод отклоняются |
 
 ## Владение ресурсами
 
@@ -104,6 +105,10 @@ compositorserv окна сохраняются логически, перехо�
 SurfaceId остаётся объектом compositorserv и не переходит во владение windowserv.
 
 ## IPC-контракт
+
+Нормативный wire format операций, результатов и событий определён в
+[оконном протоколе](window-protocol.md). Таблицы ниже дают обзор сервиса; при
+расхождении приоритет имеет специализированный протокол.
 
 ### Клиенты и доступ
 
@@ -145,6 +150,9 @@ protocol_version и request_id. Указатели, FD и compositor handles н�
 | 21, window.touch | Сервис → клиент | WindowTouchEvent |
 | 22, window.rendering_suspended | Сервис → клиент | WindowServiceEvent |
 | 23, window.surface_rebind | Клиент → сервис | WindowSurfaceRebindRequest |
+| 24, window.bind_shell | Shell → сервис | ShellBindRequest |
+| 25, window.bind_shell_result | Сервис → shell | BasicResult |
+| 26, window.respond_close | Клиент → сервис | WindowCloseResponseRequest |
 
 ### Операции
 
@@ -160,6 +168,7 @@ protocol_version и request_id. Указатели, FD и compositor handles н�
 | window.begin_move/resize | Interactive request | BasicResult | Начинает операцию по свежему input serial |
 | window.set_modal | WindowModalRequest | BasicResult | Устанавливает/снимает модального родителя |
 | window.surface_rebind | WindowSurfaceRebindRequest | BasicResult | Повторно связывает surface после compositor restart |
+| window.respond_close | WindowCloseResponseRequest | BasicResult | Разрешает, отклоняет или откладывает активный close request |
 
 ### События и подписки
 
@@ -182,7 +191,7 @@ protocol_version и request_id. Указатели, FD и compositor handles н�
 | WindowSetTitleRequest | version, request_id, window_id, u16 length, bytes | UTF-8 до 256 байт | Новый заголовок |
 | WindowStateRequest | version, request_id, window_id, state, display_id | display нужен для fullscreen | Запрос состояния |
 | WindowConstraintsRequest | version, request_id, window_id, min_size, max_size | min <= max; ноль означает отсутствие границы | Размерные ограничения |
-| WindowAckConfigureRequest | version, request_id, window_id, configure_serial | Только последний неустаревший serial | Подтверждение configure |
+| WindowAckConfigureRequest | version, request_id, window_id, configure_serial | Только последний неустаревший serial; после успешного surface commit | Подтверждение configure |
 | WindowInteractiveRequest | version, request_id, window_id, input_serial | Свежий pointer/button serial этого окна | Move |
 | WindowResizeRequest | те же поля и u8 edge_mask | Непустая допустимая edge mask | Resize |
 | WindowConfigureEvent | window_id, serial, geometry, state, scale, display_id | serial монотонен для окна | Новая конфигурация |
