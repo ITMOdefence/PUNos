@@ -154,10 +154,20 @@ static void test_real_device(void)
 
         EXPECT(24, input_raw_device_get_info(device, &info) == CORE_OK);
         EXPECT(25, input_raw_device_get_info(device, NULL) == CORE_INVALID_ARGUMENT);
-        /* Only the three known bits may ever be set. */
+        /* Only the known bits may ever be set. INPUT_RAW_CAP_KEY says the
+         * device reports EV_KEY at all; the two code-derived bits say which
+         * kind, which is what separates a keyboard from a device that only has
+         * buttons. */
         EXPECT(26, (info.capabilities &
                     ~(InputRawCapabilityMask)(INPUT_RAW_CAP_KEY | INPUT_RAW_CAP_RELATIVE |
-                                               INPUT_RAW_CAP_ABSOLUTE)) == 0);
+                                               INPUT_RAW_CAP_ABSOLUTE |
+                                               INPUT_RAW_CAP_KEYBOARD_KEYS |
+                                               INPUT_RAW_CAP_POINTER_BUTTONS)) == 0);
+        /* The code-derived bits only make sense on a device with EV_KEY. */
+        EXPECT(60, (info.capabilities &
+                    (InputRawCapabilityMask)(INPUT_RAW_CAP_KEYBOARD_KEYS |
+                                             INPUT_RAW_CAP_POINTER_BUTTONS)) == 0 ||
+                       (info.capabilities & INPUT_RAW_CAP_KEY) != 0);
     }
 
     {
