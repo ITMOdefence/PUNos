@@ -54,7 +54,7 @@ displayserv не знает об окнах, поверхностях, фоку�
 | Параметр | Значение |
 | --- | --- |
 | Готовые сервисы до запуска | logserv |
-| Параметры | `--backend=<name>` и необязательный `--device=<path>` |
+| Параметры | `--backend=<name>`, необязательный `--device=<path>` и PresenterToken от initserv |
 | Успех | Открыт displaylib backend; созданы event loop и endpoint; выходы перечислены |
 | Нет подключённых выходов | Сервис переходит в Ready и ожидает hotplug |
 | Ошибка backend, event loop или endpoint | Завершение с PROCESS_EXIT_INITIALIZATION_FAILED |
@@ -88,7 +88,7 @@ Endpoint создаётся только после успешной иници�
 | --- | --- | --- | --- |
 | DisplayBackendHandle | displayserv через displaylib | При запуске | При остановке или BackendLost |
 | DisplayId и состояние выхода | displayserv | При перечислении или OutputAdded | При OutputRemoved или остановке |
-| DisplayFrameHandle | displayserv | После успешного импорта FD | После present result или ошибки |
+| DisplayFrameHandle | displayserv | После успешного импорта FD | После presented/present_failed или ошибки принятия |
 | Полученная копия FD кадра | DisplayFrameHandle | При display_frame_import | Только display_frame_destroy |
 | IpcServerHandle и соединения | displayserv через ipclib | При запуске и accept | При отключении или остановке |
 | EventLoopHandle | displayserv | При запуске | При остановке |
@@ -97,15 +97,20 @@ FD backend и IPC не закрываются напрямую: они прин�
 
 ## IPC-контракт
 
+Нормативный wire format операций, результатов и событий определён в
+[протоколе вывода](presentation-protocol.md). Таблицы ниже дают обзор сервиса;
+при расхождении приоритет имеет специализированный протокол.
+
 ### Клиенты и доступ
 
 | Клиент | Разрешённые операции | Проверка доступа |
 | --- | --- | --- |
-| compositorserv | display.list, display.get_state, display.configure, display.present, display.subscribe | Доверенный GUI-клиент v1 |
-| Диагностика GUI | display.list, display.get_state, display.subscribe | Доверенный read-only клиент v1 |
+| compositorserv | display.list, display.get_state, display.configure, display.present, display.subscribe | Успешный display.bind_presenter с PresenterToken |
+| Диагностика GUI | display.list, display.get_state, display.subscribe | Права Unix endpoint; только read-only операции |
 
 В ipclib v1 нет достоверной peer identity. Endpoint защищается правами Unix
-socket; изменяющие операции считаются внутренним API доверенных компонентов.
+socket; изменяющие операции дополнительно требуют одноразовый PresenterToken,
+переданный initserv обоим GUI-сервисам.
 
 ### Формат payload
 
@@ -131,6 +136,8 @@ socket; изменяющие операции считаются внутрен�
 | 14, display.presented | Сервис → инициатор | DisplayPresentedEvent |
 | 15, display.present_failed | Сервис → инициатор | DisplayPresentFailedEvent |
 | 16, display.backend_lost | Сервис → подписчик | DisplayBackendLostEvent |
+| 17, display.bind_presenter | compositorserv → сервис | PresenterBindRequest |
+| 18, display.bind_presenter_result | Сервис → compositorserv | BasicResult |
 
 ### Операции
 
@@ -141,6 +148,7 @@ socket; изменяющие операции считаются внутрен�
 | display.configure | DisplayConfigureRequest | DisplayConfigureResult | Применяет режим, orientation и enabled |
 | display.present | DisplayPresentRequest + FD | DisplayPresentResult | Импортирует и ставит кадр в очередь |
 | display.subscribe | VersionedRequest | DisplaySubscribeResult | Создаёт подписку соединения на output/backend events |
+| display.bind_presenter | PresenterBindRequest | BasicResult | Назначает единственный привилегированный compositorserv |
 
 Успешный DisplayPresentResult означает принятие кадра, но не показ. Итог
 приходит отдельным display.presented или display.present_failed.
@@ -164,8 +172,8 @@ socket; изменяющие операции считаются внутрен�
 | DisplayIdRequest | u16 protocol_version, u64 request_id, u64 display_id | display_id ненулевой | Выбор выхода |
 | DisplayMode | u32 width_px, u32 height_px, u32 refresh_millihz | Все значения ненулевые | Режим выхода |
 | DisplayInfo | u64 display_id, u64 generation, u8 connected, u8 enabled, физический размер, current_mode, u16 mode_count, DisplayMode[] | mode_count не более 128 | Снимок выхода |
-| DisplayListResult | ErrorCode error, u16 count, DisplayInfo[] | count не более 32; список определён при CORE_OK | Список выходов |
-| DisplayStateResult | ErrorCode error, DisplayInfo info | info определён при CORE_OK | Состояние выхода |
+| DisplayListResult | ErrorCode error, request_id, snapshot_serial, u16 count, DisplayInfo[] | count не более 32; список определён при CORE_OK | Список выходов |
+| DisplayStateResult | ErrorCode error, request_id, DisplayInfo info | info определён при CORE_OK | Состояние выхода |
 | DisplayConfigureRequest | version, request_id, display_id, generation, enabled, orientation, DisplayMode | generation должен совпадать | Новая конфигурация |
 | DisplayConfigureResult | ErrorCode error, u64 request_id, DisplayInfo applied | applied определён при CORE_OK | Фактическая конфигурация |
 | DisplayPresentRequest | version, request_id, display_id, generation, width, height, stride, pixel_format, byte_size, u16 damage_count, GuiRect[] | Один FD; не более 64 rects | Метаданные готового кадра |
@@ -203,6 +211,7 @@ worker threads отсутствуют.
 | Данные | Источник | Владелец | Действие при ошибке |
 | --- | --- | --- | --- |
 | Имя backend и путь устройства | Аргументы initserv | initserv | Ошибка запуска displayserv |
+| PresenterToken | Одноразовые startup arguments initserv | displayserv до успешного bind | Privileged клиент не назначается |
 | Режим и enabled выхода | Только память процесса | displayserv | После перезапуска выбирается безопасный режим backend |
 | DisplayId и generation | Только память процесса | displayserv | Создаются заново после перезапуска |
 
@@ -234,5 +243,5 @@ failure; переполнение очереди и отключение мед�
 - Только XRGB8888 и premultiplied ARGB8888.
 - Нет HDR, color management, variable refresh rate и hardware overlays.
 - Нет постоянной конфигурации дисплеев и глобального display layout.
-- Нет peer identity; доступ опирается на права endpoint.
+- Нет peer identity; presenter использует временный startup token.
 - Возможности hotplug зависят от выбранного displaylib backend.

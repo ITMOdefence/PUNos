@@ -48,7 +48,8 @@ compositorserv — композицией и временем жизни буф�
 | Параметр | Значение |
 | --- | --- |
 | Готовые сервисы до запуска | logserv, displayserv |
-| Успех | Получен список выходов; созданы renderer, event loop и endpoint |
+| Параметры | PresenterToken displayserv и ControllerToken для windowserv от initserv |
+| Успех | Выполнен display.bind_presenter, получен список выходов; созданы renderer, event loop и endpoint |
 | displayserv без выходов | Сервис Ready, поверхности принимаются, кадры не планируются |
 | Ошибка обязательной зависимости | Завершение с PROCESS_EXIT_INITIALIZATION_FAILED |
 
@@ -87,7 +88,7 @@ DisplayId и запрашивает surface.full_redraw. При потере с�
 | SurfaceId и surface state | compositorserv для клиентского соединения | surface.create | surface.destroy или disconnect |
 | BufferId и imported FD | compositorserv для клиентского соединения | buffer.import | buffer.destroy, disconnect или deferred release |
 | Scene binding | compositorserv по запросу windowserv | scene.bind_window | scene.remove_window или уничтожение объекта |
-| Output frame | compositorserv | Перед композицией | После display present result |
+| Output frame | compositorserv | Перед композицией | После display.presented/present_failed |
 | Displayserv connection | compositorserv | При запуске/reconnect | При остановке или разрыве |
 | IPC server/connections | compositorserv через ipclib | При запуске и accept | При disconnect или остановке |
 
@@ -218,6 +219,7 @@ surface state, mappings и display connection. Software composition выполн
 | Данные | Источник | Владелец | Действие при ошибке |
 | --- | --- | --- | --- |
 | Endpoint displayserv | Встроенная конфигурация платформы | initserv/compositorserv | Ошибка запуска или Suspended при разрыве |
+| PresenterToken displayserv | Одноразовый аргумент initserv | compositorserv | Нельзя выполнять configure/present |
 | Controller secret | Одноразовый аргумент initserv | compositorserv | Без него scene-controller не назначается |
 | Scene, surfaces и buffers | Только память процесса | compositorserv | Теряются при перезапуске; клиенты пересоздают |
 
