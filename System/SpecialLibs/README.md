@@ -84,6 +84,59 @@ convenient. Two details cost real debugging time and are easy to get wrong:
   - a fake must not allocate through libmem, because libmem allocates with
     `mmap()`. Use static storage.
 
+### Mutation checks
+
+A test that passes proves nothing on its own: it also passes when the fix is
+absent. Every fix below was therefore checked by reverting it and confirming
+that one specific check fails. The check number is the one that fails, which is
+what `make check` prints and what CI reads.
+
+| # | Fix | Check that fails when reverted |
+| --- | --- | --- |
+| 2 | `inputlib` keeps an unterminated frame instead of handing it over | 102 |
+| 3 | `inputlib` keeps events read past a returned frame | 126 |
+| 4 | `camlib` refuses `configure()` and `close()` while Streaming | 122 |
+| 5 | `camlib` returns to `Open` after `stop()` | 107 |
+| 6 | `libv4l2` clears the outstanding count on `ENODEV` | 68 |
+| 8a | `ipclib` reports a terminal connect error | 105 |
+| 8b | `ipclib` repeats that error instead of reporting `Open` | 108 |
+| 9a | `loglib` rejects `component_length` over the maximum | 83 |
+| 9b | `loglib` rejects `message_length` over the maximum | 85 |
+| 9c | `loglib` rejects a severity outside `LogSeverity` | 87 |
+| 10 | `camlib` tracks issued buffers by id | 148 |
+| 13a | `ipclib` refuses an empty endpoint | 80 |
+| 13b | `loglib` refuses an empty path | 90 |
+| 13c | `camlib` refuses a path that is not `/dev/video<digits>` | 60 |
+| 14a | `libv4l2` validates the device with `VIDIOC_QUERYCAP` | 53 |
+| 14b | `inputlib` tells a keyboard from a device with only buttons | 172 |
+
+Two fixes are deliberately not in the table:
+
+  - **#1, the outgoing queue shift**, is the one gap. `memory_copy()` rejects
+    overlapping ranges, so reverting it to `memory_move()`'s forbidden twin
+    makes the call fail, which the old code ignored before shrinking
+    `outgoing_size`. Detecting that needs a send that the kernel accepts only in
+    part - a socket buffer full enough to return a short count - and then a
+    peer that reassembles the stream and finds it corrupted. Nothing in the
+    current test does either, so this fix rests on reading, not on a check.
+  - **#11, the configuration array** is trimmed to the count handed out so that
+    `memory_free()` is given the size it was allocated with. Reverting the trim
+    still passes every check, because the only consequence is a mapping that is
+    never fully unmapped - a leak, which a test cannot see without allocation
+    accounting.
+
+Two more are structural rather than behavioural, and the ABI compile checks
+cover them: **#12**, the pointer handle typedefs, is enforced by the signatures
+having to compile, and **#7** is not a return code at all - `file_close()`
+releases the handle even when `close()` fails, so no code path can leave the
+previous log usable. The store is made explicitly invalid instead, and the
+header no longer promises otherwise.
+
+One more regression was found this way, in `libinputdevice`: widening the
+capability mask without updating its ABI check broke the QEMU boot run while the
+host run stayed green, because the host's `/dev/input/event0` reports no
+`EV_KEY` at all and never sets the new bits. See commit `accd443`.
+
 ### Makefile
 
 All build rules live in `System/SpecialLibs/special_libs.mk`. A library's own
