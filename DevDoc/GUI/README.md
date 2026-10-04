@@ -8,7 +8,7 @@
 
 | Слой | Документы | Ответственность |
 | --- | --- | --- |
-| [Common](Common/) | [Архитектура](Common/Architecture.md), [общие типы](Common/common-types.md), [владение](Common/ownership.md) | Общие границы, идентификаторы и правила взаимодействия слоёв |
+| [Common](Common/) | [Архитектура](Common/Architecture.md), [базовый протокол](Common/protocol-base.md), [общие типы](Common/common-types.md), [владение](Common/ownership.md) | Общие границы, идентификаторы и правила взаимодействия слоёв |
 | [Display](Display/) | [displayserv](Display/displayserv.md), [displaylib](Display/displaylib.md) | Физические дисплеи, режимы и показ готового кадра |
 | [Compositor](Compositor/) | [compositorserv](Compositor/compositorserv.md), [передача буферов](Compositor/buffer-sharing.md) | Поверхности, графические буферы, damage и композиция сцены |
 | [Windowing](Windowing/) | [windowserv](Windowing/windowserv.md), [маршрутизация ввода](Windowing/input-routing.md) | Окна, фокус, размещение, z-order и доставка ввода |
