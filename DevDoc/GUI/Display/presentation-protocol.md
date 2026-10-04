@@ -253,7 +253,7 @@ generation. При ошибке payload заканчивается на смещ
 | `0` | `request_id` | `u64` |
 | `8` | `display_id` | `u64` |
 | `16` | `generation` | `u64` |
-| `24` | `presented_at_ns` | `u64` |
+| `24` | `presented_at_ms` | `u64` |
 
 Полный размер — 32 байта. Событие является финальным результатом принятого
 `display.present` и разрешает displayserv закрыть импортированный frame.

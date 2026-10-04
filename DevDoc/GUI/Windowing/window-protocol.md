@@ -339,7 +339,7 @@ selection; обычный клиент не может их изменить.
 ## События ввода
 
 `input_serial` монотонно возрастает в рамках запуска windowserv. Timestamp —
-монотонное время обработки `IoInputFrame` в наносекундах; IOserv v1 не
+`MonotonicTime` обработки `IoInputFrame` в миллисекундах; IOserv v1 не
 передаёт аппаратный timestamp. DeviceId приложению не раскрывается.
 
 ### WindowPointerEvent
@@ -348,7 +348,7 @@ selection; обычный клиент не может их изменить.
 | --- | --- | --- | --- |
 | `0` | `input_serial` | `u64` | Serial события |
 | `8` | `window_id` | `u64` | Получатель |
-| `16` | `timestamp_ns` | `u64` | Монотонное время dispatch |
+| `16` | `timestamp_ms` | `u64` | Монотонное время dispatch в миллисекундах |
 | `24` | `kind` | `u8` | Pointer kind |
 | `25` | `button_state` | `u8` | `0 = released`, `1 = pressed` |
 | `26` | `x` | `i32` | Локальная координата 24.8 fixed-point |
@@ -366,7 +366,7 @@ selection; обычный клиент не может их изменить.
 | --- | --- | --- |
 | `0` | `input_serial` | `u64` |
 | `8` | `window_id` | `u64` |
-| `16` | `timestamp_ns` | `u64` |
+| `16` | `timestamp_ms` | `u64` |
 | `24` | `key_code` | `u32` |
 | `28` | `key_state` | `u8` |
 | `29` | `modifiers` | `u32` |
@@ -380,7 +380,7 @@ selection; обычный клиент не может их изменить.
 | --- | --- | --- |
 | `0` | `input_serial` | `u64` |
 | `8` | `window_id` | `u64` |
-| `16` | `timestamp_ns` | `u64` |
+| `16` | `timestamp_ms` | `u64` |
 | `24` | `touch_id` | `u32` |
 | `28` | `phase` | `u8` |
 | `29` | `x` | `i32` |

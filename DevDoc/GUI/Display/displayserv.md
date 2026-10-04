@@ -39,6 +39,7 @@ displayserv не знает об окнах, поверхностях, фоку�
 | sys/memory | Таблица выходов, клиенты, запросы present и сериализация ответов |
 | sys/string | Имена backend/выходов и IPC endpoint |
 | sys/event | Один event loop для backend, endpoint и соединений |
+| sys/time | MonotonicTime завершения present |
 | special/display | Открытие backend, режимы, импорт кадров и present |
 | special/ipc | Endpoint, соединения, сообщения, FD и исходящие очереди |
 | logserv | Запуск, hotplug, configure, present failures и восстановление |
