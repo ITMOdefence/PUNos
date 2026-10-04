@@ -67,7 +67,8 @@ uilib получает свободный BufferHandle
 ## Жизненный цикл окна
 
 1. `uilib` создаёт клиентскую поверхность в `compositorserv`.
-2. `uilib` создаёт окно в `windowserv` и передаёт `SurfaceId`.
+2. `uilib` создаёт окно в `windowserv` и передаёт `SurfaceId` вместе с
+   `SurfaceBindToken`, полученным от `compositorserv`.
 3. `windowserv` возвращает `WindowId` и событие `window.configure`.
 4. Клиент подтверждает configure, рисует размер и выполняет surface commit.
 5. При закрытии `windowserv` отправляет `window.close_requested`.

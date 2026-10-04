@@ -99,7 +99,8 @@ DisplayId и запрашивает surface.full_redraw. При потере с�
 Нормативный wire format клиентских сообщений `surface.*` и `buffer.*`
 определён в [протоколе поверхностей](surface-protocol.md). Таблицы ниже дают
 обзор операций сервиса; при расхождении приоритет имеет специализированный
-протокол. Контракт `scene.*` будет вынесен в отдельный документ.
+протокол. Нормативный контракт `scene.*` определён в
+[протоколе сцены](scene-protocol.md).
 
 ### Клиенты и доступ
 
@@ -147,6 +148,7 @@ request_id. buffer.import несёт один FD; остальные сообщ�
 | 26, scene.set_output | windowserv → сервис | SceneOutputRequest |
 | 27, scene.remove_window | windowserv → сервис | SceneWindowRequest |
 | 28, scene.result | Сервис → windowserv | BasicResult |
+| 29, scene.binding_lost | Сервис → windowserv | SceneBindingLostEvent |
 
 ### Операции
 
@@ -178,14 +180,14 @@ request_id. buffer.import несёт один FD; остальные сообщ�
 | Тип | Поля | Ограничения | Назначение |
 | --- | --- | --- | --- |
 | SurfaceCreateRequest | u16 version, u64 request_id | Версия 1 | Создание поверхности |
-| SurfaceCreateResult | ErrorCode error, request_id, u64 surface_id | id определён при CORE_OK | Результат создания |
+| SurfaceCreateResult | ErrorCode error, request_id, u64 surface_id, u8 bind_token[16] | id и token определены при CORE_OK | Результат создания |
 | BufferImportRequest | version, request_id, width, height, stride, pixel_format, byte_size | Один FD; XRGB/ARGB8888 | Импорт backing storage |
 | BufferImportResult | ErrorCode error, request_id, u64 buffer_id | id определён при CORE_OK | Результат импорта |
 | SurfaceAttachRequest | version, request_id, surface_id, buffer_id или 0 | Объекты одного клиента | Pending attach/detach |
 | SurfaceDamageRequest | version, request_id, surface_id, u16 count, GuiRect[] | Не более 64 rects | Pending damage |
 | SurfaceRegionRequest | version, request_id, surface_id, u16 count, GuiRect[] | Region внутри surface | Pending opaque region |
 | SurfaceCommitRequest | version, request_id, surface_id, u64 commit_serial | serial возрастает для surface | Публикация pending state |
-| SceneBindRequest | version, request_id, window_id, surface_id, client_connection_id | Только controller | Связь окна и surface |
+| SceneBindRequest | version, request_id, window_id, surface_id, bind_token[16] | Только controller; верный token поверхности | Связь окна и surface |
 | SceneGeometryRequest | version, request_id, window_id, GuiRect geometry, GuiRect clip | Валидная геометрия | Размещение в сцене |
 | BasicResult | ErrorCode error, u64 request_id | CORE_OK — успех | Общий ответ |
 

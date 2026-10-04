@@ -26,9 +26,12 @@ shared-memory буферов, подключает IPC к event loop `appframewo
    `AppHandle`.
 7. `UiWindowHandle` создаётся через `ui_window_create()` и уничтожается через
    `ui_window_destroy()`. Окно принадлежит создавшему `UiContextHandle`.
-8. При создании окна библиотека создаёт `SurfaceId` в `compositorserv`, затем
-   связывает его с новым `WindowId` в `windowserv`. При частичной ошибке уже
-   созданный server-side объект удаляется до возврата.
+8. При создании окна библиотека получает `SurfaceId` и `SurfaceBindToken` от
+   `compositorserv`, затем передаёт их `windowserv` для связи с новым
+   `WindowId`. Токен хранится внутри `UiWindowHandle` до уничтожения
+   поверхности, не предоставляется приложению и используется повторно только
+   при восстановлении связи с `windowserv`. При частичной ошибке уже созданный
+   server-side объект удаляется до возврата.
 9. Все операции и callbacks выполняются только в потоке-владельце `AppHandle`.
    Одновременные обращения к одному context/window запрещены.
 10. Библиотека регистрирует IPC FD в event loop через `appframework`. Она не

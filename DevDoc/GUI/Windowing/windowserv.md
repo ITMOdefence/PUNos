@@ -176,7 +176,7 @@ protocol_version и request_id. Указатели, FD и compositor handles н�
 
 | Тип | Поля | Ограничения | Назначение |
 | --- | --- | --- | --- |
-| WindowCreateRequest | version, request_id, surface_id, role, parent_id, preferred size, flags, title length и bytes | UTF-8 до 256 байт; parent своего клиента | Создание окна |
+| WindowCreateRequest | version, request_id, surface_id, surface_bind_token[16], role, parent_id, preferred size, flags, title length и bytes | UTF-8 до 256 байт; parent своего клиента; token не журналируется | Создание окна |
 | WindowCreateResult | ErrorCode error, request_id, window_id | id определён при CORE_OK | Результат создания |
 | WindowIdRequest | version, request_id, window_id | Окно своего соединения | Выбор окна |
 | WindowSetTitleRequest | version, request_id, window_id, u16 length, bytes | UTF-8 до 256 байт | Новый заголовок |
@@ -195,8 +195,8 @@ protocol_version и request_id. Указатели, FD и compositor handles н�
 1. CORE_OK является единственным успешным кодом ответа.
 2. WindowId уникален до destroy или перезапуска windowserv и принадлежит
    создавшему соединению.
-3. SurfaceId проверяется через compositorserv и связывается не более чем с
-   одним живым окном.
+3. SurfaceId и SurfaceBindToken проверяются через compositorserv; поверхность
+   связывается не более чем с одним живым окном.
 4. Первый configure обязателен до show и present содержимого.
 5. Новый configure заменяет неподтверждённый старый; ack устаревшего serial
    возвращает CORE_INVALID_STATE.
