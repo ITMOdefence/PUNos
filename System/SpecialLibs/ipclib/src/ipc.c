@@ -20,6 +20,9 @@ struct IpcConnectionHandle {
     u8 *incoming_buffer;
     usize incoming_size;
     usize incoming_capacity;
+    /* Terminal connect() error, cached. Reading SO_ERROR clears the kernel's
+     * copy, so it has to be remembered to stay repeatable. */
+    i32 connect_error;
 };
 
 static ErrorCode ipc_create_socket(i32 *out_fd)
@@ -45,22 +48,43 @@ static ErrorCode ipc_unlink_endpoint(const char *path)
     return CORE_OK;
 }
 
-ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle **out_server)
+/* An endpoint must be a non-empty path that still fits sockaddr_un. An empty
+ * one would reach bind()/connect() and fail there with a code that is not part
+ * of this library's contract. */
+static ErrorCode ipc_validate_endpoint(const String *endpoint)
 {
-    if (endpoint == NULL || out_server == NULL) {
+    if (endpoint == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (endpoint->length == 0 || endpoint->data == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
     if (endpoint->length > IPC_ENDPOINT_MAX_LENGTH) {
         return CORE_INVALID_PATH;
     }
+    return CORE_OK;
+}
+
+ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle *out_server)
+{
+    if (out_server == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    {
+        ErrorCode validation = ipc_validate_endpoint(endpoint);
+
+        if (validation != CORE_OK) {
+            return validation;
+        }
+    }
 
     MemoryBlock server_block;
-    ErrorCode result = memory_allocate(sizeof(IpcServerHandle), &server_block);
+    ErrorCode result = memory_allocate(sizeof(struct IpcServerHandle), &server_block);
     if (result != CORE_OK) {
         return result;
     }
 
-    IpcServerHandle *server = (IpcServerHandle *)server_block.data;
+    IpcServerHandle server = (IpcServerHandle)server_block.data;
 
     result = ipc_create_socket(&server->fd);
     if (result != CORE_OK) {
@@ -123,7 +147,7 @@ ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle **out_server
     return CORE_OK;
 }
 
-ErrorCode ipc_server_get_fd(IpcServerHandle *server, i32 *out_fd)
+ErrorCode ipc_server_get_fd(IpcServerHandle server, i32 *out_fd)
 {
     if (server == NULL || out_fd == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -132,7 +156,7 @@ ErrorCode ipc_server_get_fd(IpcServerHandle *server, i32 *out_fd)
     return CORE_OK;
 }
 
-ErrorCode ipc_server_accept(IpcServerHandle *server, IpcConnectionHandle **out_connection)
+ErrorCode ipc_server_accept(IpcServerHandle server, IpcConnectionHandle *out_connection)
 {
     if (server == NULL || out_connection == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -148,13 +172,13 @@ ErrorCode ipc_server_accept(IpcServerHandle *server, IpcConnectionHandle **out_c
     }
 
     MemoryBlock conn_block;
-    ErrorCode result = memory_allocate(sizeof(IpcConnectionHandle), &conn_block);
+    ErrorCode result = memory_allocate(sizeof(struct IpcConnectionHandle), &conn_block);
     if (result != CORE_OK) {
         close(client_fd);
         return result;
     }
 
-    IpcConnectionHandle *conn = (IpcConnectionHandle *)conn_block.data;
+    IpcConnectionHandle conn = (IpcConnectionHandle)conn_block.data;
     conn->fd = client_fd;
     conn->state = IPC_CONNECTION_STATE_OPEN;
     conn->outgoing_buffer = NULL;
@@ -163,19 +187,20 @@ ErrorCode ipc_server_accept(IpcServerHandle *server, IpcConnectionHandle **out_c
     conn->incoming_buffer = NULL;
     conn->incoming_size = 0;
     conn->incoming_capacity = 0;
+    conn->connect_error = 0;
 
     *out_connection = conn;
     return CORE_OK;
 }
 
-ErrorCode ipc_server_close(IpcServerHandle **server)
+ErrorCode ipc_server_close(IpcServerHandle *server)
 {
     if (server == NULL || *server == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
 
     ErrorCode result = CORE_OK;
-    IpcServerHandle *s = *server;
+    IpcServerHandle s = *server;
 
     if (s->endpoint_length > 0) {
         if (unlink(s->endpoint_path) < 0) {
@@ -195,29 +220,33 @@ ErrorCode ipc_server_close(IpcServerHandle **server)
 
     MemoryBlock block;
     block.data = (u8 *)s;
-    block.size = sizeof(IpcServerHandle);
+    block.size = sizeof(struct IpcServerHandle);
     memory_free(&block);
 
     *server = NULL;
     return result;
 }
 
-ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHandle **out_connection)
+ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHandle *out_connection)
 {
-    if (endpoint == NULL || out_connection == NULL) {
+    if (out_connection == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (endpoint->length > IPC_ENDPOINT_MAX_LENGTH) {
-        return CORE_INVALID_PATH;
+    {
+        ErrorCode validation = ipc_validate_endpoint(endpoint);
+
+        if (validation != CORE_OK) {
+            return validation;
+        }
     }
 
     MemoryBlock conn_block;
-    ErrorCode result = memory_allocate(sizeof(IpcConnectionHandle), &conn_block);
+    ErrorCode result = memory_allocate(sizeof(struct IpcConnectionHandle), &conn_block);
     if (result != CORE_OK) {
         return result;
     }
 
-    IpcConnectionHandle *conn = (IpcConnectionHandle *)conn_block.data;
+    IpcConnectionHandle conn = (IpcConnectionHandle)conn_block.data;
 
     result = ipc_create_socket(&conn->fd);
     if (result != CORE_OK) {
@@ -232,6 +261,7 @@ ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHand
     conn->incoming_buffer = NULL;
     conn->incoming_size = 0;
     conn->incoming_capacity = 0;
+    conn->connect_error = 0;
 
     MemoryBlock name_block;
     result = memory_allocate(endpoint->length + 1, &name_block);
@@ -266,13 +296,19 @@ ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHand
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_finish_connect(IpcConnectionHandle *connection, IpcConnectionState *out_state)
+ErrorCode ipc_connection_finish_connect(IpcConnectionHandle connection, IpcConnectionState *out_state)
 {
     if (connection == NULL || out_state == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
     if (connection->state != IPC_CONNECTION_STATE_CONNECTING) {
         return CORE_INVALID_STATE;
+    }
+
+    /* A terminal error was already reported; reading SO_ERROR again would
+     * report success because the first read cleared it. */
+    if (connection->connect_error != 0) {
+        return core_error_from_errno(connection->connect_error);
     }
 
     i32 so_error = 0;
@@ -286,14 +322,21 @@ ErrorCode ipc_connection_finish_connect(IpcConnectionHandle *connection, IpcConn
     if (so_error == 0) {
         connection->state = IPC_CONNECTION_STATE_OPEN;
         *out_state = IPC_CONNECTION_STATE_OPEN;
-    } else {
-        *out_state = IPC_CONNECTION_STATE_CONNECTING;
+        return CORE_OK;
     }
 
+    /* EINPROGRESS means the kernel has not finished yet. Every other value is
+     * the final reason the connection failed. */
+    if (so_error != EINPROGRESS) {
+        connection->connect_error = so_error;
+        return core_error_from_errno(so_error);
+    }
+
+    *out_state = IPC_CONNECTION_STATE_CONNECTING;
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_get_fd(IpcConnectionHandle *connection, i32 *out_fd)
+ErrorCode ipc_connection_get_fd(IpcConnectionHandle connection, i32 *out_fd)
 {
     if (connection == NULL || out_fd == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -302,7 +345,7 @@ ErrorCode ipc_connection_get_fd(IpcConnectionHandle *connection, i32 *out_fd)
     return CORE_OK;
 }
 
-static ErrorCode ipc_ensure_outgoing_capacity(IpcConnectionHandle *connection, usize needed)
+static ErrorCode ipc_ensure_outgoing_capacity(IpcConnectionHandle connection, usize needed)
 {
     if (connection->outgoing_capacity >= needed) {
         return CORE_OK;
@@ -342,7 +385,7 @@ static ErrorCode ipc_ensure_outgoing_capacity(IpcConnectionHandle *connection, u
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_send(IpcConnectionHandle *connection, const IpcMessage *message)
+ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message)
 {
     if (connection == NULL || message == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -384,7 +427,7 @@ ErrorCode ipc_connection_send(IpcConnectionHandle *connection, const IpcMessage 
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_flush(IpcConnectionHandle *connection, bool *out_has_pending)
+ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pending)
 {
     if (connection == NULL || out_has_pending == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -415,8 +458,13 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle *connection, bool *out_has_pe
 
     usize sent_size = (usize)sent;
     if (sent_size < connection->outgoing_size) {
-        memory_copy((Bytes){ connection->outgoing_buffer, connection->outgoing_size - sent_size },
-                     (Bytes){ connection->outgoing_buffer + sent_size, connection->outgoing_size - sent_size });
+        /* The ranges overlap: memory_move() is the only libmem call that
+         * allows it, memory_copy() would reject the call. */
+        ErrorCode move_result = memory_move((Bytes){ connection->outgoing_buffer, connection->outgoing_size - sent_size },
+                                            (Bytes){ connection->outgoing_buffer + sent_size, connection->outgoing_size - sent_size });
+        if (move_result != CORE_OK) {
+            return move_result;
+        }
     }
     connection->outgoing_size -= sent_size;
 
@@ -424,7 +472,7 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle *connection, bool *out_has_pe
     return CORE_OK;
 }
 
-static ErrorCode ipc_ensure_incoming_capacity(IpcConnectionHandle *connection, usize needed)
+static ErrorCode ipc_ensure_incoming_capacity(IpcConnectionHandle connection, usize needed)
 {
     if (connection->incoming_capacity >= needed) {
         return CORE_OK;
@@ -470,7 +518,7 @@ static ErrorCode ipc_ensure_incoming_capacity(IpcConnectionHandle *connection, u
  * The frame header and the type field are read before the remaining bytes are
  * moved to the front, so out_message never points into a shifted buffer.
  */
-static ErrorCode ipc_take_buffered_frame(IpcConnectionHandle *connection, bool *out_extracted,
+static ErrorCode ipc_take_buffered_frame(IpcConnectionHandle connection, bool *out_extracted,
                                          IpcMessage *out_message)
 {
     *out_extracted = false;
@@ -525,7 +573,7 @@ static ErrorCode ipc_take_buffered_frame(IpcConnectionHandle *connection, bool *
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_receive(IpcConnectionHandle *connection, IpcReceiveStatus *out_status, IpcMessage *out_message)
+ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatus *out_status, IpcMessage *out_message)
 {
     if (connection == NULL || out_status == NULL || out_message == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -601,14 +649,14 @@ ErrorCode ipc_message_destroy(IpcMessage *message)
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_close(IpcConnectionHandle **connection)
+ErrorCode ipc_connection_close(IpcConnectionHandle *connection)
 {
     if (connection == NULL || *connection == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
 
     ErrorCode result = CORE_OK;
-    IpcConnectionHandle *conn = *connection;
+    IpcConnectionHandle conn = *connection;
 
     if (close(conn->fd) < 0) {
         i32 err = errno;
@@ -630,7 +678,7 @@ ErrorCode ipc_connection_close(IpcConnectionHandle **connection)
 
     MemoryBlock conn_block;
     conn_block.data = (u8 *)conn;
-    conn_block.size = sizeof(IpcConnectionHandle);
+    conn_block.size = sizeof(struct IpcConnectionHandle);
     memory_free(&conn_block);
 
     *connection = NULL;

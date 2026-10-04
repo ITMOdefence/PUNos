@@ -87,7 +87,9 @@
 | `DeviceLost` | `camera_close()` | Устройство отключено или драйвер прекратил захват |
 
 Операция, не допустимая в текущем состоянии, возвращает
-`CORE_INVALID_STATE`.
+`CORE_INVALID_STATE`. В частности, `camera_configure()` и `camera_close()`
+запрещены в `Streaming`: иначе MMAP-буферы были бы освобождены без
+предварительного `STREAMOFF`.
 
 ### Поддерживаемые форматы
 
@@ -130,7 +132,7 @@
 | `camera_start(camera)` | `CameraHandle camera` | `ErrorCode` | Ставит все внутренние буферы в очередь V4L2 и запускает захват кадров |
 | `camera_dequeue_frame(camera, out_status, out_frame)` | `CameraHandle camera`, `CameraReadStatus *out_status`, `CameraFrame *out_frame` | `ErrorCode` | Извлекает один готовый V4L2-буфер; при отсутствии кадра возвращает `NoFrame`, при отключении — `DeviceLost` |
 | `camera_frame_release(camera, frame)` | `CameraHandle camera`, `CameraFrame *frame` | `ErrorCode` | Возвращает ранее полученный буфер драйверу V4L2 и делает `CameraFrame` недействительным |
-| `camera_stop(camera)` | `CameraHandle camera` | `ErrorCode` | Останавливает V4L2 streaming и освобождает MMAP-буферы |
+| `camera_stop(camera)` | `CameraHandle camera` | `ErrorCode` | Останавливает V4L2 streaming и освобождает MMAP-буферы; камера возвращается в состояние `Open`, поэтому её нужно заново настроить через `camera_configure()` перед следующим `camera_start()` |
 | `camera_close(camera)` | `CameraHandle *camera` | `ErrorCode` | Закрывает камеру, освобождает все внутренние ресурсы и записывает `NULL` |
 
 ## Ошибки

@@ -6,10 +6,18 @@ the specification is the contract, and the code must match it.
 
 | Library | Header | Archive | Status |
 | --- | --- | --- | --- |
-| [ipclib](ipclib/README.md) | `<special/ipc.h>` | `libpunos_special_ipc.a` | Implemented |
-| [loglib](loglib/README.md) | `<special/log.h>` | `libpunos_special_log.a` | Implemented |
-| [inputlib](inputlib/README.md) | `<special/input.h>` | `libpunos_special_input.a` | Implemented |
-| [camlib](camlib/README.md) | `<special/camera.h>` | `libpunos_special_camera.a` | Implemented |
+| [ipclib](ipclib/README.md) | `<special/ipc.h>` | `libpunos_special_ipc.a` | Host tests pass |
+| [loglib](loglib/README.md) | `<special/log.h>` | `libpunos_special_log.a` | Host tests pass |
+| [inputlib](inputlib/README.md) | `<special/input.h>` | `libpunos_special_input.a` | Host tests pass |
+| [camlib](camlib/README.md) | `<special/camera.h>` | `libpunos_special_camera.a` | Host tests pass |
+
+"Host tests pass" means `make -C System/SpecialLibs check` is green and every
+fix the library claims has a check that fails when the fix is reverted. The
+paths that need real hardware - a V4L2 capture device, an evdev device - are
+exercised through the fakes described below rather than against a real node, so
+a green run says nothing about the V4L2 and evdev ABIs themselves; that is
+libv4l2's and libinputdevice's own business. The QEMU boot check in CI runs the
+same self-tests inside the initramfs.
 
 The full list of planned libraries is in `DevDoc/SpecialLibs/_LibsList.md`.
 
@@ -38,10 +46,43 @@ System/SpecialLibs/<library>/
 ├── src/                       # implementation; internal.h for internals the test needs
 └── tests/
     ├── abi_compile.c          # compile-time ABI checks, no runtime code
-    └── <name>_runtime.c       # runtime test, also used as the QEMU self-test
+    ├── <name>_runtime.c       # runtime test, also used as the QEMU self-test
+    └── <dep>_fake.c           # optional: stands in for one dependency
 ```
 
 Build output goes to `<library>/build/`, which is ignored by Git.
+
+### Testing without the hardware
+
+A camera, a keyboard and a Unix socket that fails in a particular way are not
+always available on the machine running the tests, and some of them cannot be
+provoked on demand at all - Linux completes an `AF_UNIX` connect immediately, so
+a client never sees `EINPROGRESS`. A library can therefore list fakes:
+
+```make
+TEST_FAKES := v4l2_fake            # tests/v4l2_fake.c, linked before the archives
+TEST_FAKE_LDFLAGS := ...           # only needed when a fake replaces a wrapper
+```
+
+A fake provides its own definition of the dependency's public functions, so the
+library under test runs unmodified against something the test can script. The
+fake objects are linked ahead of the dependency archives, so a definition in one
+of them satisfies the reference and the archive member is never pulled in.
+
+Two fakes replace a syscall wrapper rather than a library: `ipclib`'s
+`getsockopt` and `libv4l2`'s `open`/`ioctl`/`mmap`. `libpunos_syscall.a` keeps
+every wrapper in a single object, so pulling it in for, say, `mmap()` also drags
+in the `ioctl()` being replaced. Those libraries pass
+`-Wl,--allow-multiple-definition`, which `library.mk` and `special_libs.mk`
+apply only when a fake is actually linked in.
+
+A fake has to behave like the thing it replaces, not just return something
+convenient. Two details cost real debugging time and are easy to get wrong:
+
+  - `mmap()` must hand out page-aligned, zero-filled memory. libmem validates a
+    block by requiring page alignment and relies on the contents being zero.
+  - a fake must not allocate through libmem, because libmem allocates with
+    `mmap()`. Use static storage.
 
 ### Makefile
 

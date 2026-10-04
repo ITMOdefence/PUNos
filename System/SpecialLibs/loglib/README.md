@@ -18,7 +18,7 @@ make -C System/SpecialLibs/loglib check
 ```c
 #include <special/log.h>
 
-LogStoreHandle *store = NULL;
+LogStoreHandle store = NULL;
 LogStoreConfig config;
 String path;
 

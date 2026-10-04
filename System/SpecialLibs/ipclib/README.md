@@ -25,8 +25,8 @@ System/SpecialLibs/ipclib/build/ipc_runtime              # runtime test
 ```c
 #include <special/ipc.h>
 
-IpcServerHandle *server = NULL;
-IpcConnectionHandle *conn = NULL;
+IpcServerHandle server = NULL;
+IpcConnectionHandle conn = NULL;
 String endpoint;
 
 string_from_c_str("/tmp/test.sock", &endpoint);

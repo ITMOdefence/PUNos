@@ -92,7 +92,7 @@
  * released exactly once by camera_close(), which writes NULL back through
  * its pointer. Never build one by hand.
  */
-typedef struct CameraHandle CameraHandle;
+typedef struct CameraHandle *CameraHandle;
 
 /* What to open. path is not owned: it only has to stay valid for the
  * camera_open() call. */
@@ -184,7 +184,7 @@ _Static_assert(sizeof(CameraReadStatus) == 4, "CameraReadStatus ABI mismatch");
  * CORE_PERMISSION_DENIED if the process may not open it, CORE_UNSUPPORTED if
  * it is not a V4L2 capture device); errors of libmem.
  */
-ErrorCode camera_open(const CameraConfig *config, CameraHandle **out_camera);
+ErrorCode camera_open(const CameraConfig *config, CameraHandle *out_camera);
 
 /*
  * Stores the camera's file descriptor in *out_fd. The descriptor belongs to
@@ -194,7 +194,7 @@ ErrorCode camera_open(const CameraConfig *config, CameraHandle **out_camera);
  * Errors: CORE_INVALID_ARGUMENT if camera or out_fd is NULL; CORE_INVALID_
  * STATE if the camera is closed.
  */
-ErrorCode camera_get_fd(CameraHandle *camera, i32 *out_fd);
+ErrorCode camera_get_fd(CameraHandle camera, i32 *out_fd);
 
 /*
  * Stores every discrete (format, size, frame rate) combination the camera
@@ -212,7 +212,7 @@ ErrorCode camera_get_fd(CameraHandle *camera, i32 *out_fd);
  * supported format; codes from core_error_from_errno() for an unexpected
  * ioctl() failure; errors of libmem.
  */
-ErrorCode camera_get_configurations(CameraHandle *camera, CameraConfigurationList *out_configurations);
+ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList *out_configurations);
 
 /*
  * Releases a list from camera_get_configurations() and leaves it { NULL, 0 }.
@@ -236,7 +236,7 @@ ErrorCode camera_configuration_list_destroy(CameraConfigurationList *configurati
  * requested combination; codes from core_error_from_errno() for an unexpected
  * ioctl() or mmap() failure; errors of libmem.
  */
-ErrorCode camera_configure(CameraHandle *camera, const CameraStreamConfig *requested_config,
+ErrorCode camera_configure(CameraHandle camera, const CameraStreamConfig *requested_config,
                            CameraStreamConfig *out_actual_config);
 
 /*
@@ -247,7 +247,7 @@ ErrorCode camera_configure(CameraHandle *camera, const CameraStreamConfig *reque
  * camera has not been configured, or was lost; codes from
  * core_error_from_errno() for an unexpected ioctl() failure.
  */
-ErrorCode camera_start(CameraHandle *camera);
+ErrorCode camera_start(CameraHandle camera);
 
 /*
  * Takes one ready buffer from the driver without waiting. On
@@ -261,7 +261,7 @@ ErrorCode camera_start(CameraHandle *camera);
  * CORE_INVALID_STATE if the camera is not streaming; codes from
  * core_error_from_errno() for an unexpected ioctl() failure.
  */
-ErrorCode camera_dequeue_frame(CameraHandle *camera, CameraReadStatus *out_status, CameraFrame *out_frame);
+ErrorCode camera_dequeue_frame(CameraHandle camera, CameraReadStatus *out_status, CameraFrame *out_frame);
 
 /*
  * Gives a buffer back to the driver and leaves the frame invalid, so its data
@@ -273,7 +273,7 @@ ErrorCode camera_dequeue_frame(CameraHandle *camera, CameraReadStatus *out_statu
  * camera is not streaming, or no frame is outstanding; codes from
  * core_error_from_errno() for an unexpected ioctl() failure.
  */
-ErrorCode camera_frame_release(CameraHandle *camera, CameraFrame *frame);
+ErrorCode camera_frame_release(CameraHandle camera, CameraFrame *frame);
 
 /*
  * Stops capture and releases the MMAP buffers, returning the camera to
@@ -283,7 +283,7 @@ ErrorCode camera_frame_release(CameraHandle *camera, CameraFrame *frame);
  * camera is not streaming, or a frame is still outstanding; codes from
  * core_error_from_errno() for an unexpected ioctl() or munmap() failure.
  */
-ErrorCode camera_stop(CameraHandle *camera);
+ErrorCode camera_stop(CameraHandle camera);
 
 /*
  * Releases every internal resource, closes the device and writes NULL
@@ -295,6 +295,6 @@ ErrorCode camera_stop(CameraHandle *camera);
  * core_error_from_errno() for an unexpected close() or munmap() failure (the
  * handle is still released).
  */
-ErrorCode camera_close(CameraHandle **camera);
+ErrorCode camera_close(CameraHandle *camera);
 
 #endif

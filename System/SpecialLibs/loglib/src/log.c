@@ -82,7 +82,12 @@ static ErrorCode log_read_exact(FileHandle file, u8 *buffer, usize size, usize *
 
 static ErrorCode log_validate_config(const LogStoreConfig *config)
 {
-    if (config == NULL || config->path == NULL || config->path->data == NULL) {
+    if (config == NULL || config->path == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    /* An empty path is not a path: open() would fail with a code this contract
+     * does not promise. */
+    if (config->path->data == NULL || config->path->length == 0) {
         return CORE_INVALID_ARGUMENT;
     }
     if (config->permissions > 0777u) {
@@ -91,7 +96,7 @@ static ErrorCode log_validate_config(const LogStoreConfig *config)
     return CORE_OK;
 }
 
-ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle **out_store)
+ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle *out_store)
 {
     ErrorCode result = log_validate_config(config);
 
@@ -103,12 +108,12 @@ ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle **out_stor
     }
 
     MemoryBlock block;
-    result = memory_allocate(sizeof(LogStoreHandle), &block);
+    result = memory_allocate(sizeof(struct LogStoreHandle), &block);
     if (result != CORE_OK) {
         return result;
     }
 
-    LogStoreHandle *store = (LogStoreHandle *)block.data;
+    LogStoreHandle store = (LogStoreHandle)block.data;
     store->file = NULL;
     store->path.data = NULL;
     store->path.length = 0;
@@ -130,7 +135,7 @@ ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle **out_stor
     return CORE_OK;
 }
 
-ErrorCode log_store_append(LogStoreHandle *store, const LogRecordInput *record)
+ErrorCode log_store_append(LogStoreHandle store, const LogRecordInput *record)
 {
     if (store == NULL || record == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -189,7 +194,7 @@ ErrorCode log_store_append(LogStoreHandle *store, const LogRecordInput *record)
     return result;
 }
 
-ErrorCode log_store_flush(LogStoreHandle *store)
+ErrorCode log_store_flush(LogStoreHandle store)
 {
     if (store == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -200,7 +205,7 @@ ErrorCode log_store_flush(LogStoreHandle *store)
     return file_flush(store->file);
 }
 
-ErrorCode log_store_rotate(LogStoreHandle *store, const LogStoreConfig *config)
+ErrorCode log_store_rotate(LogStoreHandle store, const LogStoreConfig *config)
 {
     ErrorCode result = log_validate_config(config);
 
@@ -230,8 +235,15 @@ ErrorCode log_store_rotate(LogStoreHandle *store, const LogStoreConfig *config)
 
     result = file_close(&store->file);
     if (result != CORE_OK) {
+        /* file_close() released the handle even though close() failed, so the
+         * previous log is gone and cannot stay current. The store is left
+         * unusable rather than pointing at a closed file. */
         (void)file_close(&new_file);
         (void)string_destroy(&new_path);
+        store->file = NULL;
+        (void)string_destroy(&store->path);
+        store->path.data = NULL;
+        store->path.length = 0;
         return result;
     }
 
@@ -241,13 +253,13 @@ ErrorCode log_store_rotate(LogStoreHandle *store, const LogStoreConfig *config)
     return CORE_OK;
 }
 
-ErrorCode log_store_close(LogStoreHandle **store)
+ErrorCode log_store_close(LogStoreHandle *store)
 {
     if (store == NULL || *store == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
 
-    LogStoreHandle *target = *store;
+    LogStoreHandle target = *store;
     ErrorCode result = CORE_OK;
 
     if (target->file != NULL) {
@@ -257,26 +269,26 @@ ErrorCode log_store_close(LogStoreHandle **store)
 
     MemoryBlock block;
     block.data = (u8 *)target;
-    block.size = sizeof(LogStoreHandle);
+    block.size = sizeof(struct LogStoreHandle);
     (void)memory_free(&block);
 
     *store = NULL;
     return result;
 }
 
-ErrorCode log_reader_open(const String *path, LogReaderHandle **out_reader)
+ErrorCode log_reader_open(const String *path, LogReaderHandle *out_reader)
 {
-    if (path == NULL || path->data == NULL || out_reader == NULL) {
+    if (path == NULL || path->data == NULL || path->length == 0 || out_reader == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
 
     MemoryBlock block;
-    ErrorCode result = memory_allocate(sizeof(LogReaderHandle), &block);
+    ErrorCode result = memory_allocate(sizeof(struct LogReaderHandle), &block);
     if (result != CORE_OK) {
         return result;
     }
 
-    LogReaderHandle *reader = (LogReaderHandle *)block.data;
+    LogReaderHandle reader = (LogReaderHandle)block.data;
     reader->file = NULL;
 
     result = file_open(path, FILE_OPEN_MODE_READ, 0, &reader->file);
@@ -289,7 +301,7 @@ ErrorCode log_reader_open(const String *path, LogReaderHandle **out_reader)
     return CORE_OK;
 }
 
-ErrorCode log_reader_next(LogReaderHandle *reader, LogReadStatus *out_status, LogRecord *out_record)
+ErrorCode log_reader_next(LogReaderHandle reader, LogReadStatus *out_status, LogRecord *out_record)
 {
     if (reader == NULL || out_status == NULL || out_record == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -324,7 +336,17 @@ ErrorCode log_reader_next(LogReaderHandle *reader, LogReadStatus *out_status, Lo
     u32 message_length = log_read_u32(header + 23);
     usize payload_size = (usize)frame_size - LOG_FRAME_HEADER_SIZE;
 
+    /* Every declared length has to be within what log_store_append() would
+     * have written, otherwise a damaged file would be taken for a valid log. */
+    if ((usize)component_length > LOG_COMPONENT_MAX_LENGTH ||
+        (usize)message_length > LOG_MESSAGE_MAX_LENGTH) {
+        return CORE_IO_ERROR;
+    }
     if ((usize)component_length + (usize)message_length != payload_size) {
+        return CORE_IO_ERROR;
+    }
+    /* Trace is 0, the lowest LogSeverity, so only the upper bound can fail. */
+    if (header[20] > (u8)LOG_SEVERITY_FATAL) {
         return CORE_IO_ERROR;
     }
 
@@ -386,13 +408,13 @@ ErrorCode log_record_destroy(LogRecord *record)
     return result != CORE_OK ? result : message_result;
 }
 
-ErrorCode log_reader_close(LogReaderHandle **reader)
+ErrorCode log_reader_close(LogReaderHandle *reader)
 {
     if (reader == NULL || *reader == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
 
-    LogReaderHandle *target = *reader;
+    LogReaderHandle target = *reader;
     ErrorCode result = CORE_OK;
 
     if (target->file != NULL) {
@@ -401,7 +423,7 @@ ErrorCode log_reader_close(LogReaderHandle **reader)
 
     MemoryBlock block;
     block.data = (u8 *)target;
-    block.size = sizeof(LogReaderHandle);
+    block.size = sizeof(struct LogReaderHandle);
     (void)memory_free(&block);
 
     *reader = NULL;

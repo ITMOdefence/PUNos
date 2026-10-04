@@ -27,6 +27,9 @@
 #define TEST_ENDPOINT "/tmp/ipc_test.sock"
 #define TEST_ENDPOINT_2 "/tmp/ipc_test2.sock"
 
+/* Endpoint shared by the connect-outcome test, built once in main(). */
+static String test_endpoint;
+
 static String make_str(const char *text)
 {
     String s;
@@ -44,7 +47,7 @@ static void destroy_str(String *s)
 static void test_server_create_close(void)
 {
     String endpoint = make_str(TEST_ENDPOINT);
-    IpcServerHandle *server = NULL;
+    IpcServerHandle server = NULL;
 
     EXPECT(1, ipc_server_create(NULL, &server) == CORE_INVALID_ARGUMENT);
     EXPECT(2, ipc_server_create(&endpoint, NULL) == CORE_INVALID_ARGUMENT);
@@ -57,7 +60,7 @@ static void test_server_create_close(void)
 
     EXPECT(7, ipc_server_close(NULL) == CORE_INVALID_ARGUMENT);
     {
-        IpcServerHandle *null_server = NULL;
+        IpcServerHandle null_server = NULL;
         EXPECT(8, ipc_server_close(&null_server) == CORE_INVALID_ARGUMENT);
     }
     EXPECT(9, ipc_server_close(&server) == CORE_OK);
@@ -75,7 +78,7 @@ static void test_server_endpoint_too_long(void)
     long_path[199] = '\0';
 
     String endpoint = make_str(long_path);
-    IpcServerHandle *server = NULL;
+    IpcServerHandle server = NULL;
 
     EXPECT(11, ipc_server_create(&endpoint, &server) == CORE_INVALID_PATH);
 
@@ -85,14 +88,14 @@ static void test_server_endpoint_too_long(void)
 static void test_connection_close(void)
 {
     String endpoint = make_str(TEST_ENDPOINT);
-    IpcServerHandle *server = NULL;
-    IpcConnectionHandle *conn = NULL;
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle conn = NULL;
 
     EXPECT(20, ipc_server_create(&endpoint, &server) == CORE_OK);
     EXPECT(21, ipc_server_accept(server, &conn) == CORE_WOULD_BLOCK);
     EXPECT(22, ipc_connection_close(NULL) == CORE_INVALID_ARGUMENT);
     {
-        IpcConnectionHandle *null_conn = NULL;
+        IpcConnectionHandle null_conn = NULL;
         EXPECT(23, ipc_connection_close(&null_conn) == CORE_INVALID_ARGUMENT);
     }
 
@@ -103,9 +106,9 @@ static void test_connection_close(void)
 static void test_connection_state_transitions(void)
 {
     String endpoint = make_str(TEST_ENDPOINT_2);
-    IpcServerHandle *server = NULL;
-    IpcConnectionHandle *server_conn = NULL;
-    IpcConnectionHandle *client_conn = NULL;
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle server_conn = NULL;
+    IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
     EXPECT(30, ipc_server_create(&endpoint, &server) == CORE_OK);
@@ -143,9 +146,9 @@ static void test_connection_state_transitions(void)
 static void test_send_receive(void)
 {
     String endpoint = make_str(TEST_ENDPOINT);
-    IpcServerHandle *server = NULL;
-    IpcConnectionHandle *server_conn = NULL;
-    IpcConnectionHandle *client_conn = NULL;
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle server_conn = NULL;
+    IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
     EXPECT(50, ipc_server_create(&endpoint, &server) == CORE_OK);
@@ -207,9 +210,9 @@ static void test_send_receive(void)
 static void test_multiple_messages(void)
 {
     String endpoint = make_str(TEST_ENDPOINT_2);
-    IpcServerHandle *server = NULL;
-    IpcConnectionHandle *server_conn = NULL;
-    IpcConnectionHandle *client_conn = NULL;
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle server_conn = NULL;
+    IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
     EXPECT(80, ipc_server_create(&endpoint, &server) == CORE_OK);
@@ -263,9 +266,9 @@ static void test_multiple_messages(void)
 static void test_send_too_large(void)
 {
     String endpoint = make_str(TEST_ENDPOINT);
-    IpcServerHandle *server = NULL;
-    IpcConnectionHandle *server_conn = NULL;
-    IpcConnectionHandle *client_conn = NULL;
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle server_conn = NULL;
+    IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
     EXPECT(100, ipc_server_create(&endpoint, &server) == CORE_OK);
@@ -297,11 +300,183 @@ static void test_send_too_large(void)
     destroy_str(&endpoint);
 }
 
+/* Issue 13: an empty endpoint is not an endpoint, and one that is too long
+ * cannot be represented in sockaddr_un. Both are refused up front. */
+static void test_endpoint_validation(void)
+{
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle conn = NULL;
+
+    String empty = make_str("");
+    EXPECT(80, ipc_server_create(&empty, &server) == CORE_INVALID_ARGUMENT);
+    EXPECT(81, ipc_connection_begin_connect(&empty, &conn) == CORE_INVALID_ARGUMENT);
+
+    String null_endpoint;
+    null_endpoint.data = NULL;
+    null_endpoint.length = 0;
+    EXPECT(82, ipc_server_create(&null_endpoint, &server) == CORE_INVALID_ARGUMENT);
+    EXPECT(83, ipc_connection_begin_connect(&null_endpoint, &conn) == CORE_INVALID_ARGUMENT);
+
+    destroy_str(&empty);
+}
+
+/* Issue 8: a final connect error has to surface through ErrorCode instead of
+ * being reported as "still connecting", and it has to keep surfacing: reading
+ * SO_ERROR clears the kernel's copy, so a second call would otherwise see 0
+ * and wrongly report the socket as Open. */
+static void test_connect_failure(void)
+{
+    /* Nothing is bound here, so connect() fails immediately with ENOENT or
+     * ECONNREFUSED rather than staying in progress. */
+    String endpoint = make_str("/tmp/ipc_absent_endpoint.sock");
+    IpcConnectionHandle conn = NULL;
+    IpcConnectionState state = IPC_CONNECTION_STATE_OPEN;
+    ErrorCode first;
+
+    if (ipc_connection_begin_connect(&endpoint, &conn) != CORE_OK) {
+        destroy_str(&endpoint);
+        return;
+    }
+
+    first = ipc_connection_finish_connect(conn, &state);
+    if (first == CORE_OK) {
+        /* Still in progress on this kernel: not a failure case. */
+        EXPECT(84, state == IPC_CONNECTION_STATE_CONNECTING);
+    } else {
+        /* A final error, reported as such and not as a success. */
+        EXPECT(85, state != IPC_CONNECTION_STATE_OPEN);
+        EXPECT(86, first == CORE_NOT_FOUND || first == CORE_IO_ERROR);
+
+        /* Reading SO_ERROR again must not turn a dead socket into Open. */
+        state = IPC_CONNECTION_STATE_OPEN;
+        EXPECT(87, ipc_connection_finish_connect(conn, &state) == first);
+        EXPECT(88, state != IPC_CONNECTION_STATE_OPEN);
+    }
+
+    EXPECT(89, ipc_connection_close(&conn) == CORE_OK);
+    destroy_str(&endpoint);
+}
+
+/* --- driven through tests/socket_fake.c ---------------------------------- */
+
+/* Control surface of the fake. */
+void fake_socket_arm(i32 error_to_report);
+void fake_socket_reset(void);
+bool fake_socket_error_pending(void);
+
+/* Opens a client connection against a real listening server, so only the
+ * reported connect outcome is faked. */
+static IpcConnectionHandle connect_to_live_server(IpcServerHandle server)
+{
+    IpcConnectionHandle conn = NULL;
+    IpcConnectionHandle accepted = NULL;
+    i32 server_fd = -1;
+
+    if (server == NULL || ipc_server_get_fd(server, &server_fd) != CORE_OK) {
+        return NULL;
+    }
+    (void)ipc_connection_begin_connect(&test_endpoint, &conn);
+    if (conn == NULL) {
+        return NULL;
+    }
+    /* Drain the accept queue so the connect really completes on the server. */
+    (void)ipc_server_accept(server, &accepted);
+    if (accepted != NULL) {
+        (void)ipc_connection_close(&accepted);
+    }
+    return conn;
+}
+
+/*
+ * Issue 8: ipc_connection_finish_connect() treated every non-zero SO_ERROR as
+ * "still connecting" and never reported a failure, and because reading SO_ERROR
+ * clears the kernel's copy, a second call could see 0 and declare a socket that
+ * never connected to be Open.
+ */
+static void test_connect_outcomes(void)
+{
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle conn;
+    IpcConnectionState state;
+
+    if (ipc_server_create(&test_endpoint, &server) != CORE_OK) {
+        return;
+    }
+
+    /* 1. The kernel has not finished: still Connecting, and that is not an
+     *    error. */
+    conn = connect_to_live_server(server);
+    if (conn != NULL) {
+        fake_socket_arm(EINPROGRESS);
+        state = IPC_CONNECTION_STATE_OPEN;
+        EXPECT(100, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(101, state == IPC_CONNECTION_STATE_CONNECTING);
+
+        /* 2. Then it succeeds: the connection opens. */
+        fake_socket_arm(0);
+        EXPECT(102, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(103, state == IPC_CONNECTION_STATE_OPEN);
+        EXPECT(104, ipc_connection_close(&conn) == CORE_OK);
+    }
+    fake_socket_reset();
+
+    /* 3. A final failure has to surface as an ErrorCode. out_state is only
+     *    defined on CORE_OK, so the connection is probed through send() to see
+     *    whether it was declared Open: a failed connect stays in Connecting
+     *    and refuses to send. */
+    conn = connect_to_live_server(server);
+    if (conn != NULL) {
+        IpcMessage message;
+
+        message.type = 1;
+        message.payload.data = NULL;
+        message.payload.size = 0;
+
+        fake_socket_arm(ECONNREFUSED);
+        state = IPC_CONNECTION_STATE_CONNECTING;
+        EXPECT(105, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
+        EXPECT(106, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
+
+        /* 4. The kernel cleared the error when it was read, so the old code
+         *    came back here, saw 0 and reported Open - and then the message
+         *    above would have gone through. The failure has to repeat. */
+        EXPECT(107, !fake_socket_error_pending());
+        state = IPC_CONNECTION_STATE_CONNECTING;
+        EXPECT(108, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
+        EXPECT(109, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
+        EXPECT(110, ipc_connection_close(&conn) == CORE_OK);
+    }
+    fake_socket_reset();
+
+    /* 5. ENOENT, the other error worth distinguishing, maps to CORE_NOT_FOUND. */
+    conn = connect_to_live_server(server);
+    if (conn != NULL) {
+        fake_socket_arm(ENOENT);
+        state = IPC_CONNECTION_STATE_CONNECTING;
+        EXPECT(111, ipc_connection_finish_connect(conn, &state) == CORE_NOT_FOUND);
+        EXPECT(112, ipc_connection_close(&conn) == CORE_OK);
+    }
+    fake_socket_reset();
+
+    /* 6. A healthy connection still opens with no faking at all. */
+    conn = connect_to_live_server(server);
+    if (conn != NULL) {
+        state = IPC_CONNECTION_STATE_CONNECTING;
+        EXPECT(114, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(115, state == IPC_CONNECTION_STATE_OPEN);
+        EXPECT(116, ipc_connection_close(&conn) == CORE_OK);
+    }
+
+    EXPECT(117, ipc_server_close(&server) == CORE_OK);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
     (void)argv;
     (void)envp;
+
+    test_endpoint = make_str(TEST_ENDPOINT);
 
     test_server_create_close();
     test_server_endpoint_too_long();
@@ -310,6 +485,11 @@ int main(int argc, char **argv, char **envp)
     test_send_receive();
     test_multiple_messages();
     test_send_too_large();
+    test_endpoint_validation();
+    test_connect_failure();
+    test_connect_outcomes();
+
+    destroy_str(&test_endpoint);
 
     check_passed();
     return 0;

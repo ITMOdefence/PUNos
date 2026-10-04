@@ -5,10 +5,29 @@
 #   RUNTIME_TEST   base name of tests/<name>.c
 #   DEPENDENCIES   System Libs it uses, in dependency order
 #
+# Optional:
+#   TEST_FAKES     whitespace-separated base names of tests/<name>_fake.c files
+#                  to compile and link into the runtime test. A fake provides
+#                  its own definition of one dependency's public functions, so
+#                  the code paths that need real hardware can be exercised on a
+#                  machine that has none. These objects are linked before the
+#                  dependency archives, so a definition here satisfies the
+#                  reference and the archive member is never pulled in.
+#
+# Optional:
+#   TEST_FAKE_LDFLAGS
+#                  extra flags for the runtime test link. A fake that
+#                  deliberately replaces one *syscall wrapper* needs
+#                  --allow-multiple-definition: libpunos_syscall.a holds every
+#                  wrapper in a single object, so pulling it in for, say, mmap()
+#                  also drags in the getsockopt() the fake is replacing. The
+#                  fake is linked first, so its definition is the one kept.
+#
 # Example:
-#   LIBRARY_NAME := ipc
-#   RUNTIME_TEST := ipc_runtime
-#   DEPENDENCIES := libcore libmem libstr libeventloop
+#   LIBRARY_NAME := camera
+#   RUNTIME_TEST := camera_runtime
+#   DEPENDENCIES := libcore libmem libstr libtime libeventloop libv4l2
+#   TEST_FAKES   := v4l2_fake
 
 CC ?= cc
 AR ?= ar
@@ -48,6 +67,8 @@ RUNTIME_TEST_OBJECT := $(BUILD_DIR)/$(RUNTIME_TEST).o
 RUNTIME_TEST_PROGRAM := $(BUILD_DIR)/$(RUNTIME_TEST)
 HEADERS := $(wildcard include/special/*.h src/*.h) \
            $(foreach dependency,$(DEPENDENCIES),$(wildcard $(SYSTEM_LIBS_DIR)/$(dependency)/include/sys/*.h))
+FAKE_SOURCES := $(foreach fake,$(TEST_FAKES),tests/$(fake).c)
+FAKE_OBJECTS := $(patsubst tests/%.c,$(BUILD_DIR)/%.o,$(FAKE_SOURCES))
 
 .PHONY: all check clean runtime-test dependencies
 
@@ -75,6 +96,9 @@ $(ABI_TEST_OBJECT): tests/abi_compile.c $(HEADERS) | $(BUILD_DIR)
 $(RUNTIME_TEST_OBJECT): tests/$(RUNTIME_TEST).c $(TESTING_DIR)/check.h $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/%_fake.o: tests/%_fake.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 dependencies:
 	@set -e; for dependency in $(DEPENDENCIES); do $(MAKE) -C $(SYSTEM_LIBS_DIR)/$$dependency all; done
 	$(MAKE) -C $(CRT_DIR) all
@@ -83,9 +107,9 @@ dependencies:
 $(DEPENDENCY_ARCHIVES) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY): dependencies
 
 $(RUNTIME_TEST_PROGRAM): $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(DEPENDENCY_ARCHIVES) \
-                         $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
-	$(CC) -nostdlib -no-pie -Wl,-e,_start \
-		$(CRT0) $(RUNTIME_TEST_OBJECT) $(LIBRARY) \
+                         $(FAKE_OBJECTS) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
+	$(CC) $(TEST_FAKE_LDFLAGS) -Wl,--allow-multiple-definition -nostdlib -no-pie -Wl,-e,_start \
+		$(CRT0) $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(FAKE_OBJECTS) \
 		$(call reverse,$(DEPENDENCY_ARCHIVES)) \
 		$(CRT_LIBRARY) $(SYSCALL_LIBRARY) -o $@
 

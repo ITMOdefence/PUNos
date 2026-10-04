@@ -87,7 +87,7 @@
  * log_store_open() and released exactly once by log_store_close(), which
  * writes NULL back through its pointer. Never build one by hand.
  */
-typedef struct LogStoreHandle LogStoreHandle;
+typedef struct LogStoreHandle *LogStoreHandle;
 
 /*
  * Opaque context for reading one log file from the beginning. Created by
@@ -95,7 +95,7 @@ typedef struct LogStoreHandle LogStoreHandle;
  * and a store may be open on the same file at the same time; they hold
  * separate handles.
  */
-typedef struct LogReaderHandle LogReaderHandle;
+typedef struct LogReaderHandle *LogReaderHandle;
 
 /*
  * What to open. path is not owned: log_store_open() and log_store_rotate()
@@ -190,7 +190,7 @@ _Static_assert(sizeof(LogReadStatus) == 4, "LogReadStatus ABI mismatch");
  * codes from core_error_from_errno() if open() fails (CORE_NOT_FOUND if a
  * parent directory is missing); errors of libmem and libstr.
  */
-ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle **out_store);
+ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle *out_store);
 
 /*
  * Serialises record into one frame and appends it to the current file. The
@@ -208,7 +208,7 @@ ErrorCode log_store_open(const LogStoreConfig *config, LogStoreHandle **out_stor
  * write fails (a failure may leave an incomplete frame at the end of the
  * file, which log_reader_next() reports as CORE_IO_ERROR); errors of libmem.
  */
-ErrorCode log_store_append(LogStoreHandle *store, const LogRecordInput *record);
+ErrorCode log_store_append(LogStoreHandle store, const LogRecordInput *record);
 
 /*
  * Pushes every frame written so far to the device through file_flush().
@@ -216,7 +216,7 @@ ErrorCode log_store_append(LogStoreHandle *store, const LogRecordInput *record);
  * Errors: CORE_INVALID_ARGUMENT if store is NULL; CORE_INVALID_STATE if the
  * store is closed; codes from core_error_from_errno() if the flush fails.
  */
-ErrorCode log_store_flush(LogStoreHandle *store);
+ErrorCode log_store_flush(LogStoreHandle store);
 
 /*
  * Makes the file described by config the current one, for writes from now on.
@@ -231,7 +231,7 @@ ErrorCode log_store_flush(LogStoreHandle *store);
  * core_error_from_errno() if open() or close() fails; errors of libmem and
  * libstr.
  */
-ErrorCode log_store_rotate(LogStoreHandle *store, const LogStoreConfig *config);
+ErrorCode log_store_rotate(LogStoreHandle store, const LogStoreConfig *config);
 
 /*
  * Closes the current file without flushing it implicitly - call
@@ -242,7 +242,7 @@ ErrorCode log_store_rotate(LogStoreHandle *store, const LogStoreConfig *config);
  * Errors: CORE_INVALID_ARGUMENT if store or *store is NULL; codes from
  * core_error_from_errno() if close() fails (the handle is still released).
  */
-ErrorCode log_store_close(LogStoreHandle **store);
+ErrorCode log_store_close(LogStoreHandle *store);
 
 /* ------------------------------------------------------------------------ */
 /* Operations - reader                                                       */
@@ -256,7 +256,7 @@ ErrorCode log_store_close(LogStoreHandle **store);
  * codes from core_error_from_errno() if open() fails (CORE_NOT_FOUND if the
  * file does not exist); errors of libmem.
  */
-ErrorCode log_reader_open(const String *path, LogReaderHandle **out_reader);
+ErrorCode log_reader_open(const String *path, LogReaderHandle *out_reader);
 
 /*
  * Decodes the next frame. On LOG_READ_STATUS_LOG_RECORD, out_record owns its
@@ -274,7 +274,7 @@ ErrorCode log_reader_open(const String *path, LogReaderHandle **out_reader);
  * corrupt or the file ends in an incomplete frame; codes from
  * core_error_from_errno() if the read fails; errors of libmem and libstr.
  */
-ErrorCode log_reader_next(LogReaderHandle *reader, LogReadStatus *out_status, LogRecord *out_record);
+ErrorCode log_reader_next(LogReaderHandle reader, LogReadStatus *out_status, LogRecord *out_record);
 
 /*
  * Releases the component and message of a record read by log_reader_next()
@@ -292,6 +292,6 @@ ErrorCode log_record_destroy(LogRecord *record);
  * Errors: CORE_INVALID_ARGUMENT if reader or *reader is NULL; codes from
  * core_error_from_errno() if close() fails (the handle is still released).
  */
-ErrorCode log_reader_close(LogReaderHandle **reader);
+ErrorCode log_reader_close(LogReaderHandle *reader);
 
 #endif

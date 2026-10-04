@@ -56,6 +56,9 @@ _Static_assert(sizeof(struct RawInputId) == 8, "struct RawInputId ABI mismatch")
  * (EV_SYN, EV_KEY, EV_REL, EV_ABS, ...), not a specific type's codes: one
  * bit per event type is all this library needs to report capabilities. */
 #define EVIOCGBIT_TYPES_REQUEST(len) IOC_ENCODE(IOC_READ, 'E', 0x20, (len))
+/* EVIOCGBIT(EV_KEY, len): _IOC(_IOC_READ, 'E', 0x20 + EV_KEY, len) - one bit
+ * per supported key code. EV_KEY is 1, hence nr 0x21. */
+#define EVIOCGBIT_KEYS_REQUEST(len) IOC_ENCODE(IOC_READ, 'E', 0x21, (len))
 
 #define EV_KEY 1u
 #define EV_REL 2u
@@ -80,6 +83,60 @@ static ErrorCode last_error(void)
     return core_error_from_errno(errno);
 }
 
+/* First BTN_* code (BTN_MISC). Everything below it is a KEY_* code. */
+#define BTN_MISC_CODE 0x100
+/* KEY_MAX is 0x2ff, so 96 bytes cover every key code a device can report. */
+#define KEY_CODE_BITS_BYTES 96
+#define KEY_MAX_CODE 0x2ff
+
+/*
+ * Splits the device's EV_KEY codes into keyboard keys and pointer buttons.
+ *
+ * The kernel numbers KEY_* below BTN_MISC (0x100) and BTN_* from there up, so
+ * one pass over the bitmap tells the two apart. EV_KEY alone does not: a mouse
+ * reports buttons through EV_KEY as well, and treating that as a keyboard is
+ * what made a mouse classify as both.
+ */
+static ErrorCode read_key_capabilities(i32 fd, InputRawCapabilityMask *out_capabilities)
+{
+    u8 key_bits[KEY_CODE_BITS_BYTES];
+    bool has_keyboard_key = false;
+    bool has_button = false;
+    usize index;
+
+    for (index = 0; index < sizeof(key_bits); ++index) {
+        key_bits[index] = 0;
+    }
+    if (ioctl(fd, EVIOCGBIT_KEYS_REQUEST(sizeof(key_bits)), (unsigned long)(uintptr_t)key_bits) < 0) {
+        return last_error();
+    }
+
+    for (index = 0; index < sizeof(key_bits) * 8u; ++index) {
+        u32 code = (u32)index;
+
+        if (code > KEY_MAX_CODE) {
+            break;
+        }
+        if ((key_bits[index / 8u] & (u8)(1u << (index % 8u))) == 0) {
+            continue;
+        }
+        if (code < BTN_MISC_CODE) {
+            has_keyboard_key = true;
+        } else {
+            has_button = true;
+        }
+    }
+
+    *out_capabilities = 0;
+    if (has_keyboard_key) {
+        *out_capabilities |= INPUT_RAW_CAP_KEYBOARD_KEYS;
+    }
+    if (has_button) {
+        *out_capabilities |= INPUT_RAW_CAP_POINTER_BUTTONS;
+    }
+    return CORE_OK;
+}
+
 static ErrorCode read_capabilities(i32 fd, InputRawCapabilityMask *out_capabilities)
 {
     u32 type_bits = 0;
@@ -90,7 +147,12 @@ static ErrorCode read_capabilities(i32 fd, InputRawCapabilityMask *out_capabilit
     }
     *out_capabilities = 0;
     if ((type_bits & (1u << EV_KEY)) != 0) {
+        InputRawCapabilityMask key_capabilities = 0;
+
         *out_capabilities |= INPUT_RAW_CAP_KEY;
+        if (read_key_capabilities(fd, &key_capabilities) == CORE_OK) {
+            *out_capabilities |= key_capabilities;
+        }
     }
     if ((type_bits & (1u << EV_REL)) != 0) {
         *out_capabilities |= INPUT_RAW_CAP_RELATIVE;

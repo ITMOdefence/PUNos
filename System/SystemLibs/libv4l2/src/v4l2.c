@@ -286,6 +286,10 @@ static ErrorCode release_buffers(struct V4l2DeviceHandle *device)
 /* Open / fd / close                                                       */
 /* ------------------------------------------------------------------------ */
 
+#define V4L2_CAP_VIDEO_CAPTURE 0x00000001u
+#define V4L2_CAP_DEVICE_CAPS 0x00000080u
+#define V4L2_CAP_STREAMING 0x04000000u
+
 ErrorCode v4l2_open(const V4l2DeviceConfig *config, V4l2DeviceHandle *out_device)
 {
     const char *path_data;
@@ -302,6 +306,34 @@ ErrorCode v4l2_open(const V4l2DeviceConfig *config, V4l2DeviceHandle *out_device
     fd = open(path_data, O_RDWR | O_NONBLOCK | O_CLOEXEC, 0);
     if (fd < 0) {
         return last_error();
+    }
+
+    /* The device has to be a V4L2 one that can capture video with MMAP
+     * streaming, otherwise nothing below could work. Older drivers leave
+     * device_caps at zero, in which case capabilities is the whole truth. */
+    {
+        struct RawV4l2Capability capability;
+        u32 usable;
+
+        zero_struct(&capability, sizeof(capability));
+        if (ioctl_ptr(fd, VIDIOC_QUERYCAP, &capability) != 0) {
+            i32 err = errno;
+
+            (void)close(fd);
+            /* ENOTTY / EINVAL mean the file is not a V4L2 device at all. */
+            if (err == ENOTTY || err == EINVAL || err == ENOSYS) {
+                return CORE_UNSUPPORTED;
+            }
+            return last_error();
+        }
+        usable = (capability.capabilities & V4L2_CAP_DEVICE_CAPS) != 0
+                     ? capability.device_caps
+                     : capability.capabilities;
+        if ((usable & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING)) !=
+            (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING)) {
+            (void)close(fd);
+            return CORE_UNSUPPORTED;
+        }
     }
 
     result = memory_allocate(sizeof(struct V4l2DeviceHandle), &handle_block);
@@ -729,6 +761,12 @@ ErrorCode v4l2_dequeue_buffer(V4l2DeviceHandle device, V4l2DequeueStatus *out_st
             return CORE_OK;
         }
         if (errno == ENODEV) {
+            /* The driver is gone, so the buffers it had handed out are gone
+             * with it: they can no longer be queued back. Clearing the count
+             * here is what lets v4l2_close() release the handle instead of
+             * refusing with CORE_INVALID_STATE and leaking it. */
+            device->outstanding_count = 0;
+            device->streaming = false;
             *out_status = V4L2_DEQUEUE_STATUS_DEVICE_LOST;
             return CORE_OK;
         }

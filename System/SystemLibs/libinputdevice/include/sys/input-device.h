@@ -32,6 +32,12 @@ typedef u32 InputRawCapabilityMask;
 #define INPUT_RAW_CAP_KEY ((InputRawCapabilityMask)1)
 #define INPUT_RAW_CAP_RELATIVE ((InputRawCapabilityMask)2)
 #define INPUT_RAW_CAP_ABSOLUTE ((InputRawCapabilityMask)4)
+/* The device supports at least one key code below BTN_MISC (0x100), so it
+ * reports keyboard keys and not only pointer buttons. Without this a mouse,
+ * which also reports EV_KEY, would look like a keyboard. */
+#define INPUT_RAW_CAP_KEYBOARD_KEYS ((InputRawCapabilityMask)8)
+/* The device supports at least one button code, BTN_MISC (0x100) and up. */
+#define INPUT_RAW_CAP_POINTER_BUTTONS ((InputRawCapabilityMask)16)
 
 typedef struct InputRawDeviceInfo {
     u16 bus;

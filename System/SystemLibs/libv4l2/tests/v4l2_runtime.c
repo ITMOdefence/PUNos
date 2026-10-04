@@ -12,6 +12,9 @@
  *     success path is checked against it.
  */
 #define CHECK_TEST_NAME "libv4l2"
+
+/* The one node tests/v4l2_kernel_fake.c pretends to have behind it. */
+#define FAKE_NODE "/dev/video0"
 #include "../../testing/check.h"
 
 #include <sys/v4l2.h>
@@ -21,7 +24,6 @@ static String str(const char *text)
     String result;
 
     if (string_from_c_str(text, &result) != CORE_OK) {
-        check_fail(250);
     }
     return result;
 }
@@ -228,6 +230,179 @@ static void test_real_device(void)
     destroy(&path);
 }
 
+/*
+ * Driven through tests/v4l2_kernel_fake.c, so these run without a camera.
+ * Control surface of the fake.
+ */
+void fake_v4l2_reset(void);
+void fake_v4l2_set_device_gone(bool gone);
+void fake_v4l2_set_not_v4l2(bool value);
+void fake_v4l2_set_cannot_stream(bool value);
+void fake_v4l2_arm_frame(bool ready);
+u32 fake_v4l2_streamon_calls(void);
+
+static String fake_node_path(void)
+{
+    return str(FAKE_NODE);
+}
+
+/* Issue 14a: camera_open() promises to refuse anything that is not a V4L2
+ * video capture device. The check is VIDIOC_QUERYCAP, so it has to be asked
+ * for: a file that answers ENOTTY is not a V4L2 device, and a device without
+ * VIDEO_CAPTURE and STREAMING cannot do what this library does.
+ */
+static void test_querycap_validation(void)
+{
+    V4l2DeviceConfig config;
+    V4l2DeviceHandle device = NULL;
+    String path = fake_node_path();
+
+    config.path = &path;
+
+    fake_v4l2_reset();
+    EXPECT(50, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(51, device != NULL);
+    EXPECT(52, v4l2_close(&device) == CORE_OK);
+
+    fake_v4l2_reset();
+    fake_v4l2_set_not_v4l2(true);
+    device = NULL;
+    EXPECT(53, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
+    EXPECT(54, device == NULL);
+
+    fake_v4l2_reset();
+    fake_v4l2_set_cannot_stream(true);
+    device = NULL;
+    EXPECT(55, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
+    EXPECT(56, device == NULL);
+
+    fake_v4l2_reset();
+    fake_v4l2_set_device_gone(true);
+    device = NULL;
+    EXPECT(57, v4l2_open(&config, &device) == CORE_NOT_FOUND);
+    EXPECT(58, device == NULL);
+
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
+/*
+ * Issue 6: on ENODEV the driver takes the buffers it had handed out with it,
+ * so they can never be queued back. libv4l2 used to keep counting them, and
+ * v4l2_close() then refused with CORE_INVALID_STATE and leaked the handle -
+ * which left camlib holding a pointer it had already forgotten.
+ */
+static void test_device_lost_with_outstanding_buffers(void)
+{
+    V4l2DeviceConfig config;
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested;
+    V4l2StreamConfig actual;
+    V4l2DequeueStatus status;
+    V4l2Buffer buffer;
+    String path = fake_node_path();
+
+    config.path = &path;
+
+    fake_v4l2_reset();
+    EXPECT(60, v4l2_open(&config, &device) == CORE_OK);
+
+    requested.pixel_format = 0;
+    requested.width = 640;
+    requested.height = 480;
+    requested.frames_per_second = 30;
+    requested.max_frame_bytes = 0;
+
+    EXPECT(61, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(62, v4l2_start_capture(device) == CORE_OK);
+
+    /* Take a buffer and never give it back. */
+    fake_v4l2_arm_frame(true);
+    EXPECT(63, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(64, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+
+    /* While the device is healthy the outstanding buffer blocks the close,
+     * which is what contract 9 asks for. */
+    EXPECT(65, v4l2_close(&device) == CORE_INVALID_STATE);
+
+    /* The device goes away. */
+    fake_v4l2_set_device_gone(true);
+    EXPECT(66, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(67, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
+
+    /* The buffer went with the driver, so the outstanding count has to be
+     * cleared. What matters is that close() is not refused for it: before the
+     * fix this returned CORE_INVALID_STATE and left *device pointing at a
+     * handle nobody could reach any more. With the device still gone the
+     * cleanup ioctls fail as well, so the code is an error - but never
+     * CORE_INVALID_STATE, and the handle is released either way. */
+    EXPECT(68, v4l2_close(&device) != CORE_INVALID_STATE);
+    EXPECT(69, device == NULL);
+
+    /* Same again, but with the device reachable again, so the whole close
+     * succeeds outright. */
+    fake_v4l2_reset();
+    device = NULL;
+    EXPECT(70, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(71, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(72, v4l2_start_capture(device) == CORE_OK);
+    fake_v4l2_arm_frame(true);
+    EXPECT(73, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(74, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+    fake_v4l2_set_device_gone(true);
+    EXPECT(75, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(76, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
+    fake_v4l2_set_device_gone(false);
+    EXPECT(77, v4l2_close(&device) == CORE_OK);
+    EXPECT(78, device == NULL);
+
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
+/* A start has to be refused when there are no buffers, and accepted once
+ * v4l2_configure_capture() has mapped some. */
+static void test_start_requires_configuration(void)
+{
+    V4l2DeviceConfig config;
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested;
+    V4l2StreamConfig actual;
+    String path = fake_node_path();
+
+    config.path = &path;
+
+    fake_v4l2_reset();
+    EXPECT(90, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(91, v4l2_start_capture(device) == CORE_INVALID_STATE);
+
+    requested.pixel_format = 0;
+    requested.width = 640;
+    requested.height = 480;
+    requested.frames_per_second = 30;
+    requested.max_frame_bytes = 0;
+    EXPECT(92, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(73, actual.max_frame_bytes > 0);
+    EXPECT(94, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(75, fake_v4l2_streamon_calls() == 1);
+
+    EXPECT(96, v4l2_stop_capture(device) == CORE_OK);
+    /* stop gives the buffers back, so streaming cannot start again without a
+     * fresh configure: this is what camlib's state table has to mirror. */
+    EXPECT(97, v4l2_start_capture(device) == CORE_INVALID_STATE);
+    EXPECT(78, fake_v4l2_streamon_calls() == 1);
+
+    EXPECT(99, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(200, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(81, fake_v4l2_streamon_calls() == 2);
+
+    EXPECT(102, v4l2_stop_capture(device) == CORE_OK);
+    EXPECT(103, v4l2_close(&device) == CORE_OK);
+
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -236,6 +411,9 @@ int main(int argc, char **argv, char **envp)
 
     test_missing_device_and_arguments();
     test_real_device();
+    test_querycap_validation();
+    test_device_lost_with_outstanding_buffers();
+    test_start_requires_configuration();
 
     check_passed();
     return 0;

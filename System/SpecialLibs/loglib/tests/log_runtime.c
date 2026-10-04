@@ -29,6 +29,44 @@
 
 #define TEST_LOG "/tmp/loglib_test.log"
 #define TEST_LOG_2 "/tmp/loglib_test2.log"
+#define TEST_CORRUPT_LOG "/tmp/loglib_corrupt.log"
+
+/* Writes a hand-built frame so a reader can be tested against a damaged file.
+ * payload_extra bytes are appended after the header to make the frame look
+ * complete when it is not. */
+static ErrorCode write_raw_frame(const String *path, const u8 *header, usize header_size,
+                                 usize payload_extra)
+{
+    FileHandle file = NULL;
+    ErrorCode result = file_open(path, FILE_OPEN_MODE_WRITE_TRUNCATE, 0644, &file);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    result = file_write_all(file, (Bytes){ (u8 *)header, header_size });
+    if (result == CORE_OK && payload_extra > 0) {
+        u8 filler[64];
+        usize written = 0;
+
+        for (usize i = 0; i < sizeof(filler); ++i) {
+            filler[i] = (u8)'x';
+        }
+        while (written < payload_extra) {
+            usize chunk = payload_extra - written;
+
+            if (chunk > sizeof(filler)) {
+                chunk = sizeof(filler);
+            }
+            result = file_write_all(file, (Bytes){ filler, chunk });
+            if (result != CORE_OK) {
+                break;
+            }
+            written += chunk;
+        }
+    }
+    (void)file_close(&file);
+    return result;
+}
 
 static String make_str(const char *text)
 {
@@ -58,7 +96,7 @@ static void remove_if_present(const String *path)
 static void test_store_open_close(void)
 {
     String path = make_str(TEST_LOG);
-    LogStoreHandle *store = NULL;
+    LogStoreHandle store = NULL;
     LogStoreConfig config;
 
     config.path = &path;
@@ -75,7 +113,7 @@ static void test_store_open_close(void)
     EXPECT(4, log_store_open(&config, &store) == CORE_OK && store != NULL);
     EXPECT(5, log_store_close(NULL) == CORE_INVALID_ARGUMENT);
     {
-        LogStoreHandle *null_store = NULL;
+        LogStoreHandle null_store = NULL;
         EXPECT(6, log_store_close(&null_store) == CORE_INVALID_ARGUMENT);
     }
     EXPECT(7, log_store_close(&store) == CORE_OK);
@@ -87,7 +125,7 @@ static void test_store_open_close(void)
 static void test_append_and_read(void)
 {
     String path = make_str(TEST_LOG);
-    LogStoreHandle *store = NULL;
+    LogStoreHandle store = NULL;
     LogStoreConfig config;
 
     remove_if_present(&path);
@@ -112,7 +150,7 @@ static void test_append_and_read(void)
     EXPECT(12, log_store_flush(store) == CORE_OK);
     EXPECT(13, log_store_close(&store) == CORE_OK);
 
-    LogReaderHandle *reader = NULL;
+    LogReaderHandle reader = NULL;
     EXPECT(14, log_reader_open(&path, &reader) == CORE_OK);
 
     LogRecord read_record;
@@ -143,7 +181,7 @@ static void test_append_and_read(void)
 static void test_multiple_records(void)
 {
     String path = make_str(TEST_LOG_2);
-    LogStoreHandle *store = NULL;
+    LogStoreHandle store = NULL;
     LogStoreConfig config;
 
     remove_if_present(&path);
@@ -173,7 +211,7 @@ static void test_multiple_records(void)
     EXPECT(32, log_store_flush(store) == CORE_OK);
     EXPECT(33, log_store_close(&store) == CORE_OK);
 
-    LogReaderHandle *reader = NULL;
+    LogReaderHandle reader = NULL;
     EXPECT(34, log_reader_open(&path, &reader) == CORE_OK);
 
     for (int i = 0; i < 5; i++) {
@@ -201,7 +239,7 @@ static void test_rotate(void)
 {
     String path1 = make_str(TEST_LOG);
     String path2 = make_str(TEST_LOG_2);
-    LogStoreHandle *store = NULL;
+    LogStoreHandle store = NULL;
     LogStoreConfig config1, config2;
 
     remove_if_present(&path1);
@@ -234,7 +272,7 @@ static void test_rotate(void)
     EXPECT(54, log_store_flush(store) == CORE_OK);
     EXPECT(55, log_store_close(&store) == CORE_OK);
 
-    LogReaderHandle *reader1 = NULL;
+    LogReaderHandle reader1 = NULL;
     EXPECT(56, log_reader_open(&path1, &reader1) == CORE_OK);
     LogRecord rec1;
     LogReadStatus status1;
@@ -243,7 +281,7 @@ static void test_rotate(void)
     EXPECT(59, log_record_destroy(&rec1) == CORE_OK);
     EXPECT(60, log_reader_close(&reader1) == CORE_OK);
 
-    LogReaderHandle *reader2 = NULL;
+    LogReaderHandle reader2 = NULL;
     EXPECT(61, log_reader_open(&path2, &reader2) == CORE_OK);
     LogRecord rec2;
     LogReadStatus status2;
@@ -262,7 +300,7 @@ static void test_rotate(void)
 static void test_error_cases(void)
 {
     String path = make_str(TEST_LOG);
-    LogStoreHandle *store = NULL;
+    LogStoreHandle store = NULL;
     LogStoreConfig config;
 
     config.path = &path;
@@ -294,7 +332,7 @@ static void test_error_cases(void)
 
     EXPECT(77, log_store_close(&store) == CORE_OK);
 
-    LogReaderHandle *reader = NULL;
+    LogReaderHandle reader = NULL;
     EXPECT(78, log_reader_open(NULL, &reader) == CORE_INVALID_ARGUMENT);
     EXPECT(79, log_reader_open(&path, NULL) == CORE_INVALID_ARGUMENT);
 
@@ -305,13 +343,162 @@ static void test_error_cases(void)
     EXPECT(81, log_record_destroy(NULL) == CORE_INVALID_ARGUMENT);
     EXPECT(82, log_reader_close(NULL) == CORE_INVALID_ARGUMENT);
     {
-        LogReaderHandle *null_reader = NULL;
+        LogReaderHandle null_reader = NULL;
         EXPECT(83, log_reader_close(&null_reader) == CORE_INVALID_ARGUMENT);
     }
 
     destroy_str(&path);
     destroy_str(&component);
     destroy_str(&message);
+}
+
+/* A header whose frame_size disagrees with component_length + message_length. */
+static const u8 *corrupt_sum_header(void)
+{
+    static u8 header[LOG_FRAME_HEADER_SIZE];
+    usize index;
+
+    for (index = 0; index < sizeof(header); ++index) {
+        header[index] = 0;
+    }
+    header[0] = 40; /* frame_size */
+    header[21] = 10; /* component_length */
+    header[23] = 3;  /* message_length */
+    return header;
+}
+
+/* Builds a frame whose declared sizes add up exactly, so the only thing that
+ * can reject it is the rule under test. An earlier version of these checks let
+ * frame_size disagree with the two lengths, which the pre-existing consistency
+ * check rejected first, so they never reached the new validation at all. */
+static ErrorCode write_consistent_frame(const String *path, usize component_length,
+                                        usize message_length, u8 severity)
+{
+    u8 header[LOG_FRAME_HEADER_SIZE];
+    u32 frame_size = (u32)(LOG_FRAME_HEADER_SIZE + component_length + message_length);
+    usize index;
+
+    for (index = 0; index < sizeof(header); ++index) {
+        header[index] = 0;
+    }
+    header[0] = (u8)(frame_size & 0xffu);
+    header[1] = (u8)((frame_size >> 8) & 0xffu);
+    header[2] = (u8)((frame_size >> 16) & 0xffu);
+    header[3] = (u8)((frame_size >> 24) & 0xffu);
+    header[12] = 7;   /* process_id */
+    header[16] = 9;   /* thread_id  */
+    header[20] = severity;
+    header[21] = (u8)(component_length & 0xffu);
+    header[22] = (u8)((component_length >> 8) & 0xffu);
+    header[23] = (u8)(message_length & 0xffu);
+    header[24] = (u8)((message_length >> 8) & 0xffu);
+    header[25] = (u8)((message_length >> 16) & 0xffu);
+    header[26] = (u8)((message_length >> 24) & 0xffu);
+
+    return write_raw_frame(path, header, sizeof(header), component_length + message_length);
+}
+
+/* Reads one frame and reports whether it was refused as damaged. */
+static bool reader_rejects(const String *path)
+{
+    LogReaderHandle reader = NULL;
+    LogReadStatus status;
+    LogRecord record;
+    bool rejected;
+
+    if (log_reader_open(path, &reader) != CORE_OK) {
+        return false;
+    }
+    rejected = log_reader_next(reader, &status, &record) == CORE_IO_ERROR;
+    if (!rejected) {
+        (void)log_record_destroy(&record);
+    }
+    (void)log_reader_close(&reader);
+    return rejected;
+}
+
+/*
+ * Issue 9: a reader has to reject a damaged frame instead of accepting it as a
+ * valid record. Each case below is a frame that adds up perfectly and is
+ * refused for exactly one reason.
+ */
+static void test_corrupt_frames(void)
+{
+    String path = make_str(TEST_CORRUPT_LOG);
+
+    /* Control: a frame that is within every limit has to be accepted. If this
+     * failed, a rejection below would prove nothing. */
+    EXPECT(80, write_consistent_frame(&path, 4, 5, (u8)LOG_SEVERITY_INFO) == CORE_OK);
+    EXPECT(81, !reader_rejects(&path));
+
+    /* component_length one byte over LOG_COMPONENT_MAX_LENGTH. */
+    EXPECT(82, write_consistent_frame(&path, LOG_COMPONENT_MAX_LENGTH + 1, 0,
+                                      (u8)LOG_SEVERITY_INFO) == CORE_OK);
+    EXPECT(83, reader_rejects(&path));
+
+    /* message_length one byte over LOG_MESSAGE_MAX_LENGTH. */
+    EXPECT(84, write_consistent_frame(&path, 0, LOG_MESSAGE_MAX_LENGTH + 1,
+                                      (u8)LOG_SEVERITY_INFO) == CORE_OK);
+    EXPECT(85, reader_rejects(&path));
+
+    /* A severity byte above LOG_SEVERITY_FATAL. */
+    EXPECT(86, write_consistent_frame(&path, 1, 1, (u8)(LOG_SEVERITY_FATAL + 1)) == CORE_OK);
+    EXPECT(87, reader_rejects(&path));
+
+    /* Both lengths legal, so only a corrupt length sum is left to catch it. */
+    EXPECT(88, write_raw_frame(&path, corrupt_sum_header(), LOG_FRAME_HEADER_SIZE, 3) == CORE_OK);
+    EXPECT(89, reader_rejects(&path));
+
+    /* A frame_size below the header size. */
+    {
+        u8 header[LOG_FRAME_HEADER_SIZE];
+        usize index;
+
+        for (index = 0; index < sizeof(header); ++index) {
+            header[index] = 0;
+        }
+        header[0] = 4;
+        EXPECT(90, write_raw_frame(&path, header, sizeof(header), 0) == CORE_OK);
+        EXPECT(91, reader_rejects(&path));
+    }
+
+    /* A frame the file ends in the middle of. */
+    {
+        u8 header[LOG_FRAME_HEADER_SIZE];
+        usize index;
+
+        for (index = 0; index < sizeof(header); ++index) {
+            header[index] = 0;
+        }
+        header[0] = 64; /* claims 64 bytes, only 27 + 8 are written */
+        EXPECT(92, write_raw_frame(&path, header, sizeof(header), 8) == CORE_OK);
+        EXPECT(93, reader_rejects(&path));
+    }
+
+    destroy_str(&path);
+    (void)unlink(TEST_CORRUPT_LOG);
+}
+
+
+/* Issue 13: an empty log path is not a path. */
+static void test_path_validation(void)
+{
+    LogStoreHandle store = NULL;
+    LogReaderHandle reader = NULL;
+    LogStoreConfig config;
+
+    String empty = make_str("");
+    config.path = &empty;
+    config.permissions = 0644;
+    EXPECT(90, log_store_open(&config, &store) == CORE_INVALID_ARGUMENT);
+    EXPECT(91, log_reader_open(&empty, &reader) == CORE_INVALID_ARGUMENT);
+
+    LogStoreConfig null_path;
+    null_path.path = NULL;
+    null_path.permissions = 0644;
+    EXPECT(92, log_store_open(&null_path, &store) == CORE_INVALID_ARGUMENT);
+
+    destroy_str(&empty);
 }
 
 int main(int argc, char **argv, char **envp)
@@ -325,6 +512,8 @@ int main(int argc, char **argv, char **envp)
     test_multiple_records();
     test_rotate();
     test_error_cases();
+    test_corrupt_frames();
+    test_path_validation();
 
     check_passed();
     return 0;

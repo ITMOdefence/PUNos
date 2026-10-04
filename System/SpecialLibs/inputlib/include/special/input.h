@@ -93,7 +93,7 @@ typedef u32 InputDeviceClass;
  * input_device_open() and released exactly once by input_device_close().
  * Never build one by hand.
  */
-typedef struct InputDeviceHandle InputDeviceHandle;
+typedef struct InputDeviceHandle *InputDeviceHandle;
 
 /* What to open. path is not owned: it only has to stay valid for the
  * input_device_open() call. */
@@ -193,7 +193,7 @@ _Static_assert(sizeof(InputReadStatus) == 4, "InputReadStatus ABI mismatch");
  * CORE_PERMISSION_DENIED if the process may not open it, CORE_UNSUPPORTED if
  * it does not speak the required evdev ABI); errors of libmem.
  */
-ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle **out_device);
+ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *out_device);
 
 /*
  * Stores the device's file descriptor in *out_fd. The descriptor belongs to
@@ -203,7 +203,7 @@ ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *
  * Errors: CORE_INVALID_ARGUMENT if device or out_fd is NULL; CORE_INVALID_
  * STATE if the device is closed.
  */
-ErrorCode input_device_get_fd(InputDeviceHandle *device, i32 *out_fd);
+ErrorCode input_device_get_fd(InputDeviceHandle device, i32 *out_fd);
 
 /*
  * Stores the identity and classes captured at input_device_open() in
@@ -212,7 +212,7 @@ ErrorCode input_device_get_fd(InputDeviceHandle *device, i32 *out_fd);
  * Errors: CORE_INVALID_ARGUMENT if device or out_info is NULL; CORE_INVALID_
  * STATE if the device is closed.
  */
-ErrorCode input_device_get_info(InputDeviceHandle *device, InputDeviceInfo *out_info);
+ErrorCode input_device_get_info(InputDeviceHandle device, InputDeviceInfo *out_info);
 
 /*
  * Reads without waiting and assembles the next complete frame, normalising
@@ -229,7 +229,7 @@ ErrorCode input_device_get_info(InputDeviceHandle *device, InputDeviceInfo *out_
  * CORE_INVALID_STATE if the device is closed; codes from
  * core_error_from_errno() for an unexpected read failure; errors of libmem.
  */
-ErrorCode input_device_read_frame(InputDeviceHandle *device, InputReadStatus *out_status,
+ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out_status,
                                   InputFrame *out_frame);
 
 /*
@@ -247,6 +247,6 @@ ErrorCode input_frame_destroy(InputFrame *frame);
  * Errors: CORE_INVALID_ARGUMENT if device or *device is NULL; codes from
  * core_error_from_errno() if close() fails (the handle is still released).
  */
-ErrorCode input_device_close(InputDeviceHandle **device);
+ErrorCode input_device_close(InputDeviceHandle *device);
 
 #endif

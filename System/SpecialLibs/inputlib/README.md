@@ -18,7 +18,7 @@ make -C System/SpecialLibs/inputlib check
 ```c
 #include <special/input.h>
 
-InputDeviceHandle *device = NULL;
+InputDeviceHandle device = NULL;
 InputDeviceConfig config;
 String path;
 

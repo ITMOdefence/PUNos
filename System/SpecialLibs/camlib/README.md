@@ -18,7 +18,7 @@ make -C System/SpecialLibs/camlib check
 ```c
 #include <special/camera.h>
 
-CameraHandle *camera = NULL;
+CameraHandle camera = NULL;
 CameraConfig config;
 String path;
 

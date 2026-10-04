@@ -22,8 +22,8 @@
 #define IPC_MESSAGE_MAX_SIZE ((usize)1048576)
 #define IPC_OUTGOING_QUEUE_MAX_SIZE ((usize)4194304)
 
-typedef struct IpcServerHandle IpcServerHandle;
-typedef struct IpcConnectionHandle IpcConnectionHandle;
+typedef struct IpcServerHandle *IpcServerHandle;
+typedef struct IpcConnectionHandle *IpcConnectionHandle;
 
 typedef u32 IpcMessageType;
 
@@ -57,14 +57,14 @@ _Static_assert(sizeof(IpcReceiveStatus) == 4, "IpcReceiveStatus ABI mismatch");
  * CORE_INVALID_PATH if endpoint is too long for sockaddr_un; errors from
  * core_error_from_errno() for socket/bind/listen failures; errors of libmem.
  */
-ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle **out_server);
+ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle *out_server);
 
 /*
  * Stores server's non-owning file descriptor in *out_fd.
  *
  * Errors: CORE_INVALID_ARGUMENT if server or out_fd is NULL.
  */
-ErrorCode ipc_server_get_fd(IpcServerHandle *server, i32 *out_fd);
+ErrorCode ipc_server_get_fd(IpcServerHandle server, i32 *out_fd);
 
 /*
  * Accepts one pending connection through accept4() with SOCK_NONBLOCK and
@@ -74,7 +74,7 @@ ErrorCode ipc_server_get_fd(IpcServerHandle *server, i32 *out_fd);
  * CORE_WOULD_BLOCK if no connection is pending; errors from
  * core_error_from_errno() for accept4() failures; errors of libmem.
  */
-ErrorCode ipc_server_accept(IpcServerHandle *server, IpcConnectionHandle **out_connection);
+ErrorCode ipc_server_accept(IpcServerHandle server, IpcConnectionHandle *out_connection);
 
 /*
  * Closes server, removes its endpoint and sets *server to NULL.
@@ -82,7 +82,7 @@ ErrorCode ipc_server_accept(IpcServerHandle *server, IpcConnectionHandle **out_c
  * Errors: CORE_INVALID_ARGUMENT if server or *server is NULL; errors from
  * core_error_from_errno() for close/unlink failures.
  */
-ErrorCode ipc_server_close(IpcServerHandle **server);
+ErrorCode ipc_server_close(IpcServerHandle *server);
 
 /*
  * Creates a non-blocking client connection in Connecting state.
@@ -91,7 +91,7 @@ ErrorCode ipc_server_close(IpcServerHandle **server);
  * CORE_INVALID_PATH if endpoint is too long; errors from
  * core_error_from_errno() for socket/connect failures; errors of libmem.
  */
-ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHandle **out_connection);
+ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHandle *out_connection);
 
 /*
  * Checks connection status through getsockopt(SO_ERROR).
@@ -100,14 +100,14 @@ ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHand
  * CORE_INVALID_STATE if connection is not in Connecting state; errors from
  * core_error_from_errno() for getsockopt failures.
  */
-ErrorCode ipc_connection_finish_connect(IpcConnectionHandle *connection, IpcConnectionState *out_state);
+ErrorCode ipc_connection_finish_connect(IpcConnectionHandle connection, IpcConnectionState *out_state);
 
 /*
  * Stores connection's non-owning file descriptor in *out_fd.
  *
  * Errors: CORE_INVALID_ARGUMENT if connection or out_fd is NULL.
  */
-ErrorCode ipc_connection_get_fd(IpcConnectionHandle *connection, i32 *out_fd);
+ErrorCode ipc_connection_get_fd(IpcConnectionHandle connection, i32 *out_fd);
 
 /*
  * Copies message into connection's outgoing queue.
@@ -117,7 +117,7 @@ ErrorCode ipc_connection_get_fd(IpcConnectionHandle *connection, i32 *out_fd);
  * exceeds IPC_MESSAGE_MAX_SIZE or queue exceeds IPC_OUTGOING_QUEUE_MAX_SIZE;
  * errors of libmem.
  */
-ErrorCode ipc_connection_send(IpcConnectionHandle *connection, const IpcMessage *message);
+ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message);
 
 /*
  * Sends as many queued bytes as possible without blocking.
@@ -126,7 +126,7 @@ ErrorCode ipc_connection_send(IpcConnectionHandle *connection, const IpcMessage 
  * CORE_INVALID_STATE if connection is not Open; errors from
  * core_error_from_errno() for send failures.
  */
-ErrorCode ipc_connection_flush(IpcConnectionHandle *connection, bool *out_has_pending);
+ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pending);
 
 /*
  * Reads available bytes and assembles at most one complete frame.
@@ -135,7 +135,7 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle *connection, bool *out_has_pe
  * CORE_INVALID_STATE if connection is not Open; errors from
  * core_error_from_errno() for recv failures; errors of libmem.
  */
-ErrorCode ipc_connection_receive(IpcConnectionHandle *connection, IpcReceiveStatus *out_status, IpcMessage *out_message);
+ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatus *out_status, IpcMessage *out_message);
 
 /*
  * Releases message's payload and sets it to { 0, { NULL, 0 } }.
@@ -150,6 +150,6 @@ ErrorCode ipc_message_destroy(IpcMessage *message);
  * Errors: CORE_INVALID_ARGUMENT if connection or *connection is NULL; errors
  * from core_error_from_errno() for close failures.
  */
-ErrorCode ipc_connection_close(IpcConnectionHandle **connection);
+ErrorCode ipc_connection_close(IpcConnectionHandle *connection);
 
 #endif
