@@ -9,6 +9,7 @@
 
 CC ?= cc
 AR ?= ar
+SYSTEM_LIBS_DIR ?= ..
 
 NATIVE_DIR := ../../NativeRuntime
 CRT_DIR := $(NATIVE_DIR)/CRT
@@ -21,9 +22,9 @@ SYSCALL_LIBRARY := $(SYSCALL_DIR)/build/libpunos_syscall.a
 reverse = $(if $(1),$(call reverse,$(wordlist 2,$(words $(1)),$(1))) $(firstword $(1)))
 
 DEPENDENCY_ARCHIVES := $(foreach dependency,$(DEPENDENCIES),\
-    ../$(dependency)/build/libpunos_$(patsubst lib%,%,$(dependency)).a)
+    $(SYSTEM_LIBS_DIR)/$(dependency)/build/libpunos_$(patsubst lib%,%,$(dependency)).a)
 
-CPPFLAGS := -Iinclude $(foreach dependency,$(DEPENDENCIES),-I../$(dependency)/include) \
+CPPFLAGS := -Iinclude $(foreach dependency,$(DEPENDENCIES),-I$(SYSTEM_LIBS_DIR)/$(dependency)/include) \
             -I$(SYSCALL_DIR)/include -I$(NATIVE_DIR)/include
 # -fno-tree-loop-distribute-patterns forbids GCC to turn byte loops into calls
 # to memcpy()/memset(), which do not exist in PUNos. GCC 15 does not do it for
@@ -38,8 +39,8 @@ OBJECTS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(wildcard src/*.c))
 ABI_TEST_OBJECT := $(BUILD_DIR)/abi_compile.o
 RUNTIME_TEST_OBJECT := $(BUILD_DIR)/$(RUNTIME_TEST).o
 RUNTIME_TEST_PROGRAM := $(BUILD_DIR)/$(RUNTIME_TEST)
-HEADERS := $(wildcard include/sys/*.h src/*.h) \
-           $(foreach dependency,$(DEPENDENCIES),$(wildcard ../$(dependency)/include/sys/*.h))
+HEADERS := $(wildcard include/sys/*.h src/*.h) $(PUBLIC_HEADERS) \
+           $(foreach dependency,$(DEPENDENCIES),$(wildcard $(SYSTEM_LIBS_DIR)/$(dependency)/include/sys/*.h))
 
 .PHONY: all check clean runtime-test dependencies
 
@@ -65,11 +66,11 @@ $(LIBRARY): $(OBJECTS)
 $(ABI_TEST_OBJECT): tests/abi_compile.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(RUNTIME_TEST_OBJECT): tests/$(RUNTIME_TEST).c ../testing/check.h $(HEADERS) | $(BUILD_DIR)
+$(RUNTIME_TEST_OBJECT): tests/$(RUNTIME_TEST).c $(SYSTEM_LIBS_DIR)/testing/check.h $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 dependencies:
-	@set -e; for dependency in $(DEPENDENCIES); do $(MAKE) -C ../$$dependency all; done
+	@set -e; for dependency in $(DEPENDENCIES); do $(MAKE) -C $(SYSTEM_LIBS_DIR)/$$dependency all; done
 	$(MAKE) -C $(CRT_DIR) all
 	$(MAKE) -C $(SYSCALL_DIR) all
 

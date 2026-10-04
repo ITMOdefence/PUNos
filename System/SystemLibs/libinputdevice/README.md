@@ -10,6 +10,10 @@ path) and [libtime](../libtime/README.md) (`MonotonicTime` for event
 timestamps). `libpunos_inputdevice.a` calls only `open()`, `close()`,
 `read()` and `ioctl()`, as contract 1 requires.
 
+The additive `input_raw_device_get_key_codes()` operation returns the 96-byte
+raw EV_KEY code bitmap through EVIOCGBIT(EV_KEY). Special inputlib uses it to
+distinguish keyboard keys from mouse buttons without accessing evdev itself.
+
 ## Build and test
 
 From the repository root:

@@ -1,5 +1,14 @@
 ## Описание
 
+Дополнительная операция реализации: `input_raw_device_get_key_codes(device,
+out_codes)` возвращает raw bitmap кодов EV_KEY через `EVIOCGBIT(EV_KEY)`.
+`out_codes` — `Bytes` размером `INPUT_RAW_KEY_BITMAP_SIZE` (`96`) байт;
+бит кода `code` расположен в `out_codes.data[code / 8]` на позиции `code % 8`.
+Для устройства без EV_KEY возвращается нулевой bitmap. NULL handle/буфер или
+неверный размер возвращают `CORE_INVALID_ARGUMENT`; ошибки ioctl преобразуются
+через `core_error_from_errno()`. Это позволяет inputlib различать KEY_* и BTN_*
+без прямого доступа к evdev. Существующие типы и константы ABI не изменены.
+
 Системная библиотека для доступа к отдельному устройству Linux input subsystem
 через `/dev/input/event*`. Инкапсулирует Linux evdev ABI, чтение сырых событий
 и запрос базовых возможностей устройства, не интерпретируя их для UI.

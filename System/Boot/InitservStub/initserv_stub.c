@@ -51,6 +51,15 @@ static const struct SelfTest self_tests[] = {
     { "/punos/bin/libv4l2-selftest",
       "PUNos initserv stub: libv4l2 self-test passed\n",
       "PUNos initserv stub: libv4l2 self-test failed\n" },
+    { "/punos/bin/inputlib-selftest",
+      "PUNos initserv stub: inputlib self-test passed\n",
+      "PUNos initserv stub: inputlib self-test failed\n" },
+    { "/punos/bin/ipclib-selftest",
+      "PUNos initserv stub: ipclib self-test passed\n",
+      "PUNos initserv stub: ipclib self-test failed\n" },
+    { "/punos/bin/loglib-selftest",
+      "PUNos initserv stub: loglib self-test passed\n",
+      "PUNos initserv stub: loglib self-test failed\n" },
 };
 
 static size_t text_length(const char *text)

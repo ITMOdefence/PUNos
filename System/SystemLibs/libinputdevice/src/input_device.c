@@ -196,6 +196,17 @@ ErrorCode input_raw_device_get_info(InputRawDeviceHandle device, InputRawDeviceI
     return CORE_OK;
 }
 
+ErrorCode input_raw_device_get_key_codes(InputRawDeviceHandle device, Bytes out_codes)
+{
+    if (device == NULL || out_codes.data == NULL || out_codes.size != INPUT_RAW_KEY_BITMAP_SIZE)
+        return CORE_INVALID_ARGUMENT;
+    (void)memory_set(out_codes, 0);
+    if ((device->info.capabilities & INPUT_RAW_CAP_KEY) == 0) return CORE_OK;
+    if (ioctl(device->fd, IOC_ENCODE(IOC_READ, 'E', 0x20 + EV_KEY, out_codes.size),
+              (unsigned long)(uintptr_t)out_codes.data) < 0) return last_error();
+    return CORE_OK;
+}
+
 ErrorCode input_raw_device_read(InputRawDeviceHandle device, InputRawEvent *out_events,
                                 usize events_capacity, InputRawReadStatus *out_status,
                                 usize *out_count)

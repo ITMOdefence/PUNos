@@ -183,6 +183,12 @@ static void test_real_device(void)
                        status == INPUT_RAW_READ_STATUS_NO_EVENTS);
     }
 
+    {
+        u8 codes[INPUT_RAW_KEY_BITMAP_SIZE];
+        EXPECT(37, input_raw_device_get_key_codes(device, (Bytes){codes, sizeof(codes)}) == CORE_OK);
+        EXPECT(38, input_raw_device_get_key_codes(device, (Bytes){codes, sizeof(codes) - 1}) == CORE_INVALID_ARGUMENT);
+        EXPECT(39, input_raw_device_get_key_codes(device, (Bytes){NULL, sizeof(codes)}) == CORE_INVALID_ARGUMENT);
+    }
     EXPECT(34, input_raw_device_close(&device) == CORE_OK);
     EXPECT(35, device == NULL);
     destroy(&path);
@@ -195,6 +201,7 @@ int main(int argc, char **argv, char **envp)
     (void)envp;
 
     test_missing_device();
+    EXPECT(36, input_raw_device_get_key_codes(NULL, (Bytes){NULL, 0}) == CORE_INVALID_ARGUMENT);
     test_real_device();
 
     check_passed();

@@ -261,6 +261,12 @@ libinputdevice runtime test passed
 PUNos initserv stub: libinputdevice self-test passed
 libv4l2 runtime test passed
 PUNos initserv stub: libv4l2 self-test passed
+inputlib runtime test passed
+PUNos initserv stub: inputlib self-test passed
+ipclib runtime test passed
+PUNos initserv stub: ipclib self-test passed
+loglib runtime test passed
+PUNos initserv stub: loglib self-test passed
 ```
 
 Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
@@ -314,6 +320,11 @@ wrappers. Вторая собирает минимальный статичес�
 приёмки.
 
 ## Проверка System Libs
+
+Special Libs проверяются командой `make -C System/SpecialLibs check` из корня
+репозитория. Их runtime-тесты также включены в initramfs и выполняются initserv.
+Тест inputlib использует детерминированный raw-адаптер без физических устройств;
+IPClib и loglib проверяются через реальные Unix sockets и файлы.
 
 System Libs собираются и тестируются одной командой из корня репозитория:
 

@@ -21,12 +21,12 @@ upstream-ядра Linux** (6.12.111 LTS, x86_64) и запускаемая в QE
 | CRT | `_start`, настройка TLS, вызов `main()` и выход | Готово |
 | Boot | `/init` (PID 1) и воспроизводимый initramfs | Готово |
 | System Libs | `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
-| Special Libs | IPC, журналы, камера, устройства ввода, дисплей | Спецификации |
+| Special Libs | `inputlib`, `ipclib`, `loglib`; камера и дисплей | Первые три реализованы, остальные — спецификации |
 | System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | Спецификации |
 | Application Layer | `appframework`, `uilib` | Спецификации |
 
 Сейчас на месте `initserv` стоит smoke-test заглушка: при загрузке она по
-очереди запускает self-test'ы Syscall Wrappers и всех System Libs и печатает
+очереди запускает self-test'ы Syscall Wrappers, System Libs и реализованных Special Libs и печатает
 результат каждого.
 
 ## Быстрый старт

@@ -9,6 +9,15 @@ subsystem через `/dev/input/event*`. Библиотека читает фи
 
 `special/input`
 
+## Реализация
+
+Реализована в `System/SpecialLibs/inputlib`, публичный заголовок —
+`<special/input.h>`, архив — `libpunos_input.a`. Проверка:
+`make -C System/SpecialLibs/inputlib check`. Тесты используют scripted
+`sys/input-device`, чтобы воспроизводить границы кадров и потерю синхронизации
+без физических устройств. Для определения клавиш и кнопок используется
+дополнительная операция `input_raw_device_get_key_codes()` из `sys/input-device`.
+
 ## Контракты
 
 1. Библиотека является техническим адаптером Linux input subsystem и

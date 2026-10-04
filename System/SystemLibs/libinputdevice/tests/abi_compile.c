@@ -4,6 +4,7 @@
  * produces no runnable program.
  */
 #include <sys/input-device.h>
+_Static_assert(INPUT_RAW_KEY_BITMAP_SIZE == 96, "raw key bitmap size");
 
 #define SAME_TYPE(a, b) _Generic((a), b: 1, default: 0)
 

@@ -33,6 +33,9 @@ SELF_TESTS=(
     "SystemLibs/libeventloop/build/eventloop_runtime:libeventloop-selftest"
     "SystemLibs/libinputdevice/build/input_device_runtime:libinputdevice-selftest"
     "SystemLibs/libv4l2/build/v4l2_runtime:libv4l2-selftest"
+    "SpecialLibs/inputlib/build/input_runtime:inputlib-selftest"
+    "SpecialLibs/ipclib/build/ipc_runtime:ipclib-selftest"
+    "SpecialLibs/loglib/build/log_runtime:loglib-selftest"
 )
 
 verify_elf() {

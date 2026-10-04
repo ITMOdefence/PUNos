@@ -99,6 +99,12 @@ ErrorCode input_raw_device_get_fd(InputRawDeviceHandle device, i32 *out_fd);
  */
 ErrorCode input_raw_device_get_info(InputRawDeviceHandle device, InputRawDeviceInfo *out_info);
 
+/* Optional raw EV_KEY code bitmap, little bit order (code / 8, code % 8).
+ * Encapsulates EVIOCGBIT(EV_KEY); no classification is performed here.
+ * out_codes must have INPUT_RAW_KEY_BITMAP_SIZE writable bytes. */
+#define INPUT_RAW_KEY_BITMAP_SIZE ((usize)96)
+ErrorCode input_raw_device_get_key_codes(InputRawDeviceHandle device, Bytes out_codes);
+
 /*
  * Reads up to events_capacity raw events into out_events without waiting
  * (specification contract 7): if none are queued, stores NoEvents in
