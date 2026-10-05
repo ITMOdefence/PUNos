@@ -133,7 +133,7 @@ static void test_append_and_read(void)
     config.path = &path;
     config.permissions = 0644;
 
-    EXPECT(10, log_store_open(&config, &store) == CORE_OK);
+    EXPECT(9, log_store_open(&config, &store) == CORE_OK);
 
     String component = make_str("test_component");
     String message = make_str("Hello, World!");
@@ -146,32 +146,32 @@ static void test_append_and_read(void)
     record.component = &component;
     record.message = &message;
 
-    EXPECT(11, log_store_append(store, &record) == CORE_OK);
-    EXPECT(12, log_store_flush(store) == CORE_OK);
-    EXPECT(13, log_store_close(&store) == CORE_OK);
+    EXPECT(10, log_store_append(store, &record) == CORE_OK);
+    EXPECT(11, log_store_flush(store) == CORE_OK);
+    EXPECT(12, log_store_close(&store) == CORE_OK);
 
     LogReaderHandle reader = NULL;
-    EXPECT(14, log_reader_open(&path, &reader) == CORE_OK);
+    EXPECT(13, log_reader_open(&path, &reader) == CORE_OK);
 
     LogRecord read_record;
     LogReadStatus status;
 
-    EXPECT(15, log_reader_next(reader, &status, &read_record) == CORE_OK);
-    EXPECT(16, status == LOG_READ_STATUS_LOG_RECORD);
-    EXPECT(17, read_record.timestamp == 1234567890);
-    EXPECT(18, read_record.process_id == 42);
-    EXPECT(19, read_record.thread_id == 7);
-    EXPECT(20, read_record.severity == LOG_SEVERITY_INFO);
-    EXPECT(21, read_record.component.length == 14);
-    EXPECT(22, read_record.message.length == 13);
+    EXPECT(14, log_reader_next(reader, &status, &read_record) == CORE_OK);
+    EXPECT(15, status == LOG_READ_STATUS_LOG_RECORD);
+    EXPECT(16, read_record.timestamp == 1234567890);
+    EXPECT(17, read_record.process_id == 42);
+    EXPECT(18, read_record.thread_id == 7);
+    EXPECT(19, read_record.severity == LOG_SEVERITY_INFO);
+    EXPECT(20, read_record.component.length == 14);
+    EXPECT(21, read_record.message.length == 13);
 
-    EXPECT(23, log_record_destroy(&read_record) == CORE_OK);
+    EXPECT(22, log_record_destroy(&read_record) == CORE_OK);
 
-    EXPECT(24, log_reader_next(reader, &status, &read_record) == CORE_OK);
-    EXPECT(25, status == LOG_READ_STATUS_END_OF_FILE);
+    EXPECT(23, log_reader_next(reader, &status, &read_record) == CORE_OK);
+    EXPECT(24, status == LOG_READ_STATUS_END_OF_FILE);
 
-    EXPECT(26, log_reader_close(&reader) == CORE_OK);
-    EXPECT(27, reader == NULL);
+    EXPECT(25, log_reader_close(&reader) == CORE_OK);
+    EXPECT(26, reader == NULL);
 
     destroy_str(&path);
     destroy_str(&component);
@@ -189,7 +189,7 @@ static void test_multiple_records(void)
     config.path = &path;
     config.permissions = 0644;
 
-    EXPECT(30, log_store_open(&config, &store) == CORE_OK);
+    EXPECT(27, log_store_open(&config, &store) == CORE_OK);
 
     for (int i = 0; i < 5; i++) {
         String component = make_str("comp");
@@ -203,35 +203,35 @@ static void test_multiple_records(void)
         record.component = &component;
         record.message = &message;
 
-        EXPECT(31, log_store_append(store, &record) == CORE_OK);
+        EXPECT(28, log_store_append(store, &record) == CORE_OK);
         destroy_str(&component);
         destroy_str(&message);
     }
 
-    EXPECT(32, log_store_flush(store) == CORE_OK);
-    EXPECT(33, log_store_close(&store) == CORE_OK);
+    EXPECT(29, log_store_flush(store) == CORE_OK);
+    EXPECT(30, log_store_close(&store) == CORE_OK);
 
     LogReaderHandle reader = NULL;
-    EXPECT(34, log_reader_open(&path, &reader) == CORE_OK);
+    EXPECT(31, log_reader_open(&path, &reader) == CORE_OK);
 
     for (int i = 0; i < 5; i++) {
         LogRecord read_record;
         LogReadStatus status;
 
-        EXPECT(35, log_reader_next(reader, &status, &read_record) == CORE_OK);
-        EXPECT(36, status == LOG_READ_STATUS_LOG_RECORD);
-        EXPECT(37, read_record.timestamp == (WallClockTime)i);
-        EXPECT(38, read_record.severity == (LogSeverity)(i % 6));
+        EXPECT(32, log_reader_next(reader, &status, &read_record) == CORE_OK);
+        EXPECT(33, status == LOG_READ_STATUS_LOG_RECORD);
+        EXPECT(34, read_record.timestamp == (WallClockTime)i);
+        EXPECT(35, read_record.severity == (LogSeverity)(i % 6));
 
         log_record_destroy(&read_record);
     }
 
     LogRecord read_record;
     LogReadStatus status;
-    EXPECT(39, log_reader_next(reader, &status, &read_record) == CORE_OK);
-    EXPECT(40, status == LOG_READ_STATUS_END_OF_FILE);
+    EXPECT(36, log_reader_next(reader, &status, &read_record) == CORE_OK);
+    EXPECT(37, status == LOG_READ_STATUS_END_OF_FILE);
 
-    EXPECT(41, log_reader_close(&reader) == CORE_OK);
+    EXPECT(38, log_reader_close(&reader) == CORE_OK);
     destroy_str(&path);
 }
 
@@ -250,7 +250,7 @@ static void test_rotate(void)
     config2.path = &path2;
     config2.permissions = 0644;
 
-    EXPECT(50, log_store_open(&config1, &store) == CORE_OK);
+    EXPECT(39, log_store_open(&config1, &store) == CORE_OK);
 
     String component = make_str("comp");
     String message = make_str("before rotate");
@@ -263,32 +263,32 @@ static void test_rotate(void)
     record.component = &component;
     record.message = &message;
 
-    EXPECT(51, log_store_append(store, &record) == CORE_OK);
-    EXPECT(52, log_store_rotate(store, &config2) == CORE_OK);
+    EXPECT(40, log_store_append(store, &record) == CORE_OK);
+    EXPECT(41, log_store_rotate(store, &config2) == CORE_OK);
 
     String message2 = make_str("after rotate");
     record.message = &message2;
-    EXPECT(53, log_store_append(store, &record) == CORE_OK);
-    EXPECT(54, log_store_flush(store) == CORE_OK);
-    EXPECT(55, log_store_close(&store) == CORE_OK);
+    EXPECT(42, log_store_append(store, &record) == CORE_OK);
+    EXPECT(43, log_store_flush(store) == CORE_OK);
+    EXPECT(44, log_store_close(&store) == CORE_OK);
 
     LogReaderHandle reader1 = NULL;
-    EXPECT(56, log_reader_open(&path1, &reader1) == CORE_OK);
+    EXPECT(45, log_reader_open(&path1, &reader1) == CORE_OK);
     LogRecord rec1;
     LogReadStatus status1;
-    EXPECT(57, log_reader_next(reader1, &status1, &rec1) == CORE_OK);
-    EXPECT(58, status1 == LOG_READ_STATUS_LOG_RECORD);
-    EXPECT(59, log_record_destroy(&rec1) == CORE_OK);
-    EXPECT(60, log_reader_close(&reader1) == CORE_OK);
+    EXPECT(46, log_reader_next(reader1, &status1, &rec1) == CORE_OK);
+    EXPECT(47, status1 == LOG_READ_STATUS_LOG_RECORD);
+    EXPECT(48, log_record_destroy(&rec1) == CORE_OK);
+    EXPECT(49, log_reader_close(&reader1) == CORE_OK);
 
     LogReaderHandle reader2 = NULL;
-    EXPECT(61, log_reader_open(&path2, &reader2) == CORE_OK);
+    EXPECT(50, log_reader_open(&path2, &reader2) == CORE_OK);
     LogRecord rec2;
     LogReadStatus status2;
-    EXPECT(62, log_reader_next(reader2, &status2, &rec2) == CORE_OK);
-    EXPECT(63, status2 == LOG_READ_STATUS_LOG_RECORD);
-    EXPECT(64, log_record_destroy(&rec2) == CORE_OK);
-    EXPECT(65, log_reader_close(&reader2) == CORE_OK);
+    EXPECT(51, log_reader_next(reader2, &status2, &rec2) == CORE_OK);
+    EXPECT(52, status2 == LOG_READ_STATUS_LOG_RECORD);
+    EXPECT(53, log_record_destroy(&rec2) == CORE_OK);
+    EXPECT(54, log_reader_close(&reader2) == CORE_OK);
 
     destroy_str(&path1);
     destroy_str(&path2);
@@ -306,7 +306,7 @@ static void test_error_cases(void)
     config.path = &path;
     config.permissions = 0644;
 
-    EXPECT(70, log_store_open(&config, &store) == CORE_OK);
+    EXPECT(55, log_store_open(&config, &store) == CORE_OK);
 
     String component = make_str("comp");
     String message = make_str("msg");
@@ -319,32 +319,32 @@ static void test_error_cases(void)
     record.component = &component;
     record.message = &message;
 
-    EXPECT(71, log_store_append(NULL, &record) == CORE_INVALID_ARGUMENT);
-    EXPECT(72, log_store_append(store, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(56, log_store_append(NULL, &record) == CORE_INVALID_ARGUMENT);
+    EXPECT(57, log_store_append(store, NULL) == CORE_INVALID_ARGUMENT);
 
     LogRecordInput bad_record = record;
     bad_record.severity = (LogSeverity)99;
-    EXPECT(73, log_store_append(store, &bad_record) == CORE_INVALID_ARGUMENT);
+    EXPECT(58, log_store_append(store, &bad_record) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(74, log_store_flush(NULL) == CORE_INVALID_ARGUMENT);
-    EXPECT(75, log_store_rotate(NULL, &config) == CORE_INVALID_ARGUMENT);
-    EXPECT(76, log_store_rotate(store, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(59, log_store_flush(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(60, log_store_rotate(NULL, &config) == CORE_INVALID_ARGUMENT);
+    EXPECT(61, log_store_rotate(store, NULL) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(77, log_store_close(&store) == CORE_OK);
+    EXPECT(62, log_store_close(&store) == CORE_OK);
 
     LogReaderHandle reader = NULL;
-    EXPECT(78, log_reader_open(NULL, &reader) == CORE_INVALID_ARGUMENT);
-    EXPECT(79, log_reader_open(&path, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(63, log_reader_open(NULL, &reader) == CORE_INVALID_ARGUMENT);
+    EXPECT(64, log_reader_open(&path, NULL) == CORE_INVALID_ARGUMENT);
 
     String missing = make_str("/tmp/loglib_nonexistent.log");
-    EXPECT(80, log_reader_open(&missing, &reader) == CORE_NOT_FOUND);
+    EXPECT(65, log_reader_open(&missing, &reader) == CORE_NOT_FOUND);
     destroy_str(&missing);
 
-    EXPECT(81, log_record_destroy(NULL) == CORE_INVALID_ARGUMENT);
-    EXPECT(82, log_reader_close(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(66, log_record_destroy(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(67, log_reader_close(NULL) == CORE_INVALID_ARGUMENT);
     {
         LogReaderHandle null_reader = NULL;
-        EXPECT(83, log_reader_close(&null_reader) == CORE_INVALID_ARGUMENT);
+        EXPECT(68, log_reader_close(&null_reader) == CORE_INVALID_ARGUMENT);
     }
 
     destroy_str(&path);
@@ -428,26 +428,26 @@ static void test_corrupt_frames(void)
 
     /* Control: a frame that is within every limit has to be accepted. If this
      * failed, a rejection below would prove nothing. */
-    EXPECT(80, write_consistent_frame(&path, 4, 5, (u8)LOG_SEVERITY_INFO) == CORE_OK);
-    EXPECT(81, !reader_rejects(&path));
+    EXPECT(69, write_consistent_frame(&path, 4, 5, (u8)LOG_SEVERITY_INFO) == CORE_OK);
+    EXPECT(70, !reader_rejects(&path));
 
     /* component_length one byte over LOG_COMPONENT_MAX_LENGTH. */
-    EXPECT(82, write_consistent_frame(&path, LOG_COMPONENT_MAX_LENGTH + 1, 0,
+    EXPECT(71, write_consistent_frame(&path, LOG_COMPONENT_MAX_LENGTH + 1, 0,
                                       (u8)LOG_SEVERITY_INFO) == CORE_OK);
-    EXPECT(83, reader_rejects(&path));
+    EXPECT(72, reader_rejects(&path));
 
     /* message_length one byte over LOG_MESSAGE_MAX_LENGTH. */
-    EXPECT(84, write_consistent_frame(&path, 0, LOG_MESSAGE_MAX_LENGTH + 1,
+    EXPECT(73, write_consistent_frame(&path, 0, LOG_MESSAGE_MAX_LENGTH + 1,
                                       (u8)LOG_SEVERITY_INFO) == CORE_OK);
-    EXPECT(85, reader_rejects(&path));
+    EXPECT(74, reader_rejects(&path));
 
     /* A severity byte above LOG_SEVERITY_FATAL. */
-    EXPECT(86, write_consistent_frame(&path, 1, 1, (u8)(LOG_SEVERITY_FATAL + 1)) == CORE_OK);
-    EXPECT(87, reader_rejects(&path));
+    EXPECT(75, write_consistent_frame(&path, 1, 1, (u8)(LOG_SEVERITY_FATAL + 1)) == CORE_OK);
+    EXPECT(76, reader_rejects(&path));
 
     /* Both lengths legal, so only a corrupt length sum is left to catch it. */
-    EXPECT(88, write_raw_frame(&path, corrupt_sum_header(), LOG_FRAME_HEADER_SIZE, 3) == CORE_OK);
-    EXPECT(89, reader_rejects(&path));
+    EXPECT(77, write_raw_frame(&path, corrupt_sum_header(), LOG_FRAME_HEADER_SIZE, 3) == CORE_OK);
+    EXPECT(78, reader_rejects(&path));
 
     /* A frame_size below the header size. */
     {
@@ -458,8 +458,8 @@ static void test_corrupt_frames(void)
             header[index] = 0;
         }
         header[0] = 4;
-        EXPECT(90, write_raw_frame(&path, header, sizeof(header), 0) == CORE_OK);
-        EXPECT(91, reader_rejects(&path));
+        EXPECT(79, write_raw_frame(&path, header, sizeof(header), 0) == CORE_OK);
+        EXPECT(80, reader_rejects(&path));
     }
 
     /* A frame the file ends in the middle of. */
@@ -471,8 +471,8 @@ static void test_corrupt_frames(void)
             header[index] = 0;
         }
         header[0] = 64; /* claims 64 bytes, only 27 + 8 are written */
-        EXPECT(92, write_raw_frame(&path, header, sizeof(header), 8) == CORE_OK);
-        EXPECT(93, reader_rejects(&path));
+        EXPECT(81, write_raw_frame(&path, header, sizeof(header), 8) == CORE_OK);
+        EXPECT(82, reader_rejects(&path));
     }
 
     destroy_str(&path);
@@ -490,13 +490,13 @@ static void test_path_validation(void)
     String empty = make_str("");
     config.path = &empty;
     config.permissions = 0644;
-    EXPECT(90, log_store_open(&config, &store) == CORE_INVALID_ARGUMENT);
-    EXPECT(91, log_reader_open(&empty, &reader) == CORE_INVALID_ARGUMENT);
+    EXPECT(83, log_store_open(&config, &store) == CORE_INVALID_ARGUMENT);
+    EXPECT(84, log_reader_open(&empty, &reader) == CORE_INVALID_ARGUMENT);
 
     LogStoreConfig null_path;
     null_path.path = NULL;
     null_path.permissions = 0644;
-    EXPECT(92, log_store_open(&null_path, &store) == CORE_INVALID_ARGUMENT);
+    EXPECT(85, log_store_open(&null_path, &store) == CORE_INVALID_ARGUMENT);
 
     destroy_str(&empty);
 }

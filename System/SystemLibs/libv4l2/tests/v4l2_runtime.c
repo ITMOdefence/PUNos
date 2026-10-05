@@ -155,16 +155,16 @@ static void test_real_device(void)
 
     path = str(path_buffer);
     config.path = &path;
-    EXPECT(20, v4l2_open(&config, &device) == CORE_OK && device != NULL);
+    EXPECT(16, v4l2_open(&config, &device) == CORE_OK && device != NULL);
 
-    EXPECT(21, v4l2_get_fd(device, &fd) == CORE_OK && fd >= 0);
-    EXPECT(22, v4l2_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(17, v4l2_get_fd(device, &fd) == CORE_OK && fd >= 0);
+    EXPECT(18, v4l2_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(23, v4l2_get_capture_configurations(device, &configurations) == CORE_OK);
+    EXPECT(19, v4l2_get_capture_configurations(device, &configurations) == CORE_OK);
 
     if (configurations.count == 0) {
-        EXPECT(24, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
-        EXPECT(25, v4l2_close(&device) == CORE_OK);
+        EXPECT(20, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
+        EXPECT(21, v4l2_close(&device) == CORE_OK);
         destroy(&path);
         return; /* nothing discrete to configure capture with */
     }
@@ -174,16 +174,16 @@ static void test_real_device(void)
         V4l2StreamConfig actual;
         V4l2StreamConfig invalid_request = requested;
 
-        EXPECT(26, requested.max_frame_bytes > 0);
+        EXPECT(22, requested.max_frame_bytes > 0);
         requested.max_frame_bytes = 0; /* a request must have max_frame_bytes == 0 */
 
-        EXPECT(27, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
-        EXPECT(28, actual.max_frame_bytes > 0);
-        EXPECT(29, v4l2_configure_capture(device, &invalid_request, &actual) ==
+        EXPECT(23, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+        EXPECT(24, actual.max_frame_bytes > 0);
+        EXPECT(25, v4l2_configure_capture(device, &invalid_request, &actual) ==
                        CORE_INVALID_ARGUMENT); /* invalid_request.max_frame_bytes != 0 */
 
-        EXPECT(30, v4l2_start_capture(device) == CORE_OK);
-        EXPECT(31, v4l2_start_capture(NULL) == CORE_INVALID_ARGUMENT);
+        EXPECT(26, v4l2_start_capture(device) == CORE_OK);
+        EXPECT(27, v4l2_start_capture(NULL) == CORE_INVALID_ARGUMENT);
 
         {
             V4l2DequeueStatus status;
@@ -196,15 +196,15 @@ static void test_real_device(void)
              * frame (a virtual one like v4l2loopback with no writer never
              * will, and that is fine too: NoBuffer is an accepted outcome). */
             for (attempt = 0; attempt < 20; ++attempt) {
-                EXPECT(32, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+                EXPECT(28, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
                 if (status == V4L2_DEQUEUE_STATUS_BUFFER_READY) {
                     got_buffer_ready = true;
-                    EXPECT(33, buffer.index < 64); /* sanity bound: the true buffer count is internal */
-                    EXPECT(34, v4l2_queue_buffer(device, &buffer) == CORE_OK);
-                    EXPECT(35, buffer.data.data == NULL && buffer.data.size == 0);
+                    EXPECT(29, buffer.index < 64); /* sanity bound: the true buffer count is internal */
+                    EXPECT(30, v4l2_queue_buffer(device, &buffer) == CORE_OK);
+                    EXPECT(31, buffer.data.data == NULL && buffer.data.size == 0);
                     break;
                 }
-                EXPECT(36, status == V4L2_DEQUEUE_STATUS_NO_BUFFER);
+                EXPECT(32, status == V4L2_DEQUEUE_STATUS_NO_BUFFER);
                 {
                     DurationMs remaining;
 
@@ -213,20 +213,20 @@ static void test_real_device(void)
             }
             (void)got_buffer_ready; /* informational only: both outcomes are valid */
 
-            EXPECT(37, v4l2_dequeue_buffer(device, NULL, &buffer) == CORE_INVALID_ARGUMENT);
-            EXPECT(38, v4l2_dequeue_buffer(device, &status, NULL) == CORE_INVALID_ARGUMENT);
-            EXPECT(39, v4l2_queue_buffer(device, NULL) == CORE_INVALID_ARGUMENT);
+            EXPECT(33, v4l2_dequeue_buffer(device, NULL, &buffer) == CORE_INVALID_ARGUMENT);
+            EXPECT(34, v4l2_dequeue_buffer(device, &status, NULL) == CORE_INVALID_ARGUMENT);
+            EXPECT(35, v4l2_queue_buffer(device, NULL) == CORE_INVALID_ARGUMENT);
         }
 
-        EXPECT(40, v4l2_stop_capture(device) == CORE_OK);
-        EXPECT(41, v4l2_stop_capture(NULL) == CORE_INVALID_ARGUMENT);
+        EXPECT(36, v4l2_stop_capture(device) == CORE_OK);
+        EXPECT(37, v4l2_stop_capture(NULL) == CORE_INVALID_ARGUMENT);
     }
 
-    EXPECT(42, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
-    EXPECT(43, configurations.items == NULL && configurations.count == 0);
+    EXPECT(38, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
+    EXPECT(39, configurations.items == NULL && configurations.count == 0);
 
-    EXPECT(44, v4l2_close(&device) == CORE_OK);
-    EXPECT(45, device == NULL);
+    EXPECT(40, v4l2_close(&device) == CORE_OK);
+    EXPECT(41, device == NULL);
     destroy(&path);
 }
 
@@ -260,27 +260,27 @@ static void test_querycap_validation(void)
     config.path = &path;
 
     fake_v4l2_reset();
-    EXPECT(50, v4l2_open(&config, &device) == CORE_OK);
-    EXPECT(51, device != NULL);
-    EXPECT(52, v4l2_close(&device) == CORE_OK);
+    EXPECT(42, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(43, device != NULL);
+    EXPECT(44, v4l2_close(&device) == CORE_OK);
 
     fake_v4l2_reset();
     fake_v4l2_set_not_v4l2(true);
     device = NULL;
-    EXPECT(53, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
-    EXPECT(54, device == NULL);
+    EXPECT(45, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
+    EXPECT(46, device == NULL);
 
     fake_v4l2_reset();
     fake_v4l2_set_cannot_stream(true);
     device = NULL;
-    EXPECT(55, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
-    EXPECT(56, device == NULL);
+    EXPECT(47, v4l2_open(&config, &device) == CORE_UNSUPPORTED);
+    EXPECT(48, device == NULL);
 
     fake_v4l2_reset();
     fake_v4l2_set_device_gone(true);
     device = NULL;
-    EXPECT(57, v4l2_open(&config, &device) == CORE_NOT_FOUND);
-    EXPECT(58, device == NULL);
+    EXPECT(49, v4l2_open(&config, &device) == CORE_NOT_FOUND);
+    EXPECT(50, device == NULL);
 
     fake_v4l2_reset();
     destroy(&path);
@@ -305,7 +305,7 @@ static void test_device_lost_with_outstanding_buffers(void)
     config.path = &path;
 
     fake_v4l2_reset();
-    EXPECT(60, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(51, v4l2_open(&config, &device) == CORE_OK);
 
     requested.pixel_format = 0;
     requested.width = 640;
@@ -313,22 +313,22 @@ static void test_device_lost_with_outstanding_buffers(void)
     requested.frames_per_second = 30;
     requested.max_frame_bytes = 0;
 
-    EXPECT(61, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
-    EXPECT(62, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(52, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(53, v4l2_start_capture(device) == CORE_OK);
 
     /* Take a buffer and never give it back. */
     fake_v4l2_arm_frame(true);
-    EXPECT(63, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
-    EXPECT(64, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+    EXPECT(54, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(55, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
 
     /* While the device is healthy the outstanding buffer blocks the close,
      * which is what contract 9 asks for. */
-    EXPECT(65, v4l2_close(&device) == CORE_INVALID_STATE);
+    EXPECT(56, v4l2_close(&device) == CORE_INVALID_STATE);
 
     /* The device goes away. */
     fake_v4l2_set_device_gone(true);
-    EXPECT(66, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
-    EXPECT(67, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
+    EXPECT(57, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(58, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
 
     /* The buffer went with the driver, so the outstanding count has to be
      * cleared. What matters is that close() is not refused for it: before the
@@ -336,25 +336,25 @@ static void test_device_lost_with_outstanding_buffers(void)
      * handle nobody could reach any more. With the device still gone the
      * cleanup ioctls fail as well, so the code is an error - but never
      * CORE_INVALID_STATE, and the handle is released either way. */
-    EXPECT(68, v4l2_close(&device) != CORE_INVALID_STATE);
-    EXPECT(69, device == NULL);
+    EXPECT(59, v4l2_close(&device) != CORE_INVALID_STATE);
+    EXPECT(60, device == NULL);
 
     /* Same again, but with the device reachable again, so the whole close
      * succeeds outright. */
     fake_v4l2_reset();
     device = NULL;
-    EXPECT(70, v4l2_open(&config, &device) == CORE_OK);
-    EXPECT(71, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
-    EXPECT(72, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(61, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(62, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(63, v4l2_start_capture(device) == CORE_OK);
     fake_v4l2_arm_frame(true);
-    EXPECT(73, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
-    EXPECT(74, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+    EXPECT(64, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(65, status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
     fake_v4l2_set_device_gone(true);
-    EXPECT(75, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
-    EXPECT(76, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
+    EXPECT(66, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(67, status == V4L2_DEQUEUE_STATUS_DEVICE_LOST);
     fake_v4l2_set_device_gone(false);
-    EXPECT(77, v4l2_close(&device) == CORE_OK);
-    EXPECT(78, device == NULL);
+    EXPECT(68, v4l2_close(&device) == CORE_OK);
+    EXPECT(69, device == NULL);
 
     fake_v4l2_reset();
     destroy(&path);
@@ -373,31 +373,31 @@ static void test_start_requires_configuration(void)
     config.path = &path;
 
     fake_v4l2_reset();
-    EXPECT(90, v4l2_open(&config, &device) == CORE_OK);
-    EXPECT(91, v4l2_start_capture(device) == CORE_INVALID_STATE);
+    EXPECT(70, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(71, v4l2_start_capture(device) == CORE_INVALID_STATE);
 
     requested.pixel_format = 0;
     requested.width = 640;
     requested.height = 480;
     requested.frames_per_second = 30;
     requested.max_frame_bytes = 0;
-    EXPECT(92, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(72, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
     EXPECT(73, actual.max_frame_bytes > 0);
-    EXPECT(94, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(74, v4l2_start_capture(device) == CORE_OK);
     EXPECT(75, fake_v4l2_streamon_calls() == 1);
 
-    EXPECT(96, v4l2_stop_capture(device) == CORE_OK);
+    EXPECT(76, v4l2_stop_capture(device) == CORE_OK);
     /* stop gives the buffers back, so streaming cannot start again without a
      * fresh configure: this is what camlib's state table has to mirror. */
-    EXPECT(97, v4l2_start_capture(device) == CORE_INVALID_STATE);
+    EXPECT(77, v4l2_start_capture(device) == CORE_INVALID_STATE);
     EXPECT(78, fake_v4l2_streamon_calls() == 1);
 
-    EXPECT(99, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
-    EXPECT(200, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(79, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(80, v4l2_start_capture(device) == CORE_OK);
     EXPECT(81, fake_v4l2_streamon_calls() == 2);
 
-    EXPECT(102, v4l2_stop_capture(device) == CORE_OK);
-    EXPECT(103, v4l2_close(&device) == CORE_OK);
+    EXPECT(82, v4l2_stop_capture(device) == CORE_OK);
+    EXPECT(83, v4l2_close(&device) == CORE_OK);
 
     fake_v4l2_reset();
     destroy(&path);

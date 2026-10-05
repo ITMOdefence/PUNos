@@ -1,18 +1,10 @@
 /*
  * Runtime test of the ipclib operations against DevDoc/SpecialLibs/ipclib.md.
  *
- * Each check has its own number; see System/SystemLibs/testing/check.h.
  * Sockets are created under /tmp, present on the host and inside the PUNos
- * initramfs.
- *
- * Check number groups:
- *   1-10   ipc_server_create / get_fd / close
- *   11-19  endpoint longer than sockaddr_un can hold
- *   20-23  accept with no pending connection, connection_close on NULL
- *   30-46  begin_connect, finish_connect, get_fd, close
- *   50-71  send, flush, receive, ipc_message_destroy
- *   80-91  ten messages queued at once, read back one frame per call
- *   100-108 payload above IPC_MESSAGE_MAX_SIZE
+ * initramfs. The checks are numbered sequentially from 1, so a failure names one
+ * assertion: check_fail() exits with the number, which means two assertions
+ * sharing a number could not be told apart.
  */
 
 #define CHECK_TEST_NAME "ipclib"
@@ -91,15 +83,15 @@ static void test_connection_close(void)
     IpcServerHandle server = NULL;
     IpcConnectionHandle conn = NULL;
 
-    EXPECT(20, ipc_server_create(&endpoint, &server) == CORE_OK);
-    EXPECT(21, ipc_server_accept(server, &conn) == CORE_WOULD_BLOCK);
-    EXPECT(22, ipc_connection_close(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(12, ipc_server_create(&endpoint, &server) == CORE_OK);
+    EXPECT(13, ipc_server_accept(server, &conn) == CORE_WOULD_BLOCK);
+    EXPECT(14, ipc_connection_close(NULL) == CORE_INVALID_ARGUMENT);
     {
         IpcConnectionHandle null_conn = NULL;
-        EXPECT(23, ipc_connection_close(&null_conn) == CORE_INVALID_ARGUMENT);
+        EXPECT(15, ipc_connection_close(&null_conn) == CORE_INVALID_ARGUMENT);
     }
 
-    EXPECT(24, ipc_server_close(&server) == CORE_OK);
+    EXPECT(16, ipc_server_close(&server) == CORE_OK);
     destroy_str(&endpoint);
 }
 
@@ -111,34 +103,34 @@ static void test_connection_state_transitions(void)
     IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
-    EXPECT(30, ipc_server_create(&endpoint, &server) == CORE_OK);
-    EXPECT(31, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
+    EXPECT(17, ipc_server_create(&endpoint, &server) == CORE_OK);
+    EXPECT(18, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
 
-    EXPECT(32, ipc_connection_finish_connect(client_conn, &state) == CORE_OK);
-    EXPECT(33, state == IPC_CONNECTION_STATE_OPEN || state == IPC_CONNECTION_STATE_CONNECTING);
+    EXPECT(19, ipc_connection_finish_connect(client_conn, &state) == CORE_OK);
+    EXPECT(20, state == IPC_CONNECTION_STATE_OPEN || state == IPC_CONNECTION_STATE_CONNECTING);
 
     for (int i = 0; i < 100 && state != IPC_CONNECTION_STATE_OPEN; i++) {
         ipc_connection_finish_connect(client_conn, &state);
     }
-    EXPECT(34, state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(21, state == IPC_CONNECTION_STATE_OPEN);
 
-    EXPECT(35, ipc_server_accept(server, &server_conn) == CORE_OK);
-    EXPECT(36, server_conn != NULL);
+    EXPECT(22, ipc_server_accept(server, &server_conn) == CORE_OK);
+    EXPECT(23, server_conn != NULL);
 
     i32 client_fd = -1;
     i32 server_fd = -1;
-    EXPECT(37, ipc_connection_get_fd(client_conn, &client_fd) == CORE_OK && client_fd >= 0);
-    EXPECT(38, ipc_connection_get_fd(server_conn, &server_fd) == CORE_OK && server_fd >= 0);
-    EXPECT(39, client_fd != server_fd);
+    EXPECT(24, ipc_connection_get_fd(client_conn, &client_fd) == CORE_OK && client_fd >= 0);
+    EXPECT(25, ipc_connection_get_fd(server_conn, &server_fd) == CORE_OK && server_fd >= 0);
+    EXPECT(26, client_fd != server_fd);
 
-    EXPECT(40, ipc_connection_get_fd(NULL, &client_fd) == CORE_INVALID_ARGUMENT);
-    EXPECT(41, ipc_connection_get_fd(client_conn, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(27, ipc_connection_get_fd(NULL, &client_fd) == CORE_INVALID_ARGUMENT);
+    EXPECT(28, ipc_connection_get_fd(client_conn, NULL) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(42, ipc_connection_close(&client_conn) == CORE_OK);
-    EXPECT(43, client_conn == NULL);
-    EXPECT(44, ipc_connection_close(&server_conn) == CORE_OK);
-    EXPECT(45, server_conn == NULL);
-    EXPECT(46, ipc_server_close(&server) == CORE_OK);
+    EXPECT(29, ipc_connection_close(&client_conn) == CORE_OK);
+    EXPECT(30, client_conn == NULL);
+    EXPECT(31, ipc_connection_close(&server_conn) == CORE_OK);
+    EXPECT(32, server_conn == NULL);
+    EXPECT(33, ipc_server_close(&server) == CORE_OK);
 
     destroy_str(&endpoint);
 }
@@ -151,15 +143,15 @@ static void test_send_receive(void)
     IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
-    EXPECT(50, ipc_server_create(&endpoint, &server) == CORE_OK);
-    EXPECT(51, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
+    EXPECT(34, ipc_server_create(&endpoint, &server) == CORE_OK);
+    EXPECT(35, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
 
     for (int i = 0; i < 100; i++) {
         ipc_connection_finish_connect(client_conn, &state);
         if (state == IPC_CONNECTION_STATE_OPEN) break;
     }
-    EXPECT(52, state == IPC_CONNECTION_STATE_OPEN);
-    EXPECT(53, ipc_server_accept(server, &server_conn) == CORE_OK);
+    EXPECT(36, state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(37, ipc_server_accept(server, &server_conn) == CORE_OK);
 
     u8 payload[] = { 'h', 'e', 'l', 'l', 'o' };
     IpcMessage msg;
@@ -167,13 +159,13 @@ static void test_send_receive(void)
     msg.payload.data = payload;
     msg.payload.size = sizeof(payload);
 
-    EXPECT(54, ipc_connection_send(client_conn, &msg) == CORE_OK);
+    EXPECT(38, ipc_connection_send(client_conn, &msg) == CORE_OK);
 
     bool has_pending = false;
     for (int i = 0; i < 100 && !has_pending; i++) {
         ipc_connection_flush(client_conn, &has_pending);
     }
-    EXPECT(55, has_pending == false);
+    EXPECT(39, has_pending == false);
 
     IpcReceiveStatus recv_status;
     IpcMessage recv_msg;
@@ -184,25 +176,25 @@ static void test_send_receive(void)
         ipc_connection_receive(server_conn, &recv_status, &recv_msg);
         if (recv_status == IPC_RECEIVE_STATUS_MESSAGE) break;
     }
-    EXPECT(56, recv_status == IPC_RECEIVE_STATUS_MESSAGE);
-    EXPECT(57, recv_msg.type == 42);
-    EXPECT(58, recv_msg.payload.size == 5);
-    EXPECT(59, recv_msg.payload.data[0] == 'h' && recv_msg.payload.data[4] == 'o');
+    EXPECT(40, recv_status == IPC_RECEIVE_STATUS_MESSAGE);
+    EXPECT(41, recv_msg.type == 42);
+    EXPECT(42, recv_msg.payload.size == 5);
+    EXPECT(43, recv_msg.payload.data[0] == 'h' && recv_msg.payload.data[4] == 'o');
 
-    EXPECT(60, ipc_message_destroy(&recv_msg) == CORE_OK);
-    EXPECT(61, recv_msg.payload.data == NULL && recv_msg.payload.size == 0);
+    EXPECT(44, ipc_message_destroy(&recv_msg) == CORE_OK);
+    EXPECT(45, recv_msg.payload.data == NULL && recv_msg.payload.size == 0);
 
-    EXPECT(62, ipc_connection_send(client_conn, NULL) == CORE_INVALID_ARGUMENT);
-    EXPECT(63, ipc_connection_send(NULL, &msg) == CORE_INVALID_ARGUMENT);
-    EXPECT(64, ipc_connection_flush(client_conn, NULL) == CORE_INVALID_ARGUMENT);
-    EXPECT(65, ipc_connection_flush(NULL, &has_pending) == CORE_INVALID_ARGUMENT);
-    EXPECT(66, ipc_connection_receive(server_conn, NULL, &recv_msg) == CORE_INVALID_ARGUMENT);
-    EXPECT(67, ipc_connection_receive(NULL, &recv_status, &recv_msg) == CORE_INVALID_ARGUMENT);
-    EXPECT(68, ipc_message_destroy(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(46, ipc_connection_send(client_conn, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(47, ipc_connection_send(NULL, &msg) == CORE_INVALID_ARGUMENT);
+    EXPECT(48, ipc_connection_flush(client_conn, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(49, ipc_connection_flush(NULL, &has_pending) == CORE_INVALID_ARGUMENT);
+    EXPECT(50, ipc_connection_receive(server_conn, NULL, &recv_msg) == CORE_INVALID_ARGUMENT);
+    EXPECT(51, ipc_connection_receive(NULL, &recv_status, &recv_msg) == CORE_INVALID_ARGUMENT);
+    EXPECT(52, ipc_message_destroy(NULL) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(69, ipc_connection_close(&client_conn) == CORE_OK);
-    EXPECT(70, ipc_connection_close(&server_conn) == CORE_OK);
-    EXPECT(71, ipc_server_close(&server) == CORE_OK);
+    EXPECT(53, ipc_connection_close(&client_conn) == CORE_OK);
+    EXPECT(54, ipc_connection_close(&server_conn) == CORE_OK);
+    EXPECT(55, ipc_server_close(&server) == CORE_OK);
 
     destroy_str(&endpoint);
 }
@@ -215,29 +207,29 @@ static void test_multiple_messages(void)
     IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
-    EXPECT(80, ipc_server_create(&endpoint, &server) == CORE_OK);
-    EXPECT(81, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
+    EXPECT(56, ipc_server_create(&endpoint, &server) == CORE_OK);
+    EXPECT(57, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
 
     for (int i = 0; i < 100; i++) {
         ipc_connection_finish_connect(client_conn, &state);
         if (state == IPC_CONNECTION_STATE_OPEN) break;
     }
-    EXPECT(82, state == IPC_CONNECTION_STATE_OPEN);
-    EXPECT(83, ipc_server_accept(server, &server_conn) == CORE_OK);
+    EXPECT(58, state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(59, ipc_server_accept(server, &server_conn) == CORE_OK);
 
     for (u32 i = 0; i < 10; i++) {
         IpcMessage msg;
         msg.type = i;
         msg.payload.data = (u8 *)&i;
         msg.payload.size = sizeof(i);
-        EXPECT(84, ipc_connection_send(client_conn, &msg) == CORE_OK);
+        EXPECT(60, ipc_connection_send(client_conn, &msg) == CORE_OK);
     }
 
     bool has_pending = true;
     for (int i = 0; i < 100 && has_pending; i++) {
         ipc_connection_flush(client_conn, &has_pending);
     }
-    EXPECT(85, has_pending == false);
+    EXPECT(61, has_pending == false);
 
     for (u32 expected = 0; expected < 10; expected++) {
         IpcReceiveStatus recv_status;
@@ -249,16 +241,16 @@ static void test_multiple_messages(void)
             ipc_connection_receive(server_conn, &recv_status, &recv_msg);
             if (recv_status == IPC_RECEIVE_STATUS_MESSAGE) break;
         }
-        EXPECT(86, recv_status == IPC_RECEIVE_STATUS_MESSAGE);
-        EXPECT(87, recv_msg.type == expected);
-        EXPECT(88, recv_msg.payload.size == sizeof(u32));
+        EXPECT(62, recv_status == IPC_RECEIVE_STATUS_MESSAGE);
+        EXPECT(63, recv_msg.type == expected);
+        EXPECT(64, recv_msg.payload.size == sizeof(u32));
 
         ipc_message_destroy(&recv_msg);
     }
 
-    EXPECT(89, ipc_connection_close(&client_conn) == CORE_OK);
-    EXPECT(90, ipc_connection_close(&server_conn) == CORE_OK);
-    EXPECT(91, ipc_server_close(&server) == CORE_OK);
+    EXPECT(65, ipc_connection_close(&client_conn) == CORE_OK);
+    EXPECT(66, ipc_connection_close(&server_conn) == CORE_OK);
+    EXPECT(67, ipc_server_close(&server) == CORE_OK);
 
     destroy_str(&endpoint);
 }
@@ -271,31 +263,31 @@ static void test_send_too_large(void)
     IpcConnectionHandle client_conn = NULL;
     IpcConnectionState state;
 
-    EXPECT(100, ipc_server_create(&endpoint, &server) == CORE_OK);
-    EXPECT(101, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
+    EXPECT(68, ipc_server_create(&endpoint, &server) == CORE_OK);
+    EXPECT(69, ipc_connection_begin_connect(&endpoint, &client_conn) == CORE_OK);
 
     for (int i = 0; i < 100; i++) {
         ipc_connection_finish_connect(client_conn, &state);
         if (state == IPC_CONNECTION_STATE_OPEN) break;
     }
-    EXPECT(102, state == IPC_CONNECTION_STATE_OPEN);
-    EXPECT(103, ipc_server_accept(server, &server_conn) == CORE_OK);
+    EXPECT(70, state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(71, ipc_server_accept(server, &server_conn) == CORE_OK);
 
     MemoryBlock large_block;
-    EXPECT(104, memory_allocate(IPC_MESSAGE_MAX_SIZE + 1, &large_block) == CORE_OK);
+    EXPECT(72, memory_allocate(IPC_MESSAGE_MAX_SIZE + 1, &large_block) == CORE_OK);
 
     IpcMessage msg;
     msg.type = 1;
     msg.payload.data = large_block.data;
     msg.payload.size = large_block.size;
 
-    EXPECT(105, ipc_connection_send(client_conn, &msg) == CORE_OVERFLOW);
+    EXPECT(73, ipc_connection_send(client_conn, &msg) == CORE_OVERFLOW);
 
     memory_free(&large_block);
 
-    EXPECT(106, ipc_connection_close(&client_conn) == CORE_OK);
-    EXPECT(107, ipc_connection_close(&server_conn) == CORE_OK);
-    EXPECT(108, ipc_server_close(&server) == CORE_OK);
+    EXPECT(74, ipc_connection_close(&client_conn) == CORE_OK);
+    EXPECT(75, ipc_connection_close(&server_conn) == CORE_OK);
+    EXPECT(76, ipc_server_close(&server) == CORE_OK);
 
     destroy_str(&endpoint);
 }
@@ -308,14 +300,14 @@ static void test_endpoint_validation(void)
     IpcConnectionHandle conn = NULL;
 
     String empty = make_str("");
-    EXPECT(80, ipc_server_create(&empty, &server) == CORE_INVALID_ARGUMENT);
-    EXPECT(81, ipc_connection_begin_connect(&empty, &conn) == CORE_INVALID_ARGUMENT);
+    EXPECT(77, ipc_server_create(&empty, &server) == CORE_INVALID_ARGUMENT);
+    EXPECT(78, ipc_connection_begin_connect(&empty, &conn) == CORE_INVALID_ARGUMENT);
 
     String null_endpoint;
     null_endpoint.data = NULL;
     null_endpoint.length = 0;
-    EXPECT(82, ipc_server_create(&null_endpoint, &server) == CORE_INVALID_ARGUMENT);
-    EXPECT(83, ipc_connection_begin_connect(&null_endpoint, &conn) == CORE_INVALID_ARGUMENT);
+    EXPECT(79, ipc_server_create(&null_endpoint, &server) == CORE_INVALID_ARGUMENT);
+    EXPECT(80, ipc_connection_begin_connect(&null_endpoint, &conn) == CORE_INVALID_ARGUMENT);
 
     destroy_str(&empty);
 }
@@ -341,19 +333,19 @@ static void test_connect_failure(void)
     first = ipc_connection_finish_connect(conn, &state);
     if (first == CORE_OK) {
         /* Still in progress on this kernel: not a failure case. */
-        EXPECT(84, state == IPC_CONNECTION_STATE_CONNECTING);
+        EXPECT(81, state == IPC_CONNECTION_STATE_CONNECTING);
     } else {
         /* A final error, reported as such and not as a success. */
-        EXPECT(85, state != IPC_CONNECTION_STATE_OPEN);
-        EXPECT(86, first == CORE_NOT_FOUND || first == CORE_IO_ERROR);
+        EXPECT(82, state != IPC_CONNECTION_STATE_OPEN);
+        EXPECT(83, first == CORE_NOT_FOUND || first == CORE_IO_ERROR);
 
         /* Reading SO_ERROR again must not turn a dead socket into Open. */
         state = IPC_CONNECTION_STATE_OPEN;
-        EXPECT(87, ipc_connection_finish_connect(conn, &state) == first);
-        EXPECT(88, state != IPC_CONNECTION_STATE_OPEN);
+        EXPECT(84, ipc_connection_finish_connect(conn, &state) == first);
+        EXPECT(85, state != IPC_CONNECTION_STATE_OPEN);
     }
 
-    EXPECT(89, ipc_connection_close(&conn) == CORE_OK);
+    EXPECT(86, ipc_connection_close(&conn) == CORE_OK);
     destroy_str(&endpoint);
 }
 
@@ -409,14 +401,14 @@ static void test_connect_outcomes(void)
     if (conn != NULL) {
         fake_socket_arm(EINPROGRESS);
         state = IPC_CONNECTION_STATE_OPEN;
-        EXPECT(100, ipc_connection_finish_connect(conn, &state) == CORE_OK);
-        EXPECT(101, state == IPC_CONNECTION_STATE_CONNECTING);
+        EXPECT(87, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(88, state == IPC_CONNECTION_STATE_CONNECTING);
 
         /* 2. Then it succeeds: the connection opens. */
         fake_socket_arm(0);
-        EXPECT(102, ipc_connection_finish_connect(conn, &state) == CORE_OK);
-        EXPECT(103, state == IPC_CONNECTION_STATE_OPEN);
-        EXPECT(104, ipc_connection_close(&conn) == CORE_OK);
+        EXPECT(89, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(90, state == IPC_CONNECTION_STATE_OPEN);
+        EXPECT(91, ipc_connection_close(&conn) == CORE_OK);
     }
     fake_socket_reset();
 
@@ -434,17 +426,17 @@ static void test_connect_outcomes(void)
 
         fake_socket_arm(ECONNREFUSED);
         state = IPC_CONNECTION_STATE_CONNECTING;
-        EXPECT(105, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
-        EXPECT(106, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
+        EXPECT(92, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
+        EXPECT(93, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
 
         /* 4. The kernel cleared the error when it was read, so the old code
          *    came back here, saw 0 and reported Open - and then the message
          *    above would have gone through. The failure has to repeat. */
-        EXPECT(107, !fake_socket_error_pending());
+        EXPECT(94, !fake_socket_error_pending());
         state = IPC_CONNECTION_STATE_CONNECTING;
-        EXPECT(108, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
-        EXPECT(109, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
-        EXPECT(110, ipc_connection_close(&conn) == CORE_OK);
+        EXPECT(95, ipc_connection_finish_connect(conn, &state) == CORE_IO_ERROR);
+        EXPECT(96, ipc_connection_send(conn, &message) == CORE_INVALID_STATE);
+        EXPECT(97, ipc_connection_close(&conn) == CORE_OK);
     }
     fake_socket_reset();
 
@@ -453,8 +445,8 @@ static void test_connect_outcomes(void)
     if (conn != NULL) {
         fake_socket_arm(ENOENT);
         state = IPC_CONNECTION_STATE_CONNECTING;
-        EXPECT(111, ipc_connection_finish_connect(conn, &state) == CORE_NOT_FOUND);
-        EXPECT(112, ipc_connection_close(&conn) == CORE_OK);
+        EXPECT(98, ipc_connection_finish_connect(conn, &state) == CORE_NOT_FOUND);
+        EXPECT(99, ipc_connection_close(&conn) == CORE_OK);
     }
     fake_socket_reset();
 
@@ -462,12 +454,12 @@ static void test_connect_outcomes(void)
     conn = connect_to_live_server(server);
     if (conn != NULL) {
         state = IPC_CONNECTION_STATE_CONNECTING;
-        EXPECT(114, ipc_connection_finish_connect(conn, &state) == CORE_OK);
-        EXPECT(115, state == IPC_CONNECTION_STATE_OPEN);
-        EXPECT(116, ipc_connection_close(&conn) == CORE_OK);
+        EXPECT(100, ipc_connection_finish_connect(conn, &state) == CORE_OK);
+        EXPECT(101, state == IPC_CONNECTION_STATE_OPEN);
+        EXPECT(102, ipc_connection_close(&conn) == CORE_OK);
     }
 
-    EXPECT(117, ipc_server_close(&server) == CORE_OK);
+    EXPECT(103, ipc_server_close(&server) == CORE_OK);
 }
 
 int main(int argc, char **argv, char **envp)

@@ -74,7 +74,7 @@ static void test_open_nonexistent(void)
 
     config.path = &path;
 
-    EXPECT(10, input_device_open(&config, &device) == CORE_NOT_FOUND);
+    EXPECT(6, input_device_open(&config, &device) == CORE_NOT_FOUND);
 
     destroy_str(&path);
 }
@@ -90,28 +90,28 @@ static void test_get_fd_and_info(void)
     ErrorCode result = input_device_open(&config, &device);
     if (result == CORE_OK) {
         i32 fd = -1;
-        EXPECT(20, input_device_get_fd(device, &fd) == CORE_OK && fd >= 0);
-        EXPECT(21, input_device_get_fd(NULL, &fd) == CORE_INVALID_ARGUMENT);
-        EXPECT(22, input_device_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
+        EXPECT(7, input_device_get_fd(device, &fd) == CORE_OK && fd >= 0);
+        EXPECT(8, input_device_get_fd(NULL, &fd) == CORE_INVALID_ARGUMENT);
+        EXPECT(9, input_device_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
 
         InputDeviceInfo info;
-        EXPECT(23, input_device_get_info(device, &info) == CORE_OK);
-        EXPECT(24, input_device_get_info(NULL, &info) == CORE_INVALID_ARGUMENT);
-        EXPECT(25, input_device_get_info(device, NULL) == CORE_INVALID_ARGUMENT);
+        EXPECT(10, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(11, input_device_get_info(NULL, &info) == CORE_INVALID_ARGUMENT);
+        EXPECT(12, input_device_get_info(device, NULL) == CORE_INVALID_ARGUMENT);
 
         InputReadStatus status;
         InputFrame frame;
-        EXPECT(26, input_device_read_frame(device, &status, &frame) == CORE_OK);
-        EXPECT(27, status == INPUT_READ_STATUS_NO_FRAME || status == INPUT_READ_STATUS_FRAME_READY);
+        EXPECT(13, input_device_read_frame(device, &status, &frame) == CORE_OK);
+        EXPECT(14, status == INPUT_READ_STATUS_NO_FRAME || status == INPUT_READ_STATUS_FRAME_READY);
 
         if (status == INPUT_READ_STATUS_FRAME_READY) {
-            EXPECT(28, frame.count > 0);
-            EXPECT(29, input_frame_destroy(&frame) == CORE_OK);
-            EXPECT(30, frame.events == NULL && frame.count == 0);
+            EXPECT(15, frame.count > 0);
+            EXPECT(16, input_frame_destroy(&frame) == CORE_OK);
+            EXPECT(17, frame.events == NULL && frame.count == 0);
         }
 
-        EXPECT(31, input_device_close(&device) == CORE_OK);
-        EXPECT(32, device == NULL);
+        EXPECT(18, input_device_close(&device) == CORE_OK);
+        EXPECT(19, device == NULL);
     } else {
         EXPECT(20, result == CORE_NOT_FOUND || result == CORE_PERMISSION_DENIED);
     }
@@ -132,11 +132,11 @@ static void test_read_frame_errors(void)
         InputReadStatus status;
         InputFrame frame;
 
-        EXPECT(40, input_device_read_frame(NULL, &status, &frame) == CORE_INVALID_ARGUMENT);
-        EXPECT(41, input_device_read_frame(device, NULL, &frame) == CORE_INVALID_ARGUMENT);
-        EXPECT(42, input_frame_destroy(NULL) == CORE_INVALID_ARGUMENT);
+        EXPECT(21, input_device_read_frame(NULL, &status, &frame) == CORE_INVALID_ARGUMENT);
+        EXPECT(22, input_device_read_frame(device, NULL, &frame) == CORE_INVALID_ARGUMENT);
+        EXPECT(23, input_frame_destroy(NULL) == CORE_INVALID_ARGUMENT);
 
-        EXPECT(43, input_device_close(&device) == CORE_OK);
+        EXPECT(24, input_device_close(&device) == CORE_OK);
     }
 
     destroy_str(&path);
@@ -151,23 +151,23 @@ static void test_path_validation(void)
 
     String empty = make_str("");
     config.path = &empty;
-    EXPECT(60, input_device_open(&config, &device) == CORE_INVALID_ARGUMENT);
+    EXPECT(25, input_device_open(&config, &device) == CORE_INVALID_ARGUMENT);
 
     String wrong_dir = make_str("/dev/video0");
     config.path = &wrong_dir;
-    EXPECT(61, input_device_open(&config, &device) == CORE_INVALID_PATH);
+    EXPECT(26, input_device_open(&config, &device) == CORE_INVALID_PATH);
 
     String no_digits = make_str("/dev/input/eventX");
     config.path = &no_digits;
-    EXPECT(62, input_device_open(&config, &device) == CORE_INVALID_PATH);
+    EXPECT(27, input_device_open(&config, &device) == CORE_INVALID_PATH);
 
     String prefix_only = make_str("/dev/input/event");
     config.path = &prefix_only;
-    EXPECT(63, input_device_open(&config, &device) == CORE_INVALID_PATH);
+    EXPECT(28, input_device_open(&config, &device) == CORE_INVALID_PATH);
 
     InputDeviceConfig null_path;
     null_path.path = NULL;
-    EXPECT(64, input_device_open(&null_path, &device) == CORE_INVALID_ARGUMENT);
+    EXPECT(29, input_device_open(&null_path, &device) == CORE_INVALID_ARGUMENT);
 
     destroy_str(&empty);
     destroy_str(&wrong_dir);
@@ -238,32 +238,32 @@ static void test_partial_frame_is_not_handed_over(void)
     InputFrame frame;
     InputRawEvent events[1];
 
-    EXPECT(100, device != NULL);
+    EXPECT(30, device != NULL);
 
     /* KEY_A with no SYN_REPORT yet. */
     events[0] = raw_key(FAKE_KEY_A, 1);
     fake_input_queue(events, 1);
 
-    EXPECT(101, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(102, status == INPUT_READ_STATUS_NO_FRAME);
+    EXPECT(31, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(32, status == INPUT_READ_STATUS_NO_FRAME);
 
     /* Still nothing new: the same partial frame must not be flushed either. */
-    EXPECT(103, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(104, status == INPUT_READ_STATUS_NO_FRAME);
+    EXPECT(33, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(34, status == INPUT_READ_STATUS_NO_FRAME);
 
     /* Now the kernel terminates it, and the earlier KEY_A comes with it. */
     events[0] = raw_syn(INPUT_RAW_SYN_REPORT);
     fake_input_queue(events, 1);
 
-    EXPECT(105, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(106, status == INPUT_READ_STATUS_FRAME_READY);
-    EXPECT(107, frame.count == 2);
-    EXPECT(108, frame.events[0].kind == INPUT_EVENT_KIND_KEY);
-    EXPECT(109, frame.events[0].code == FAKE_KEY_A);
-    EXPECT(110, frame.events[1].kind == INPUT_EVENT_KIND_SYNC_REPORT);
-    EXPECT(111, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(35, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(36, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(37, frame.count == 2);
+    EXPECT(38, frame.events[0].kind == INPUT_EVENT_KIND_KEY);
+    EXPECT(39, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(40, frame.events[1].kind == INPUT_EVENT_KIND_SYNC_REPORT);
+    EXPECT(41, input_frame_destroy(&frame) == CORE_OK);
 
-    EXPECT(112, input_device_close(&device) == CORE_OK);
+    EXPECT(42, input_device_close(&device) == CORE_OK);
 }
 
 /*
@@ -286,26 +286,26 @@ static void test_two_frames_in_one_batch(void)
     fake_input_queue(events, 4);
 
     /* First call: the frame ending at the first SYN_REPORT. */
-    EXPECT(120, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(121, status == INPUT_READ_STATUS_FRAME_READY);
-    EXPECT(122, frame.count == 2);
-    EXPECT(123, frame.events[0].code == FAKE_KEY_A);
-    EXPECT(124, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(43, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(44, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(45, frame.count == 2);
+    EXPECT(46, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(47, input_frame_destroy(&frame) == CORE_OK);
 
     /* Second call: the frame that was sitting behind it in the same batch.
      * With the old code this came back as NoFrame and KEY_B was lost. */
-    EXPECT(125, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(126, status == INPUT_READ_STATUS_FRAME_READY);
-    EXPECT(127, frame.count == 2);
-    EXPECT(128, frame.events[0].code == FAKE_KEY_B);
-    EXPECT(129, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(48, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(49, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(50, frame.count == 2);
+    EXPECT(51, frame.events[0].code == FAKE_KEY_B);
+    EXPECT(52, input_frame_destroy(&frame) == CORE_OK);
 
     /* Nothing is left over. */
-    EXPECT(130, fake_input_pending() == 0);
-    EXPECT(131, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(132, status == INPUT_READ_STATUS_NO_FRAME);
+    EXPECT(53, fake_input_pending() == 0);
+    EXPECT(54, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(55, status == INPUT_READ_STATUS_NO_FRAME);
 
-    EXPECT(133, input_device_close(&device) == CORE_OK);
+    EXPECT(56, input_device_close(&device) == CORE_OK);
 }
 
 /*
@@ -327,30 +327,30 @@ static void test_syn_dropped_discards_until_resync(void)
     fake_input_queue(events, 4);
 
     /* The unterminated KEY_A is dropped and reported as SyncLost. */
-    EXPECT(140, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(141, status == INPUT_READ_STATUS_FRAME_READY);
-    EXPECT(142, frame.count == 1);
-    EXPECT(143, frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
-    EXPECT(144, frame.events[0].code == INPUT_RAW_SYN_DROPPED);
-    EXPECT(145, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(57, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(58, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(59, frame.count == 1);
+    EXPECT(60, frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(61, frame.events[0].code == INPUT_RAW_SYN_DROPPED);
+    EXPECT(62, input_frame_destroy(&frame) == CORE_OK);
 
     /* KEY_B was after the drop and before the resync, so it belongs to no
      * frame: this call finds nothing. */
-    EXPECT(146, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(147, status == INPUT_READ_STATUS_NO_FRAME);
+    EXPECT(63, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(64, status == INPUT_READ_STATUS_NO_FRAME);
 
     /* Past the resync the device works again. */
     events[0] = raw_key(FAKE_KEY_A, 1);
     events[1] = raw_syn(INPUT_RAW_SYN_REPORT);
     fake_input_queue(events, 2);
 
-    EXPECT(148, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(149, status == INPUT_READ_STATUS_FRAME_READY);
-    EXPECT(150, frame.count == 2);
-    EXPECT(151, frame.events[0].code == FAKE_KEY_A);
-    EXPECT(152, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(65, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(66, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(67, frame.count == 2);
+    EXPECT(68, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(69, input_frame_destroy(&frame) == CORE_OK);
 
-    EXPECT(153, input_device_close(&device) == CORE_OK);
+    EXPECT(70, input_device_close(&device) == CORE_OK);
 }
 
 /* Contract 8: a lost device is reported once, then only close is allowed. */
@@ -360,14 +360,14 @@ static void test_device_lost(void)
     InputReadStatus status;
     InputFrame frame;
 
-    EXPECT(160, device != NULL);
+    EXPECT(71, device != NULL);
 
     fake_input_lose_device();
-    EXPECT(161, input_device_read_frame(device, &status, &frame) == CORE_OK);
-    EXPECT(162, status == INPUT_READ_STATUS_DEVICE_LOST);
+    EXPECT(72, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(73, status == INPUT_READ_STATUS_DEVICE_LOST);
 
-    EXPECT(163, input_device_close(&device) == CORE_OK);
-    EXPECT(164, device == NULL);
+    EXPECT(74, input_device_close(&device) == CORE_OK);
+    EXPECT(75, device == NULL);
 }
 
 /*
@@ -387,30 +387,30 @@ static void test_device_classes(void)
     fake_input_set_capabilities(INPUT_RAW_CAP_KEY | INPUT_RAW_CAP_POINTER_BUTTONS |
                                 INPUT_RAW_CAP_RELATIVE);
     if (input_device_open(&config, &device) == CORE_OK) {
-        EXPECT(170, input_device_get_info(device, &info) == CORE_OK);
-        EXPECT(171, (info.classes & INPUT_DEVICE_POINTER) != 0);
-        EXPECT(172, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
-        EXPECT(173, input_device_close(&device) == CORE_OK);
+        EXPECT(76, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(77, (info.classes & INPUT_DEVICE_POINTER) != 0);
+        EXPECT(78, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
+        EXPECT(79, input_device_close(&device) == CORE_OK);
     }
     fake_input_forget();
 
     /* Key codes below BTN_MISC: a keyboard. */
     fake_input_set_capabilities(INPUT_RAW_CAP_KEY | INPUT_RAW_CAP_KEYBOARD_KEYS);
     if (input_device_open(&config, &device) == CORE_OK) {
-        EXPECT(174, input_device_get_info(device, &info) == CORE_OK);
-        EXPECT(175, (info.classes & INPUT_DEVICE_KEYBOARD) != 0);
-        EXPECT(176, (info.classes & INPUT_DEVICE_POINTER) == 0);
-        EXPECT(177, input_device_close(&device) == CORE_OK);
+        EXPECT(80, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(81, (info.classes & INPUT_DEVICE_KEYBOARD) != 0);
+        EXPECT(82, (info.classes & INPUT_DEVICE_POINTER) == 0);
+        EXPECT(83, input_device_close(&device) == CORE_OK);
     }
     fake_input_forget();
 
     /* Absolute axes: touch. */
     fake_input_set_capabilities(INPUT_RAW_CAP_ABSOLUTE);
     if (input_device_open(&config, &device) == CORE_OK) {
-        EXPECT(178, input_device_get_info(device, &info) == CORE_OK);
-        EXPECT(179, (info.classes & INPUT_DEVICE_TOUCH) != 0);
-        EXPECT(180, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
-        EXPECT(181, input_device_close(&device) == CORE_OK);
+        EXPECT(84, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(85, (info.classes & INPUT_DEVICE_TOUCH) != 0);
+        EXPECT(86, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
+        EXPECT(87, input_device_close(&device) == CORE_OK);
     }
     fake_input_forget();
 

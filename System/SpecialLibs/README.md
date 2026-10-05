@@ -93,22 +93,27 @@ what `make check` prints and what CI reads.
 
 | # | Fix | Check that fails when reverted |
 | --- | --- | --- |
-| 2 | `inputlib` keeps an unterminated frame instead of handing it over | 102 |
-| 3 | `inputlib` keeps events read past a returned frame | 126 |
-| 4 | `camlib` refuses `configure()` and `close()` while Streaming | 122 |
-| 5 | `camlib` returns to `Open` after `stop()` | 107 |
-| 6 | `libv4l2` clears the outstanding count on `ENODEV` | 68 |
-| 8a | `ipclib` reports a terminal connect error | 105 |
-| 8b | `ipclib` repeats that error instead of reporting `Open` | 108 |
-| 9a | `loglib` rejects `component_length` over the maximum | 83 |
-| 9b | `loglib` rejects `message_length` over the maximum | 85 |
-| 9c | `loglib` rejects a severity outside `LogSeverity` | 87 |
-| 10 | `camlib` tracks issued buffers by id | 148 |
-| 13a | `ipclib` refuses an empty endpoint | 80 |
-| 13b | `loglib` refuses an empty path | 90 |
-| 13c | `camlib` refuses a path that is not `/dev/video<digits>` | 60 |
-| 14a | `libv4l2` validates the device with `VIDIOC_QUERYCAP` | 53 |
-| 14b | `inputlib` tells a keyboard from a device with only buttons | 172 |
+| 2 | `inputlib` keeps an unterminated frame instead of handing it over | 32 |
+| 3 | `inputlib` keeps events read past a returned frame | 49 |
+| 4 | `camlib` refuses `configure()` and `close()` while Streaming | 66 |
+| 5 | `camlib` returns to `Open` after `stop()` | 54 |
+| 6 | `libv4l2` clears the outstanding count on `ENODEV` | 59 |
+| 8a | `ipclib` reports a terminal connect error | 92 |
+| 8b | `ipclib` repeats that error instead of reporting `Open` | 95 |
+| 9a | `loglib` rejects `component_length` over the maximum | 72 |
+| 9b | `loglib` rejects `message_length` over the maximum | 74 |
+| 9c | `loglib` rejects a severity outside `LogSeverity` | 76 |
+| 10 | `camlib` tracks issued buffers by id | 83 |
+| 13a | `ipclib` refuses an empty endpoint | 77 |
+| 13b | `loglib` refuses an empty path | 83 |
+| 13c | `camlib` refuses a path that is not `/dev/video<digits>` | 42 |
+| 14a | `libv4l2` validates the device with `VIDIOC_QUERYCAP` | 45 |
+| 14b | `inputlib` tells a keyboard from a device with only buttons | 78 |
+
+Every test file numbers its checks sequentially from 1. They used to reuse
+numbers across functions - `ipc_runtime.c` had eighteen collisions - and since
+`check_fail()` exits with the check number, a failure in one of them could not
+be told apart from a failure in another.
 
 Two fixes are deliberately not in the table:
 
