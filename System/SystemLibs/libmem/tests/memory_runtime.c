@@ -338,6 +338,38 @@ static void test_compare(void)
     EXPECT(160, memory_compare(view(NULL, 1), view(right, 1), &result) == CORE_INVALID_ARGUMENT);
 }
 
+static void test_shared_memory(void)
+{
+    SharedMemory memory;
+    SharedMemoryMapping mapping;
+    usize size = 0;
+
+    EXPECT(170, memory_shared_create(PAGE + 7, &memory) == CORE_OK);
+    EXPECT(171, memory.fd >= 0 && memory.data != NULL &&
+                    memory.size == PAGE + 7 && memory.reserved == 0);
+    EXPECT(172, memory_shared_get_size(memory.fd, &size) == CORE_OK &&
+                    size == PAGE + 7);
+    memory.data[0] = 0x12;
+    memory.data[PAGE + 6] = 0x34;
+    EXPECT(173, memory_shared_map_readonly(memory.fd, PAGE + 7, &mapping) == CORE_OK);
+    EXPECT(174, mapping.size == PAGE + 7 && mapping.data[0] == 0x12 &&
+                    mapping.data[PAGE + 6] == 0x34);
+    EXPECT(175, memory_shared_map_readonly(memory.fd, PAGE, &mapping) ==
+                    CORE_INVALID_ARGUMENT);
+    EXPECT(176, memory_shared_unmap(&mapping) == CORE_OK &&
+                    mapping.data == NULL && mapping.size == 0);
+    EXPECT(177, memory_shared_close(&memory) == CORE_OK && memory.fd == -1 &&
+                    memory.data == NULL && memory.size == 0);
+
+    EXPECT(178, memory_shared_create(0, &memory) == CORE_INVALID_ARGUMENT);
+    EXPECT(179, memory_shared_create(1, NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(180, memory_shared_get_size(-1, &size) == CORE_INVALID_ARGUMENT);
+    EXPECT(181, memory_shared_map_readonly(-1, PAGE, &mapping) ==
+                    CORE_INVALID_ARGUMENT);
+    EXPECT(182, memory_shared_unmap(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(183, memory_shared_close(NULL) == CORE_INVALID_ARGUMENT);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -352,6 +384,7 @@ int main(int argc, char **argv, char **envp)
     test_move();
     test_set();
     test_compare();
+    test_shared_memory();
 
     check_passed();
     return 0;

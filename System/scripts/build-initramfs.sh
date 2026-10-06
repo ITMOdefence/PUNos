@@ -24,6 +24,8 @@ SELF_TESTS=(
     "SystemLibs/libcore/build/core_runtime:libcore-selftest"
     "SystemLibs/libmath/build/math_runtime:libmath-selftest"
     "SystemLibs/libmem/build/memory_runtime:libmem-selftest"
+    "SystemLibs/librandom/build/random_runtime:librandom-selftest"
+    "SystemLibs/libgraphics/build/graphics_runtime:libgraphics-selftest"
     "SystemLibs/libstr/build/string_runtime:libstr-selftest"
     "SystemLibs/libfile/build/file_runtime:libfile-selftest"
     "SystemLibs/libtime/build/time_runtime:libtime-selftest"
@@ -33,6 +35,11 @@ SELF_TESTS=(
     "SystemLibs/libeventloop/build/eventloop_runtime:libeventloop-selftest"
     "SystemLibs/libinputdevice/build/input_device_runtime:libinputdevice-selftest"
     "SystemLibs/libv4l2/build/v4l2_runtime:libv4l2-selftest"
+    "SystemServices/displayserv/build/displayserv_runtime:displayserv-selftest"
+)
+
+SERVICES=(
+    "SystemServices/displayserv/build/displayserv:displayserv"
 )
 
 verify_elf() {
@@ -58,6 +65,9 @@ verify_elf "${BOOT_DIR}/build/initserv"
 for self_test in "${SELF_TESTS[@]}"; do
     verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
 done
+for service in "${SERVICES[@]}"; do
+    verify_elf "${SYSTEM_DIR}/${service%%:*}"
+done
 
 mkdir -p "${ROOTFS_DIR}" "${IMAGES_DIR}"
 find "${ROOTFS_DIR}" -mindepth 1 -delete
@@ -81,6 +91,10 @@ install -m 0755 "${BOOT_DIR}/build/initserv" \
 for self_test in "${SELF_TESTS[@]}"; do
     install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
         "${ROOTFS_DIR}/punos/bin/${self_test##*:}"
+done
+for service in "${SERVICES[@]}"; do
+    install -m 0755 "${SYSTEM_DIR}/${service%%:*}" \
+        "${ROOTFS_DIR}/punos/bin/${service##*:}"
 done
 
 # Normalize mtimes and archive order. cpio records uid/gid as root explicitly.

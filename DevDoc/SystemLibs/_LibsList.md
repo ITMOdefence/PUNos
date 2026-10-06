@@ -4,6 +4,8 @@
 | [libcore](libcore.md)           | Базовые типы, коды ошибок, байты и проверка размеров.     | `<sys/core.h>`      |
 | [libmath](libmath.md)           | Числовые, геометрические и тригонометрические вычисления. | `<sys/math.h>`      |
 | [libmem](libmem.md)             | Выделение, освобождение и защита памяти.                  | `<sys/memory.h>`    |
+| [librandom](librandom.md)       | Криптографически стойкие случайные байты ядра.            | `<sys/random.h>`    |
+| [libgraphics](libgraphics.md)   | Graphics ABI и программный framebuffer backend.           | `<sys/graphics.h>`  |
 | [libstr](libstr.md)             | Работа с UTF-8 строками.                                  | `<sys/string.h>`    |
 | [libfile](libfile.md)           | Файлы и каталоги.                                         | `<sys/file.h>`      |
 | [libprocess](libprocess.md)     | Нативные процессы компонентов платформы.                  | `<sys/process.h>`   |

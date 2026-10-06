@@ -1,8 +1,7 @@
 # libmem
 
-System Lib for memory (`sys/memory`): allocation, resizing, release and
-protection of memory blocks, plus copying, moving, filling and comparing byte
-ranges.
+System Lib for memory (`sys/memory`): private blocks, byte operations and
+shareable memfd-backed mappings used for cross-process graphic buffers.
 
 Specification: `DevDoc/SystemLibs/libmem.md`. Depends on
 [libcore](../libcore/README.md).
@@ -78,6 +77,18 @@ Consequences:
 
 There is no `mremap()` in the contract, so growing past the current pages
 always copies.
+
+## Shared memory
+
+`memory_shared_create()` creates a `CLOEXEC` memfd, sets its exact size and
+maps it writable with `MAP_SHARED`. The owner transfers a duplicate FD through
+IPC while keeping its own FD and mapping. The receiver validates the exact
+backing size with `memory_shared_get_size()` and imports it read-only with
+`memory_shared_map_readonly()`.
+
+The sender calls `memory_shared_close()` for its owned object. The receiver
+calls `memory_shared_unmap()` for the mapping and closes its received FD using
+the component that owns the IPC descriptor.
 
 ## Implementation decisions
 

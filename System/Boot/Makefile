@@ -8,10 +8,15 @@ CRT_LIBRARY := $(CRT_DIR)/build/libpunos_crt.a
 SYSCALL_LIBRARY := $(SYSCALL_DIR)/build/libpunos_syscall.a
 SYSCALL_SELFTEST := $(SYSCALL_DIR)/build/full_wrappers_runtime
 SYSTEM_LIBS_DIR := ../SystemLibs
+SYSTEM_SERVICES_DIR := ../SystemServices
+DISPLAYSERV := $(SYSTEM_SERVICES_DIR)/displayserv/build/displayserv
+DISPLAYSERV_SELFTEST := $(SYSTEM_SERVICES_DIR)/displayserv/build/displayserv_runtime
 # Runtime tests of System Libs, packaged as /punos/bin/<library>-selftest.
 SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libmath/build/math_runtime \
                          $(SYSTEM_LIBS_DIR)/libmem/build/memory_runtime \
+                         $(SYSTEM_LIBS_DIR)/librandom/build/random_runtime \
+                         $(SYSTEM_LIBS_DIR)/libgraphics/build/graphics_runtime \
                          $(SYSTEM_LIBS_DIR)/libstr/build/string_runtime \
                          $(SYSTEM_LIBS_DIR)/libfile/build/file_runtime \
                          $(SYSTEM_LIBS_DIR)/libtime/build/time_runtime \
@@ -31,9 +36,10 @@ STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv
 
-.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS)
+.PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS)
 
-all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS)
+all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) \
+     $(DISPLAYSERV) $(DISPLAYSERV_SELFTEST)
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -49,6 +55,11 @@ $(SYSCALL_SELFTEST):
 
 $(SYSTEM_LIBS_SELFTESTS):
 	$(MAKE) -C $(dir $(@D)) runtime-test
+
+system-services:
+	$(MAKE) -C $(SYSTEM_SERVICES_DIR) all runtime-test
+
+$(DISPLAYSERV) $(DISPLAYSERV_SELFTEST): system-services
 
 $(INIT_OBJECT): Init/init.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

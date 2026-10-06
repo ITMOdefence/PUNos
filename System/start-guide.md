@@ -243,6 +243,9 @@ libmath runtime test passed
 PUNos initserv stub: libmath self-test passed
 libmem runtime test passed
 PUNos initserv stub: libmem self-test passed
+PUNos initserv stub: librandom self-test passed
+libgraphics runtime test passed
+PUNos initserv stub: libgraphics self-test passed
 libstr runtime test passed
 PUNos initserv stub: libstr self-test passed
 libfile runtime test passed
@@ -387,7 +390,7 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
 `init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
-(`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
+(`syscall`, `libcore`, `libmath`, `libmem`, `librandom`, `libgraphics`, `libstr`, `libfile`, `libtime`,
 `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
 `libv4l2`) с владельцем `root:root` и правами `0755`.
 
@@ -410,7 +413,7 @@ System/
 │   └── check-qemu-boot.sh
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
-├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
+├── SystemLibs/               # System Libs, включая libgraphics software backend
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует

@@ -20,7 +20,7 @@ upstream-ядра Linux** (6.12.111 LTS, x86_64) и запускаемая в QE
 | Syscall Wrappers | Минимальный системный ABI: вызовы через инструкцию `syscall`, thread-local `errno`, без libc и vDSO | Готово |
 | CRT | `_start`, настройка TLS, вызов `main()` и выход | Готово |
 | Boot | `/init` (PID 1) и воспроизводимый initramfs | Готово |
-| System Libs | `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
+| System Libs | `libcore`, `libmath`, `libmem`, `librandom`, `libgraphics`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
 | Special Libs | IPC, журналы, камера, устройства ввода, дисплей | Спецификации |
 | System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | Спецификации |
 | Application Layer | `appframework`, `uilib` | Спецификации |
