@@ -4,6 +4,24 @@
 графического стека. Общесистемные механизмы остаются в своих каталогах и
 подключаются только через публичные контракты.
 
+## Целевая модель
+
+GUI v1 проектируется для телефона и планшета. Текущая базовая среда —
+`x86_64` в QEMU; для GUI она должна получить отдельный графический профиль
+эмуляции мобильного устройства. Выбор
+реальной ARM64-платформы и её device-specific backend выполняется отдельно и
+не меняет публичные контракты приложений.
+
+- Основное приложение занимает доступную область дисплея целиком.
+- Системная оболочка владеет Home, системными панелями, экраном блокировки,
+  переключением приложений и системными overlays.
+- Основной ввод — multitouch. Pointer и аппаратная клавиатура остаются
+  дополнительными способами ввода для планшета, эмулятора и accessibility.
+- Размер интерфейса задаётся в логических единицах; приложение получает scale,
+  orientation и safe insets через configure.
+- Произвольного перемещения, изменения размера и desktop-декораций окон в v1
+  нет.
+
 ## Слои
 
 | Слой | Документы | Ответственность |
@@ -11,8 +29,8 @@
 | [Common](Common/) | [Архитектура](Common/Architecture.md), [базовый протокол](Common/protocol-base.md), [общие типы](Common/common-types.md), [зависимости реализации](Common/implementation-dependencies.md), [владение](Common/ownership.md) | Общие границы, идентификаторы и правила взаимодействия слоёв |
 | [Display](Display/) | [displayserv](Display/displayserv.md), [протокол вывода](Display/presentation-protocol.md), [displaylib](Display/displaylib.md) | Физические дисплеи, режимы и показ готового кадра |
 | [Compositor](Compositor/) | [compositorserv](Compositor/compositorserv.md), [протокол поверхностей](Compositor/surface-protocol.md), [протокол сцены](Compositor/scene-protocol.md), [передача буферов](Compositor/buffer-sharing.md) | Поверхности, графические буферы, damage и композиция сцены |
-| [Windowing](Windowing/) | [windowserv](Windowing/windowserv.md), [оконный протокол](Windowing/window-protocol.md), [маршрутизация ввода](Windowing/input-routing.md) | Окна, фокус, размещение, z-order и доставка ввода |
-| [Toolkit](Toolkit/) | [uilib](Toolkit/uilib.md), [состав toolkit](Toolkit/README.md) | Клиентский UI API, виджеты, layout, темы и accessibility |
+| [Windowing](Windowing/) | [windowserv](Windowing/windowserv.md), [оконный протокол](Windowing/window-protocol.md), [маршрутизация ввода](Windowing/input-routing.md) | Полноэкранные представления приложений, системные слои, lifecycle и доставка ввода |
+| [Toolkit](Toolkit/) | [uilib](Toolkit/uilib.md), [состав toolkit](Toolkit/README.md) | Touch-first API, адаптивный layout, навигация, виджеты, темы и accessibility |
 
 Документы сгруппированы по архитектурным слоям, а не по типу компонента.
 Сервис, его библиотека и связанные протоколы находятся рядом. Общие правила
@@ -29,8 +47,9 @@ logserv
                          └── uilib / приложения
 ```
 
-`IOserv` не является частью GUI: он публикует физические события. Выбор окна,
-фокус и преобразование координат принадлежат `windowserv`.
+`IOserv` не является частью GUI: он публикует физические события. Выбор
+получателя, foreground policy и преобразование координат принадлежат
+`windowserv`.
 
 ## Правило границы слоёв
 

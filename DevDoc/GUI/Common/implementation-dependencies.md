@@ -19,14 +19,14 @@
 | Сценарий | Контракт GUI | Результат аудита |
 | --- | --- | --- |
 | Запуск сервисов | display → compositor → window | Протоколы согласованы; `initserv` ещё не содержит GUI-сервисы и readiness |
-| Создание окна | surface/token → window → scene binding | Согласовано; нужен безопасный генератор токенов |
+| Создание app view | surface/token → window → scene binding | Согласовано; нужен безопасный генератор токенов |
 | Первый кадр | buffer import → commit → configure ack → show | Согласовано; нужны shareable memory и передача FD |
-| Resize | configure → новый buffer commit → ack → scene geometry | Согласовано; старый кадр действует до ack |
+| Rotation/system bars | configure(viewport, scale, orientation, insets) → новый buffer commit → ack | Согласовано; старый кадр действует до ack |
 | Composition/present | compositor output FD → display queue → completion | Согласовано; нужны FD transport и graphics backend ABI |
-| Pointer/key/touch | IOserv frame → window routing → client event | Согласовано; timestamp приведён к `MonotonicTime` в миллисекундах |
+| Touch/pointer/key | IOserv frame → shell policy/window routing → client event | Touch является основным вводом; timestamp приведён к `MonotonicTime` |
 | Hotplug | subscription snapshot → generation → redraw | Согласовано; snapshot защищён `snapshot_serial` |
 | Перезапуск displayserv | новые DisplayId → compositor reconnect/full redraw | Согласовано; startup token должен переживать рестарты зависимостей |
-| Перезапуск compositorserv | новые SurfaceId/token → rebind окна | Согласовано |
+| Перезапуск compositorserv | новые SurfaceId/token → rebind app view | Согласовано |
 | Перезапуск windowserv | новые WindowId → повторный create через uilib | Согласовано |
 
 Неразрешённых противоречий между пятью GUI-протоколами после аудита нет.
@@ -172,6 +172,28 @@ shell является пользовательским приложением �
 Для первой реализации допустим software/fb backend, если он соблюдает тот же
 контракт displaylib. Детали DRM/KMS не должны попадать в протокол приложений.
 
+### B7. Графический профиль QEMU
+
+| Поле | Значение |
+| --- | --- |
+| Статус | `BLOCKER` для сквозного GUI-теста |
+| Владелец | Системная команда совместно с GUI-командой |
+| Потребители | displaylib, IOserv и интеграционные тесты GUI |
+
+Текущий `run-qemu-initramfs.sh` использует `-nographic` и проверяет только
+serial boot. Нужен отдельный сценарий, который не ломает headless CI-профиль и
+запускает мобильную конфигурацию эмулятора:
+
+- `virtio-gpu`/DRM-KMS display с фиксированным portrait mode для первого MVP;
+- `virtio-input` pointer как одно касание и воспроизводимый touch test source;
+- отдельная serial console для журнала;
+- заданные logical size, scale и orientation;
+- возможность сделать screenshot/hash тестового кадра в CI;
+- отсутствие QEMU-specific типов в публичных GUI-протоколах.
+
+Поддержка реального ARM64-устройства не входит в v1 до выбора конкретной
+платы, kernel config, device tree и display/touch backend.
+
 ## Обязательные интеграции
 
 ### R1. Монотонное время
@@ -222,23 +244,28 @@ IOserv пока считает endpoint внутренним, но не отли
 | --- | --- | --- |
 | Peer credentials (`SO_PEERCRED`) | `LATER` | Startup tokens и права Unix endpoint |
 | Explicit GPU fences | `LATER` | Completion events и software composition |
-| Атомарная транзакция нескольких SceneNode | `LATER` | Новое окно настраивается скрытым |
+| Атомарная транзакция нескольких SceneNode | `LATER` | Новое view настраивается скрытым |
 | Hardware input timestamp | `LATER` | Время обработки InputFrame в windowserv |
 | Color management/HDR | `LATER` | sRGB-подобный XRGB/ARGB8888 |
 | Fractional scale | `LATER` | Scale `1.0`, один surface pixel на logical pixel |
+| Экранная клавиатура и IME | `LATER` | В v1 только аппаратные key events; text field не входит в MVP |
+| GPU composition/animations | `LATER` | Software composition и дискретная смена foreground view |
 
 ## Порядок реализации
 
 1. Закрепить `ErrorCode` wire ABI.
 2. Добавить secure random и shareable memory в системный слой.
 3. Расширить wrappers/ipclib передачей одного FD.
-4. Добавить GUI-сервисы, readiness и token handoff в initserv/appserv.
-5. Реализовать общий GUI wire codec и protocol-vector tests.
-6. Реализовать displaylib и displayserv.
-7. Реализовать compositorserv: surface, renderer, scene и display client.
-8. Реализовать windowserv: scene controller, configure и input routing.
-9. Реализовать uilib: reconnect, window lifecycle и buffer pool.
-10. Реализовать toolkit поверх стабильной uilib.
+4. Добавить графический QEMU-профиль и тестовый display/input backend.
+5. Добавить GUI-сервисы, readiness и token handoff в initserv/appserv.
+6. Реализовать общий GUI wire codec и protocol-vector tests.
+7. Реализовать displaylib и displayserv.
+8. Реализовать compositorserv: surface, renderer, scene и display client.
+9. Реализовать windowserv: foreground lifecycle, mobile scene policy,
+   configure с orientation/insets и touch routing.
+10. Реализовать system shell: Home, app switch, bars, lock и Back policy.
+11. Реализовать uilib: reconnect, app-view lifecycle и buffer pool.
+12. Реализовать mobile toolkit поверх стабильной uilib.
 
 Пункты 1–4 можно выполнять параллельно разными владельцами после согласования
 ABI. Реализация сервисов начинается с mock backend только при сохранении тех же
@@ -252,6 +279,7 @@ wire contracts и правил владения.
 2. назначить presenter и scene-controller после рестарта каждого процесса;
 3. создать shareable buffer, передать его FD и проверить отсутствие утечки;
 4. показать кадр и получить финальный present completion;
-5. создать окно, пройти configure/commit/ack и получить input event;
+5. создать app view, пройти configure/commit/ack, активировать его и получить
+   touch event;
 6. отключить display/compositor/windowserv по очереди и восстановить стек без
    использования старых идентификаторов.

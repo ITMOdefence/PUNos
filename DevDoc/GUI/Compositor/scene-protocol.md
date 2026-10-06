@@ -99,14 +99,15 @@ Occlusion вычисляет compositor и controller её не задаёт.
 
 | Значение | Имя | Назначение |
 | --- | --- | --- |
-| `1` | `BACKGROUND` | Обои и фон workspace |
-| `2` | `NORMAL` | Обычные окна приложений |
-| `3` | `TOP` | Окна always-on-top |
-| `4` | `OVERLAY` | Панели, меню и системные overlays |
+| `1` | `BACKGROUND` | Системный фон |
+| `2` | `APP` | Home или одно foreground-приложение |
+| `3` | `DIALOG` | Модальный слой foreground-приложения |
+| `4` | `SYSTEM` | Status/navigation bars, IME и системные overlays |
 | `5` | `LOCK` | Экран блокировки и защищённый системный UI |
 
-Обычные окна используют `NORMAL`. Назначение остальных слоёв определяется
-политикой `windowserv`; клиент приложения слой не выбирает.
+Обычное app view использует `APP`. Одновременно видим не более одного Home или
+пользовательского app view. Назначение слоёв определяет `windowserv`; клиент
+приложения слой и глобальную геометрию не выбирает.
 
 ### SceneBindingLostReason
 
@@ -158,7 +159,7 @@ Occlusion вычисляет compositor и controller её не задаёт.
 | `26` | `surface_bind_token` | `u8[16]` | Токен этой поверхности |
 
 Полный размер — 42 байта. Новый SceneNode создаётся в состоянии `HIDDEN`, в
-слое `NORMAL`, без target display. Отдельные запросы задают остальные свойства.
+слое `APP`, без target display. Отдельные запросы задают остальные свойства.
 
 ### SceneGeometryRequest
 
@@ -310,10 +311,10 @@ protocol error и закрывают соединение.
 
 ## Ограничения v1
 
-- Один scene-controller и один workspace.
+- Один scene-controller, один дисплей и одно foreground app view.
 - Нет атомарной транзакции для нескольких SceneNode. Новое окно настраивается
   скрытым; перестановка нескольких уже видимых окон может попасть в разные
   output frames.
 - Нет fractional positioning, surface transform и compositor-side scaling.
-- Нет нескольких seats, virtual desktops, animations и effects.
+- Нет нескольких seats, freeform/desktop windows, animations и effects.
 - Авторизация использует startup token до появления peer credentials.

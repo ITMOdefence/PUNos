@@ -1,11 +1,9 @@
 ## Описание
 
-windowserv — системный сервис графической подсистемы PUNos, который управляет
-окнами, их состояниями и размещением, keyboard/pointer focus, модальными
-связями и маршрутизацией физических событий ввода в клиентские окна.
-
-Пиксельное содержимое окон принадлежит compositorserv. windowserv хранит
-только policy и передаёт compositorserv геометрию, видимость и порядок surface.
+`windowserv` — сервис мобильной scene policy PUNos. Он связывает поверхности с
+представлениями приложений, выбирает одно foreground app view, управляет Home,
+dialog, системными слоями и lock screen, формирует configure с orientation и
+safe insets и маршрутизирует touch-first ввод.
 
 ## Имя сервиса
 
@@ -14,251 +12,123 @@ windowserv — системный сервис графической подси
 | Идентификатор | windowserv |
 | Исполняемый файл | windowserv |
 | Владелец запуска | initserv |
-| IPC endpoint | /run/punos/windowserv.sock |
-| Версия протокола | v1 |
+| IPC endpoint | `/run/punos/windowserv.sock` |
+| Версия протокола | v1 mobile |
 
 ## Ответственность и границы
 
-- windowserv владеет WindowId, деревом parent/modal связей и состоянием окон.
-- windowserv определяет geometry, visibility, z-order и активное окно.
-- windowserv подписывается на IOserv и маршрутизирует keyboard, pointer и touch.
-- windowserv преобразует глобальные координаты в локальные координаты окна.
-- windowserv подтверждает изменения geometry через configure serial.
-- windowserv управляет сценой через привилегированный канал compositorserv.
-- windowserv не читает evdev, не преобразует клавиши в Unicode, не рисует
-  decorations/widgets и не отображает shared-memory buffers.
-- windowserv не завершает приложения: принудительный lifecycle принадлежит appserv.
+- Владеет `WindowId`, role, parent/modal tree и lifecycle.
+- Поддерживает одно foreground `APP` или `HOME` на дисплее.
+- Назначает geometry, scene layer, visibility и stack через scene-controller.
+- Вычисляет viewport и safe insets из дисплея и системных панелей.
+- Получает frames от `IOserv`, применяет shell gesture policy и доставляет
+  touch, pointer и key events выбранному view.
+- Отменяет активные touch sequences до смены владельца или lifecycle.
+- Не читает пиксели, не рисует UI, не распознаёт widget gestures и не управляет
+  процессами приложений.
 
 ## Зависимости
 
 | Зависимость | Использование |
 | --- | --- |
-| sys/core | ErrorCode, GUI id, базовые типы и проверка IPC payload |
-| sys/memory | Окна, client state, focus stack, grabs и очереди configure |
-| sys/string | Заголовки окон и IPC endpoint |
-| sys/math | Geometry, hit testing, display bounds и ограничения размера |
-| sys/event | Event loop endpoint, клиентов, IOserv и compositorserv |
-| sys/time | Монотонное время dispatch для оконных input events |
-| special/ipc | IPC-соединения, сообщения и исходящие очереди |
-| IOserv | Device events и InputFrame keyboard/pointer/touch |
-| compositorserv | Scene binding, geometry, visibility, stack и outputs |
-| logserv | Lifecycle, policy changes, protocol errors и recovery |
+| sys/core | ErrorCode, идентификаторы и разбор payload |
+| sys/memory | Таблицы view, scene policy, очереди и touch ownership |
+| sys/string | UTF-8 title и endpoint |
+| sys/eventloop | IPC, IOserv и reconnect без блокировки |
+| sys/time | MonotonicTime событий |
+| special/ipc | Соединения и ограниченные исходящие очереди |
+| IOserv | InputFrame keyboard/pointer/touch |
+| compositorserv | Scene binding, geometry, layer и visibility |
+| displayserv | Display geometry, orientation и scale |
+| logserv | Lifecycle и ошибки без пользовательского ввода |
 
-## Жизненный цикл
+## Запуск и восстановление
 
-### Запуск
+Порядок: `displayserv ready` → `compositorserv ready/controller bind` →
+подписка на display и IOserv → endpoint ready → запуск shell. До готовности
+compositor и display endpoint приложений не публикуется.
 
-| Параметр | Значение |
+При потере IOserv сервис отправляет CANCEL для touch и очищает input state.
+При потере compositor все view становятся `SUSPENDED`; после rebind приложения
+пересоздают поверхности и получают полный configure. При потере display
+foreground сохраняется логически, rendering приостанавливается.
+
+## Состояния
+
+| Состояние сервиса | Работа |
 | --- | --- |
-| Готовые сервисы до запуска | logserv, IOserv, compositorserv |
-| Параметры | ControllerToken compositorserv, ShellToken и политика начального workspace |
-| Успех | Создан event loop; выполнены IOserv subscribe и controller bind; создан endpoint |
-| IOserv временно недоступен | Ошибка запуска v1; initserv повторяет запуск |
-| Ошибка compositor controller bind | Завершение с PROCESS_EXIT_INITIALIZATION_FAILED |
+| `Starting` | Проверка токенов и подключение зависимостей |
+| `Ready` | Lifecycle, scene policy, configure и input routing |
+| `Degraded` | Зависимость потеряна; новые активации не выполняются |
+| `Stopping` | CANCEL, скрытие scene и освобождение ресурсов |
+| `Failed` | Endpoint не принимает операции |
 
-### Остановка и восстановление
+View использует `HIDDEN`, `BACKGROUND`, `FOREGROUND`, `SUSPENDED`, `CLOSING`.
+`window.show` переводит HIDDEN в BACKGROUND; только shell activation даёт
+FOREGROUND. Home или другое app возвращает прежнее view в BACKGROUND.
 
-При остановке windowserv прекращает accept, отменяет grabs/touch sequences,
-unmap всех окон через compositorserv, закрывает клиентов и сервисные
-соединения, затем endpoint и event loop.
+## Мобильная scene policy
 
-При разрыве IOserv сервис сбрасывает pressed state, pointer capture и touch
-ownership, остаётся Ready без ввода и пытается переподключиться. При разрыве
-compositorserv окна сохраняются логически, переходят в Unmapped и клиентам
-отправляется window.rendering_suspended. После reconnect поверхности должны
-быть повторно привязаны. При собственном перезапуске все WindowId теряются.
+Слои снизу вверх: `BACKGROUND`, `APP`, `DIALOG`, `SYSTEM`, `LOCK`.
 
-### Состояния сервиса
+- `HOME` и пользовательский `APP` взаимно исключаются.
+- Dialog видим только вместе со своим foreground parent.
+- SYSTEM_BAR и SYSTEM_OVERLAY создаёт shell; их insets входят в configure.
+- LOCK всегда выше остальных слоёв и забирает обычный ввод.
+- IME зарезервирован в SYSTEM, но text protocol отсутствует в v1.
+- Обычный клиент не вызывает scene API и не выбирает global geometry.
 
-| Состояние | Допустимые действия | Переходы |
-| --- | --- | --- |
-| Starting | Подключение зависимостей, event loop и endpoint | Ready, Failed |
-| Ready | Window IPC, policy, input routing и scene updates | Degraded, Stopping, Failed |
-| Degraded | Window state и reconnect; часть input/rendering недоступна | Ready, Stopping, Failed |
-| Stopping | Unmap, отмена input и освобождение ресурсов | Stopped |
-| Failed | Новые операции не принимаются | Завершение процесса |
+## Configure
 
-### Состояния окна
+Configure содержит logical viewport, integer scale, orientation и safe insets.
+Он создаётся при первом show, смене display mode/orientation, изменении панелей
+и восстановлении. До commit/ack нового размера остаётся предыдущий кадр или
+системный фон. Более новый configure заменяет неподтверждённый старый.
 
-| Состояние | Значение |
-| --- | --- |
-| Created | Объект создан, первый configure ещё не подтверждён |
-| Hidden | Окно настроено, но не отображается |
-| Visible | Окно отображается в Normal state |
-| Minimized | Объект сохранён, surface unmapped |
-| Maximized | Окно занимает рабочую область display |
-| Fullscreen | Окно занимает выбранный display |
-| Closing | Клиент ответил ALLOW на close_requested; новые операции и ввод отклоняются |
+## Input policy
 
-## Владение ресурсами
+Touch является основным вводом. Получатель первого DOWN владеет sequence до
+UP/CANCEL. System gesture region получает sequence только по shell policy; она
+не клонируется приложению. Dialog блокирует parent. Background, hidden,
+suspended и closing view ввода не получают.
 
-| Ресурс | Владелец | Создание | Освобождение |
-| --- | --- | --- | --- |
-| WindowId и WindowState | windowserv для клиентского соединения | window.create | window.destroy или disconnect |
-| Заголовок окна | windowserv | create/set_title | Следующий set_title или destroy |
-| Focus, z-order и modal tree | windowserv | При изменении policy | При destroy/disconnect/остановке |
-| Pointer grab/touch ownership | windowserv | По входному serial | При завершении sequence, cancel или disconnect |
-| Surface binding | compositorserv по команде windowserv | window.create/rebind | window.destroy или render suspend |
-| IOserv/compositorserv connections | windowserv | При запуске/reconnect | При разрыве или остановке |
-| IPC server/client connections | windowserv через ipclib | При запуске/accept | При disconnect или остановке |
-
-SurfaceId остаётся объектом compositorserv и не переходит во владение windowserv.
+Pointer поддерживается для QEMU и планшетных устройств. Keyboard получает
+foreground view с flag. Home, Power и Volume остаются у shell. Windowserv
+нормализует orientation и координаты, а widget hit-test, tap, long press, pan
+и scroll выполняет toolkit.
 
 ## IPC-контракт
 
-Нормативный wire format операций, результатов и событий определён в
-[оконном протоколе](window-protocol.md). Таблицы ниже дают обзор сервиса; при
-расхождении приоритет имеет специализированный протокол.
+Wire format определён в [window-protocol.md](window-protocol.md).
 
-### Клиенты и доступ
-
-| Клиент | Разрешённые операции | Проверка доступа |
-| --- | --- | --- |
-| uilib приложения | window.* только для собственных окон | Владение IPC-соединения |
-| Desktop shell | Обычные window.* и системные shell policy extensions | Доверенный shell-клиент v1 |
-
-Peer identity отсутствует. Обычное владение проверяется по соединению; роль
-shell в v1 назначается одноразовым startup secret, переданным initserv.
-
-### Формат payload
-
-Все целые поля little-endian, строки UTF-8 без NUL. Каждый запрос содержит
-protocol_version и request_id. Указатели, FD и compositor handles не передаются.
-
-| message_type | Направление | Payload |
-| --- | --- | --- |
-| 1, window.create | Клиент → сервис | WindowCreateRequest |
-| 2, window.create_result | Сервис → клиент | WindowCreateResult |
-| 3, window.destroy | Клиент → сервис | WindowIdRequest |
-| 4, window.destroy_result | Сервис → клиент | BasicResult |
-| 5, window.show | Клиент → сервис | WindowIdRequest |
-| 6, window.hide | Клиент → сервис | WindowIdRequest |
-| 7, window.set_title | Клиент → сервис | WindowSetTitleRequest |
-| 8, window.request_state | Клиент → сервис | WindowStateRequest |
-| 9, window.set_constraints | Клиент → сервис | WindowConstraintsRequest |
-| 10, window.ack_configure | Клиент → сервис | WindowAckConfigureRequest |
-| 11, window.begin_move | Клиент → сервис | WindowInteractiveRequest |
-| 12, window.begin_resize | Клиент → сервис | WindowResizeRequest |
-| 13, window.set_modal | Клиент → сервис | WindowModalRequest |
-| 14, window.operation_result | Сервис → клиент | BasicResult |
-| 15, window.configure | Сервис → клиент | WindowConfigureEvent |
-| 16, window.focus_changed | Сервис → клиент | WindowFocusEvent |
-| 17, window.close_requested | Сервис → клиент | WindowCloseEvent |
-| 18, window.visibility_changed | Сервис → клиент | WindowVisibilityEvent |
-| 19, window.pointer | Сервис → клиент | WindowPointerEvent |
-| 20, window.key | Сервис → клиент | WindowKeyEvent |
-| 21, window.touch | Сервис → клиент | WindowTouchEvent |
-| 22, window.rendering_suspended | Сервис → клиент | WindowServiceEvent |
-| 23, window.surface_rebind | Клиент → сервис | WindowSurfaceRebindRequest |
-| 24, window.bind_shell | Shell → сервис | ShellBindRequest |
-| 25, window.bind_shell_result | Сервис → shell | BasicResult |
-| 26, window.respond_close | Клиент → сервис | WindowCloseResponseRequest |
-
-### Операции
-
-| Операция | Запрос | Успешный ответ | Назначение |
-| --- | --- | --- | --- |
-| window.create | WindowCreateRequest | WindowCreateResult | Создаёт окно для surface клиента |
-| window.destroy | WindowIdRequest | BasicResult | Удаляет окно и scene binding |
-| window.show/hide | WindowIdRequest | BasicResult | Map/unmap без уничтожения |
-| window.set_title | WindowSetTitleRequest | BasicResult | Копирует заголовок окна |
-| window.request_state | WindowStateRequest | BasicResult + configure event | Запрашивает minimize/maximize/restore/fullscreen |
-| window.set_constraints | WindowConstraintsRequest | BasicResult | Задаёт min/max клиентской области |
-| window.ack_configure | WindowAckConfigureRequest | BasicResult | Подтверждает configure serial |
-| window.begin_move/resize | Interactive request | BasicResult | Начинает операцию по свежему input serial |
-| window.set_modal | WindowModalRequest | BasicResult | Устанавливает/снимает модального родителя |
-| window.surface_rebind | WindowSurfaceRebindRequest | BasicResult | Повторно связывает surface после compositor restart |
-| window.respond_close | WindowCloseResponseRequest | BasicResult | Разрешает, отклоняет или откладывает активный close request |
-
-### События и подписки
-
-| Событие | Получатель | Когда отправляется |
-| --- | --- | --- |
-| window.configure | Владелец окна | Новый размер, state, scale или display |
-| window.focus_changed | Старый и новый focus owners | Изменился keyboard focus |
-| window.close_requested | Владелец окна | Пользователь/shell запросил закрытие |
-| window.visibility_changed | Владелец окна | Map, unmap, minimize или occlusion state |
-| window.pointer/key/touch | Выбранный input owner | IOserv frame маршрутизирован окну |
-| window.rendering_suspended | Все клиенты с окнами | Потеряна связь с compositorserv |
-
-### Типы сообщений
-
-| Тип | Поля | Ограничения | Назначение |
-| --- | --- | --- | --- |
-| WindowCreateRequest | version, request_id, surface_id, surface_bind_token[16], role, parent_id, preferred size, flags, title length и bytes | UTF-8 до 256 байт; parent своего клиента; token не журналируется | Создание окна |
-| WindowCreateResult | ErrorCode error, request_id, window_id | id определён при CORE_OK | Результат создания |
-| WindowIdRequest | version, request_id, window_id | Окно своего соединения | Выбор окна |
-| WindowSetTitleRequest | version, request_id, window_id, u16 length, bytes | UTF-8 до 256 байт | Новый заголовок |
-| WindowStateRequest | version, request_id, window_id, state, display_id | display нужен для fullscreen | Запрос состояния |
-| WindowConstraintsRequest | version, request_id, window_id, min_size, max_size | min <= max; ноль означает отсутствие границы | Размерные ограничения |
-| WindowAckConfigureRequest | version, request_id, window_id, configure_serial | Только последний неустаревший serial; после успешного surface commit | Подтверждение configure |
-| WindowInteractiveRequest | version, request_id, window_id, input_serial | Свежий pointer/button serial этого окна | Move |
-| WindowResizeRequest | те же поля и u8 edge_mask | Непустая допустимая edge mask | Resize |
-| WindowConfigureEvent | window_id, serial, geometry, state, scale, display_id | serial монотонен для окна | Новая конфигурация |
-| WindowPointerEvent | window_id, input_serial, timestamp, kind, local point, button/axis data | Координаты внутри/около клиентской области | Pointer input |
-| WindowKeyEvent | window_id, input_serial, timestamp, code, state, modifiers | Linux key code без Unicode | Keyboard input |
-| WindowTouchEvent | window_id, input_serial, timestamp, touch_id, phase, local point | touch_id закреплён до up/cancel | Touch input |
-
-## Контракты
-
-1. CORE_OK является единственным успешным кодом ответа.
-2. WindowId уникален до destroy или перезапуска windowserv и принадлежит
-   создавшему соединению.
-3. SurfaceId и SurfaceBindToken проверяются через compositorserv; поверхность
-   связывается не более чем с одним живым окном.
-4. Первый configure обязателен до show и present содержимого.
-5. Новый configure заменяет неподтверждённый старый; ack устаревшего serial
-   возвращает CORE_INVALID_STATE.
-6. Клиент не задаёт абсолютную geometry или z-index обычного top-level окна.
-7. Keyboard event получает focus owner; pointer event — hit-test owner или grab owner.
-8. Touch sequence закрепляется за окном первого touch down до up/cancel.
-9. Модальное окно блокирует ввод в цепочку родителей ниже него.
-10. Hidden, Minimized и Closing окна не получают новый пользовательский ввод.
-11. begin_move/resize разрешены только по свежему input serial этого клиента.
-12. Disconnect удаляет окна, отменяет grabs и пересчитывает focus без утечки scene bindings.
-
-## Потоковая модель и асинхронность
-
-windowserv v1 однопоточный. Один event-loop поток владеет окнами, focus,
-scene policy, IPC и состоянием ввода. IOserv InputFrame обрабатывается целиком
-до следующего IPC-события, сохраняя порядок событий. Worker threads и
-блокирующие операции отсутствуют.
-
-## Конфигурация и постоянные данные
-
-| Данные | Источник | Владелец | Действие при ошибке |
-| --- | --- | --- | --- |
-| Controller/shell secrets | Одноразовые аргументы initserv | windowserv | Привилегированная роль не назначается |
-| Начальная рабочая область | Встроенная политика платформы | windowserv | Используется безопасный layout одного display |
-| Окна, focus, grabs и placement | Только память процесса | windowserv | Теряются при перезапуске; клиенты пересоздают |
-
-Сохранение положения окон, virtual desktops и user preferences отсутствуют.
-
-## Логирование и наблюдаемость
-
-В logserv записываются запуск/остановка; connect/disconnect; create/destroy и
-state changes без заголовка окна; focus changes; rejected serial; invalid
-payload; потеря IOserv/compositorserv; переполнение очереди клиента. Коды
-нажатых клавиш, текст, pointer coordinates и touch positions не журналируются.
-
-## Ошибки
-
-| ErrorCode | Когда возвращается клиенту |
+| Клиент | Доступ |
 | --- | --- |
-| CORE_INVALID_ARGUMENT | Неверный payload, UTF-8, role, state, size, edge или flags |
-| CORE_INVALID_STATE | Устаревший configure, недопустимый переход или rendering suspended |
-| CORE_PERMISSION_DENIED | Чужое окно/surface, privileged operation или старый input serial |
-| CORE_NOT_FOUND | WindowId, parent, SurfaceId или DisplayId отсутствует |
-| CORE_OUT_OF_MEMORY | Нельзя создать окно, строку, policy state или ответ |
-| CORE_OVERFLOW | Размер payload, дерева или очереди превышает лимит |
-| CORE_WOULD_BLOCK | Исходящая очередь клиента временно заполнена |
-| CORE_IO_ERROR | Ошибка IPC с IOserv/compositorserv или повреждённый кадр |
-| CORE_UNSUPPORTED | Версия, role, state или extension не поддерживается |
+| uilib приложения | Собственные APP/DIALOG/TRANSIENT и lifecycle events |
+| system shell | Привилегированные роли, activate, insets и navigation после bind |
+| appframework | Прямого доступа нет; интеграция через uilib |
+
+Один event-loop поток владеет IPC, policy, scene state и input ownership.
+Медленный клиент отключается и не блокирует IOserv или composition.
+
+## Владение и cleanup
+
+`WindowId`, title, parent links и pending configure принадлежат соединению.
+SceneNode принадлежит compositor, touch ownership — windowserv до завершения
+sequence. Disconnect приложения удаляет его bindings и links. Disconnect
+shell блокирует privileged операции, отменяет system gestures и активирует
+lock surface, если она доступна, иначе системный фон.
+
+## Логирование
+
+Разрешены lifecycle transition, role, WindowId, размеры configure, причина
+reconnect и ErrorCode. Запрещено журналировать title, токены, координаты touch,
+коды/текст клавиш и пиксели.
 
 ## Ограничения версии
 
-- Один workspace; нет virtual desktops и сохранения placement.
-- Нет clipboard, drag-and-drop, IME, Unicode layout и global shortcuts.
-- Нет server-side decorations и accessibility tree.
-- Нет надёжной peer identity; privileged roles используют startup secrets.
-- Принудительное закрытие процесса и timeout policy принадлежат appserv/shell.
+- Один display, один touch seat, одно foreground app view.
+- Нет split-screen, floating windows, PiP и desktop mode.
+- Нет transition animations и сложной gesture arbitration.
+- Нет IME/text input, virtual keyboard и accessibility service.
+- Persisted task stack и process freezing принадлежат shell/appserv и не
+  определены windowserv v1.

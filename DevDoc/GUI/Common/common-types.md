@@ -22,7 +22,12 @@ Point     = { Coordinate x, Coordinate y }
 Size      = { Dimension width, Dimension height }
 Rect      = { Coordinate x, Coordinate y, Dimension width, Dimension height }
 Color     = { u8 red, u8 green, u8 blue, u8 alpha }
+Insets    = { Dimension top, Dimension right, Dimension bottom, Dimension left }
 ```
+
+`Insets` задаёт области дисплея, занятые системными панелями, вырезом камеры
+или жестовой зоной. Приложение рисует фон во всём viewport, но размещает
+интерактивный контент внутри safe area, если явно не реализует edge-to-edge UI.
 
 ## Форматы пикселей v1
 

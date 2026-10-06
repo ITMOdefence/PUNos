@@ -1,9 +1,10 @@
 ## Описание
 
-Клиентская библиотека графического приложения PUNos. Библиотека создаёт окна и
-поверхности через `windowserv` и `compositorserv`, управляет пулом
-shared-memory буферов, подключает IPC к event loop `appframework` и передаёт
-нормализованные UI-события приложению.
+`uilib` — клиентская библиотека мобильного GUI PUNos. Она создаёт app view и
+поверхности через `windowserv`/`compositorserv`, управляет shared-memory
+буферами, подключает IPC к event loop `appframework` и передаёт приложению
+configure, lifecycle, navigation и input events. Widget toolkit строится
+поверх неё.
 
 ## Имя библиотеки
 
@@ -11,157 +12,149 @@ shared-memory буферов, подключает IPC к event loop `appframewo
 
 ## Контракты
 
-1. Библиотека работает внутри процесса приложения и не является сервисом. Она
-   не создаёт отдельный поток и не предоставляет собственный IPC endpoint.
-2. Библиотека используется нативными GUI-приложениями и графической оболочкой.
-   Widget toolkit строится поверх неё и не входит в базовый контракт `uilib`.
-3. `uilib` использует `appframework`, `libcore`, `libmem`, `libstr`, `libmath`,
-   `libeventloop` и `ipclib`. Она не использует внутренние заголовки сервисов.
-4. Все операции возвращают `ErrorCode` из `libcore`. `CORE_OK` является
-   единственным успешным результатом.
-5. Значения параметров с префиксом `out_` определены только при возврате
-   `CORE_OK`, кроме poll/read-status операций, где контракт явно задаёт статус.
-6. `UiContextHandle` создаётся через `ui_initialize()` и закрывается ровно один
-   раз через `ui_shutdown()`. В процессе v1 допускается один контекст на один
-   `AppHandle`.
-7. `UiWindowHandle` создаётся через `ui_window_create()` и уничтожается через
-   `ui_window_destroy()`. Окно принадлежит создавшему `UiContextHandle`.
-8. При создании окна библиотека получает `SurfaceId` и `SurfaceBindToken` от
-   `compositorserv`, затем передаёт их `windowserv` для связи с новым
-   `WindowId`. Токен хранится внутри `UiWindowHandle` до уничтожения
-   поверхности, не предоставляется приложению и используется повторно только
-   при восстановлении связи с `windowserv`. При частичной ошибке уже созданный
-   server-side объект удаляется до возврата.
-9. Все операции и callbacks выполняются только в потоке-владельце `AppHandle`.
-   Одновременные обращения к одному context/window запрещены.
-10. Библиотека регистрирует IPC FD в event loop через `appframework`. Она не
-    вызывает блокирующее ожидание и не выполняет callbacks из обработчика
-    сигнала.
-11. `UiWindowEvent`, переданный callback, является невладеющим и действителен
-    только до возврата callback. Строки и массивы события не сохраняются без
-    явного копирования приложением.
-12. Первый `Configure` определяет размер окна. Клиент не выполняет present до
-    получения configure. Serial подтверждается первым commit подходящего
-    размера.
-13. `ui_window_acquire_buffer()` возвращает writable mapping только свободного
-    буфера. После успешного `ui_window_present()` память нельзя изменять до
-    события release, обработанного библиотекой.
-14. Библиотека поддерживает не менее двух буферов окна. Если свободного буфера
-    нет, acquire возвращает `CORE_WOULD_BLOCK`; event loop не блокируется.
-15. `ui_window_damage()` накапливает pending damage до present. Если damage не
-    указан после configure, библиотека отправляет full damage.
-16. `CloseRequested` является запросом и не уничтожает окно автоматически.
-    Приложение отвечает `Allow`, `Deny` или `Defer`; при `Allow` завершает
-    сохранение и уничтожает окно.
-17. При потере `compositorserv` библиотека сохраняет `WindowId`, пересоздаёт
-    surface/buffers и выполняет `window.surface_rebind`. При потере
-    `windowserv` она сохраняет живую surface, повторно создаёт `WindowId` с тем
-    же `SurfaceBindToken`. При потере обоих сервисов объекты создаются заново в
-    порядке surface → window. Во всех случаях окно переходит в `Suspended`,
-    приложение получает `ServiceLost`, а после восстановления выполняется
-    полный redraw.
-18. `uilib` не читает физические устройства, не выбирает фокус и z-order, не
-    открывает display backend и не управляет процессами.
+1. Библиотека работает в процессе приложения, не создаёт поток и IPC endpoint.
+2. В процессе v1 существует один `UiContextHandle` на один `AppHandle`.
+3. Основной объект приложения — `UiViewHandle`. Для совместимости wire ABI ему
+   соответствует `WindowId`; desktop-семантика из этого не следует.
+4. Обычный клиент создаёт `App`, `Dialog` или `Transient`. Home, system bars,
+   overlays, lock и IME доступны только авторизованной shell-библиотеке.
+5. `ui_view_publish()` сообщает о готовности view, но foreground назначает
+   только shell policy. Клиент получает lifecycle callback.
+6. Первый `Configure` задаёт viewport, integer scale, orientation и safe insets.
+   До configure present запрещён. Configure подтверждается первым успешным
+   commit подходящего размера.
+7. Для edge-to-edge view фон можно рисовать во всём viewport; интерактивный
+   content layout по умолчанию ограничивается safe area.
+8. При переходе в Background библиотека завершает текущие touch sequences
+   CANCEL-событием и прекращает запрашивать новые frames. Буферы можно хранить.
+9. При возврате в Foreground приложение получает lifecycle event и полный
+   redraw request, если сервис инвалидировал содержимое.
+10. Touch — основной ввод. Pointer и hardware key являются дополнительными.
+    Распознавание tap/long-press/pan/scroll выполняет toolkit, не `uilib`.
+11. Системный Back приходит как `NavigationRequested`; Home приложению не
+    доставляется и переводит view в Background.
+12. `UiEvent`, строки и массивы невладеющие и действуют только до возврата
+    callback.
+13. Все операции и callbacks выполняются в потоке-владельце `AppHandle`.
+14. Библиотека держит не менее двух буферов. Acquired mapping можно изменять
+    только до успешного present; повторное использование разрешено после
+    buffer release.
+15. Damage накапливается до present. Первый кадр и кадр после recovery всегда
+    используют full damage.
+16. CloseRequested не уничтожает view автоматически: приложение отвечает
+    Allow, Deny или Defer.
+17. При потере compositor библиотека пересоздаёт surface/buffers и делает
+    surface rebind. При потере windowserv повторно создаёт view с действующим
+    SurfaceBindToken. Во время recovery состояние `Suspended`.
+18. Библиотека не выбирает foreground, global geometry, layer или z-order, не
+    читает устройства и не открывает display backend.
 
-### Разрешённые зависимости
+## Разрешённые зависимости
 
 | Зависимость | Использование |
 | --- | --- |
-| `appframework` | Event loop, жизненный цикл и регистрация IPC FD |
-| `libcore` | Базовые типы, `ErrorCode`, размеры и проверки |
-| `libmem` | Context, окна, очереди событий и buffer pool |
-| `libstr` | UTF-8 заголовки и копии строк конфигурации |
-| `libmath` | `GuiPoint`, `GuiSize`, `GuiRect` и clipping damage |
-| `libeventloop` | Типы масок событий через API appframework |
-| `special/ipc` | Неблокирующие соединения с GUI-сервисами и передача FD |
-| `windowserv` | Window lifecycle, configure, focus и input events |
-| `compositorserv` | Surfaces, buffer import, commit и frame callbacks |
+| `appframework` | Event loop и lifecycle процесса |
+| `libcore` | Типы, `ErrorCode`, размеры и проверки |
+| `libmem` | Context, view, event queue и buffer pool |
+| `libstr` | UTF-8 title и строки конфигурации |
+| `libmath` | Point, Size, Rect, Insets и clipping |
+| `libeventloop` | Маски событий через appframework |
+| `special/ipc` | Неблокирующие соединения и передача FD |
+| `windowserv` | Configure, lifecycle, navigation и input |
+| `compositorserv` | Surface, buffer import, commit и frame callbacks |
 
-### Состояния контекста
+## Состояния
 
-| Состояние | Допустимые операции | Переходы |
+### Context
+
+| Состояние | Операции | Переходы |
 | --- | --- | --- |
-| `Ready` | создание окон, dispatch, shutdown | `Suspended`, `Stopping` |
-| `Suspended` | dispatch, reconnect, destroy окон, shutdown | `Ready`, `Stopping` |
-| `Stopping` | уничтожение окон и соединений | `Destroyed` |
+| `Ready` | create, dispatch, shutdown | `Suspended`, `Stopping` |
+| `Suspended` | dispatch, reconnect, destroy | `Ready`, `Stopping` |
+| `Stopping` | cleanup | `Destroyed` |
 | `Destroyed` | Нет | Нет |
 
-### Состояния окна
+### View
 
-| Состояние | Допустимые операции | Переходы |
+| Состояние | Операции | Переходы |
 | --- | --- | --- |
-| `Created` | ожидание configure, set title, destroy | `Configured`, `Suspended`, `Destroyed` |
-| `Configured` | show, acquire, damage, present, set state, destroy | `Visible`, `Suspended`, `Destroyed` |
-| `Visible` | acquire, damage, present, hide, set state, destroy | `Configured`, `Suspended`, `Destroyed` |
-| `Suspended` | destroy, ожидание восстановления | `Created`, `Destroyed` |
+| `Created` | ожидание configure, destroy | `Configured`, `Suspended` |
+| `Configured` | publish, acquire, present | `Background`, `Suspended` |
+| `Background` | acquire/present по frame request, destroy | `Foreground`, `Hidden`, `Suspended` |
+| `Foreground` | input, acquire, present, dialog | `Background`, `Suspended`, `Closing` |
+| `Hidden` | повторный publish, destroy | `Background`, `Suspended` |
+| `Suspended` | destroy, recovery | `Created`, `Configured` |
+| `Closing` | сохранение и destroy | `Destroyed` |
 | `Destroyed` | Нет | Нет |
 
-### Модель буферов
+### Buffer
 
-| Состояние | Допустимые операции | Переходы |
-| --- | --- | --- |
-| `Free` | acquire, destroy | `Acquired`, `Destroyed` |
-| `Acquired` | damage, present | `Submitted`, `Free` при отмене |
-| `Submitted` | ожидание release | `Free`, `Destroyed` при потере сервиса |
-| `Destroyed` | Нет | Нет |
+`Free → Acquired → Submitted → Free`; при отмене `Acquired → Free`, при
+потере сервиса любой buffer становится `Destroyed`.
 
 ## Типы
 
-| Наименование | Представление | Допустимые значения | Назначение |
-| --- | --- | --- | --- |
-| `UiContextHandle` | Непрозрачный указатель: `struct UiContextHandle *` | `NULL` или живой context | Контекст GUI одного приложения |
-| `UiWindowHandle` | Непрозрачный указатель: `struct UiWindowHandle *` | `NULL` или окно текущего context | Клиентское окно и surface |
-| `UiBufferHandle` | Непрозрачный указатель: `struct UiBufferHandle *` | Буфер текущего окна | Элемент buffer pool |
-| `UiConfig` | `usize preferred_buffer_count` | От `2` до `UI_BUFFER_COUNT_MAX` | Настройки контекста |
-| `UiWindowConfig` | title, preferred size, role, parent, flags, callback и user data | Валидные UTF-8 и ненулевой callback | Конфигурация нового окна |
-| `UiWindowState` | Перечисление | `Normal`, `Minimized`, `Maximized`, `Fullscreen` | Запрошенное или подтверждённое состояние |
-| `UiWindowRole` | Перечисление | `TopLevel`, `Dialog`, `Popup` | Политическая роль окна |
-| `UiCloseResponse` | Перечисление | `Allow`, `Deny`, `Defer` | Ответ на `CloseRequested` с его serial |
-| `UiWindowEventKind` | Перечисление | configure, close, focus, pointer, key, touch, frame, service | Вид события callback |
-| `UiWindowEvent` | Tagged union | Соответствует `kind` | Невладеющее событие окна |
-| `UiMappedBuffer` | `UiBufferHandle buffer`, `MutableBytes pixels`, `u32 stride`, `GuiSize size`, format | Writable только в состоянии `Acquired` | Отображение для software rendering |
-| `UiEventHandler` | `void (*)(UiWindowHandle, const UiWindowEvent *, void *)` | Ненулевой callback | Обработчик событий окна |
+| Тип | Содержание |
+| --- | --- |
+| `UiContextHandle` | Контекст GUI приложения |
+| `UiViewHandle` | App/dialog/transient view и связанная surface |
+| `UiBufferHandle` | Элемент buffer pool view |
+| `UiConfig` | preferred buffer count `2…4` |
+| `UiViewConfig` | title, role, parent, flags, callback, user data |
+| `UiViewRole` | `App`, `Dialog`, `Transient` |
+| `UiLifecycle` | `Hidden`, `Background`, `Foreground`, `Suspended`, `Closing` |
+| `UiOrientation` | `Normal`, `90`, `180`, `270` |
+| `UiInsets` | top, right, bottom, left в logical units |
+| `UiConfigure` | viewport, scale, orientation, safe insets, serial |
+| `UiNavigationAction` | `Back` (`Home` остаётся у shell) |
+| `UiEventKind` | configure, lifecycle, navigation, close, touch, pointer, key, frame, service |
+| `UiMappedBuffer` | buffer, writable bytes, stride, pixel size, format |
+| `UiEventHandler` | callback view + невладеющий event + user data |
 
 ## Константы
 
-| Наименование | Значение | Назначение |
-| --- | --- | --- |
-| `UI_BUFFER_COUNT_DEFAULT` | `2` | Размер buffer pool окна по умолчанию |
-| `UI_BUFFER_COUNT_MAX` | `4` | Максимальное число буферов одного окна в v1 |
-| `UI_WINDOW_TITLE_MAX_BYTES` | `256` | Максимальная длина UTF-8 заголовка |
-| `UI_DAMAGE_MAX_RECTS` | `64` | Максимум pending damage-прямоугольников |
-| `UI_WINDOW_RESIZABLE` | `1` | Окно разрешает изменение размера |
-| `UI_WINDOW_DECORATED` | `2` | Окно запрашивает стандартные декорации toolkit/shell |
-| `UI_WINDOW_ACCEPTS_FOCUS` | `4` | Окно допускает keyboard focus |
+| Имя | Значение |
+| --- | --- |
+| `UI_BUFFER_COUNT_DEFAULT` | `2` |
+| `UI_BUFFER_COUNT_MAX` | `4` |
+| `UI_TITLE_MAX_BYTES` | `256` |
+| `UI_DAMAGE_MAX_RECTS` | `64` |
+| `UI_VIEW_EDGE_TO_EDGE` | `1` |
+| `UI_VIEW_ACCEPTS_KEYBOARD` | `2` |
+| `UI_VIEW_HANDLES_BACK` | `4` |
+| `UI_MIN_TOUCH_TARGET` | `48` logical units (toolkit rule) |
 
 ## Операции
 
-| Операция | Аргументы | Возвращаемое значение | Назначение |
-| --- | --- | --- | --- |
-| `ui_initialize(app, config, out_context)` | `AppHandle app`, `const UiConfig *config`, `UiContextHandle *out_context` | `ErrorCode` | Создаёт context, подключается к сервисам и регистрирует IPC FD |
-| `ui_window_create(context, config, out_window)` | `UiContextHandle context`, `const UiWindowConfig *config`, `UiWindowHandle *out_window` | `ErrorCode` | Создаёт surface и window с rollback при частичной ошибке |
-| `ui_window_show(window)` | `UiWindowHandle window` | `ErrorCode` | Просит windowserv отобразить настроенное окно |
-| `ui_window_hide(window)` | `UiWindowHandle window` | `ErrorCode` | Скрывает окно без уничтожения buffer pool |
-| `ui_window_set_title(window, title)` | `UiWindowHandle window`, `const String *title` | `ErrorCode` | Копирует и отправляет новый UTF-8 заголовок |
-| `ui_window_request_state(window, state)` | `UiWindowHandle window`, `UiWindowState state` | `ErrorCode` | Запрашивает изменение состояния; результат приходит configure-событием |
-| `ui_window_respond_close(window, serial, response)` | окно, serial `CloseRequested`, `UiCloseResponse response` | `ErrorCode` | Разрешает, отклоняет или откладывает закрытие |
-| `ui_window_set_constraints(window, min_size, max_size)` | окно и допустимые размеры | `ErrorCode` | Устанавливает ограничения клиентской области |
-| `ui_window_acquire_buffer(window, out_mapping)` | `UiWindowHandle window`, `UiMappedBuffer *out_mapping` | `ErrorCode` | Возвращает свободный writable buffer либо `CORE_WOULD_BLOCK` |
-| `ui_window_damage(window, rects, count)` | окно, массив `GuiRect`, `usize count` | `ErrorCode` | Добавляет области к pending damage |
-| `ui_window_present(window, buffer)` | `UiWindowHandle window`, `UiBufferHandle buffer` | `ErrorCode` | Attach, подтверждение configure и атомарный surface commit |
-| `ui_window_destroy(window)` | `UiWindowHandle *window` | `ErrorCode` | Удаляет server-side объекты, buffer pool и записывает `NULL` |
-| `ui_shutdown(context)` | `UiContextHandle *context` | `ErrorCode` | Уничтожает оставшиеся окна, соединения и источники event loop |
+| Операция | Результат | Назначение |
+| --- | --- | --- |
+| `ui_initialize(app, config, out_context)` | `ErrorCode` | Подключает GUI-сервисы и event loop |
+| `ui_view_create(context, config, out_view)` | `ErrorCode` | Создаёт surface и mobile view с rollback |
+| `ui_view_publish(view)` | `ErrorCode` | Объявляет настроенное view готовым к shell activation |
+| `ui_view_hide(view)` | `ErrorCode` | Отзывает view без уничтожения buffer pool |
+| `ui_view_set_title(view, title)` | `ErrorCode` | Обновляет метаданные task switcher |
+| `ui_view_respond_close(view, serial, response)` | `ErrorCode` | Allow/Deny/Defer закрытия |
+| `ui_view_acquire_buffer(view, out_mapping)` | `ErrorCode` | Возвращает свободный writable buffer |
+| `ui_view_damage(view, rects, count)` | `ErrorCode` | Накапливает logical damage |
+| `ui_view_present(view, buffer)` | `ErrorCode` | Attach, configure ack и surface commit |
+| `ui_view_destroy(view)` | `ErrorCode` | Удаляет view, surface и buffers |
+| `ui_get_latest_configure(view, out_configure)` | `ErrorCode` | Возвращает viewport/orientation/insets |
+| `ui_shutdown(context)` | `ErrorCode` | Закрывает view, IPC и event sources |
+
+Shell использует отдельное привилегированное расширение над тем же wire
+protocol: bind, create system roles, activate, set insets и navigate. Эти
+операции не экспортируются обычному приложению.
 
 ## Ошибки
 
-| `ErrorCode` | Когда возвращается |
+| `ErrorCode` | Когда |
 | --- | --- |
-| `CORE_INVALID_ARGUMENT` | Передан `NULL`, неверный callback, UTF-8, размер, role, state или rect |
-| `CORE_INVALID_STATE` | Операция запрещена состоянием context, окна или buffer |
-| `CORE_NOT_FOUND` | Endpoint сервиса отсутствует или server-side объект потерян |
-| `CORE_PERMISSION_DENIED` | Сервис отклонил parent, input serial или доступ к объекту |
-| `CORE_OUT_OF_MEMORY` | Нельзя создать context, окно, очередь, backing storage или buffer pool |
-| `CORE_OVERFLOW` | Размер поверхности, stride или список damage выходит за пределы |
-| `CORE_WOULD_BLOCK` | Нет свободного буфера или заполнена исходящая IPC-очередь |
-| `CORE_IO_ERROR` | Ошибка shared memory, IPC или повреждённое сообщение сервиса |
-| `CORE_UNSUPPORTED` | Версия протокола, формат, role или возможность не поддерживается |
+| `CORE_INVALID_ARGUMENT` | NULL, неверный UTF-8, role, flags, size или rect |
+| `CORE_INVALID_STATE` | Операция запрещена lifecycle/context/buffer state |
+| `CORE_NOT_FOUND` | Endpoint или server-side объект потерян |
+| `CORE_PERMISSION_DENIED` | Privileged role или чужой parent/object |
+| `CORE_OUT_OF_MEMORY` | Context, view, queue, backing storage или pool |
+| `CORE_OVERFLOW` | Размер, stride, insets или damage превышает предел |
+| `CORE_WOULD_BLOCK` | Нет buffer или заполнена IPC-очередь |
+| `CORE_IO_ERROR` | Shared memory, IPC или повреждённое сообщение |
+| `CORE_UNSUPPORTED` | Версия, формат, role или возможность не поддерживается |
