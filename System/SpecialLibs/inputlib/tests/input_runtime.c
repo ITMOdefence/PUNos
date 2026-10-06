@@ -417,6 +417,94 @@ static void test_device_classes(void)
     destroy_str(&path);
 }
 
+void fake_input_fail_allocation(void);
+
+static void test_completed_frame_allocation_retry(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputRawEvent events[4] = { raw_key(FAKE_KEY_A, 1), raw_syn(INPUT_RAW_SYN_REPORT),
+                               raw_key(FAKE_KEY_B, 1), raw_syn(INPUT_RAW_SYN_REPORT) };
+    InputFrame frame;
+    InputReadStatus status;
+    fake_input_queue(events, 4);
+    fake_input_fail_allocation();
+    EXPECT(88, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(89, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(90, frame.count == 2 && frame.events[0].code == FAKE_KEY_A);
+    EXPECT(91, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(92, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(93, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(94, input_frame_destroy(&frame) == CORE_OK);
+    events[0] = raw_syn(INPUT_RAW_SYN_DROPPED);
+    events[1] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 4);
+    fake_input_fail_allocation();
+    EXPECT(95, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(96, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(97, frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(98, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(99, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(100, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(101, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(102, input_device_close(&device) == CORE_OK);
+}
+
+static void test_overflow_ending_at_syn_report(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputRawEvent events[INPUT_FRAME_MAX_EVENTS + 3];
+    InputReadStatus status;
+    InputFrame frame;
+    for (usize i = 0; i < INPUT_FRAME_MAX_EVENTS; ++i) { events[i] = raw_key(FAKE_KEY_A, 1); }
+    events[INPUT_FRAME_MAX_EVENTS] = raw_syn(INPUT_RAW_SYN_REPORT);
+    events[INPUT_FRAME_MAX_EVENTS + 1] = raw_key(FAKE_KEY_B, 1);
+    events[INPUT_FRAME_MAX_EVENTS + 2] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, INPUT_FRAME_MAX_EVENTS + 3);
+    EXPECT(103, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(104, frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(105, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(106, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(107, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(108, input_frame_destroy(&frame) == CORE_OK);
+    fake_input_lose_device();
+    EXPECT(109, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_DEVICE_LOST);
+    EXPECT(110, input_device_read_frame(device, &status, &frame) == CORE_INVALID_STATE);
+    InputDeviceInfo info;
+    i32 fd;
+    EXPECT(111, input_device_get_info(device, &info) == CORE_INVALID_STATE);
+    EXPECT(112, input_device_get_fd(device, &fd) == CORE_INVALID_STATE);
+    EXPECT(113, input_device_close(&device) == CORE_OK);
+}
+
+void fake_input_fail_read(void);
+
+static void test_partial_frame_read_failure_retry(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+    InputRawEvent key = raw_key(FAKE_KEY_A, 1);
+    InputRawEvent report = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(&key, 1);
+    EXPECT(114, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_NO_FRAME);
+    fake_input_queue(&report, 1);
+    fake_input_fail_read();
+    EXPECT(115, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(116, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY && frame.count == 2 &&
+                frame.events[0].code == FAKE_KEY_A);
+    EXPECT(117, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(118, input_device_close(&device) == CORE_OK);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -434,6 +522,9 @@ int main(int argc, char **argv, char **envp)
     test_syn_dropped_discards_until_resync();
     test_device_lost();
     test_device_classes();
+    test_completed_frame_allocation_retry();
+    test_overflow_ending_at_syn_report();
+    test_partial_frame_read_failure_retry();
 
     check_passed();
     return 0;

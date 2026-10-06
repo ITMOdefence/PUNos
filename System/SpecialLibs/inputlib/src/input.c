@@ -22,6 +22,8 @@ struct InputDeviceHandle {
     /* Set after SYN_DROPPED: the kernel discards everything up to the next
      * SYN_REPORT, so those events belong to no frame. */
     bool resyncing;
+    bool frame_ready;
+    bool device_lost;
 };
 
 static InputEventKind input_classify(u16 type, u16 code)
@@ -51,8 +53,8 @@ static InputEventKind input_classify(u16 type, u16 code)
  * device matching none of them is INPUT_DEVICE_UNKNOWN.
  *
  * EV_KEY on its own means nothing: a mouse reports its buttons that way too.
- * The keyboard class needs a code below BTN_MISC, which is what separates a
- * keyboard from a pointer that only has buttons. */
+ * The keyboard class needs a KEY_* capability rather than only BTN_* codes.
+ * libinputdevice distinguishes the interleaved Linux key/button ranges. */
 static InputDeviceClass input_classes_from_capabilities(InputRawCapabilityMask capabilities)
 {
     InputDeviceClass classes = INPUT_DEVICE_UNKNOWN;
@@ -85,6 +87,7 @@ static void input_discard_all(InputDeviceHandle device)
     device->pending_count = 0;
     device->pending_pos = 0;
     device->resyncing = false;
+    device->frame_ready = false;
 }
 
 /* The library only opens /dev/input/event* : anything else would reach
@@ -144,6 +147,8 @@ ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *
     device->pending_count = 0;
     device->pending_pos = 0;
     device->resyncing = false;
+    device->frame_ready = false;
+    device->device_lost = false;
 
     InputRawDeviceConfig raw_config;
     raw_config.path = config->path;
@@ -177,7 +182,7 @@ ErrorCode input_device_get_fd(InputDeviceHandle device, i32 *out_fd)
     if (device == NULL || out_fd == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (device->raw_device == NULL) {
+    if (device->raw_device == NULL || device->device_lost) {
         return CORE_INVALID_STATE;
     }
     return input_raw_device_get_fd(device->raw_device, out_fd);
@@ -188,7 +193,7 @@ ErrorCode input_device_get_info(InputDeviceHandle device, InputDeviceInfo *out_i
     if (device == NULL || out_info == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (device->raw_device == NULL) {
+    if (device->raw_device == NULL || device->device_lost) {
         return CORE_INVALID_STATE;
     }
     *out_info = device->info;
@@ -215,6 +220,7 @@ static ErrorCode input_hand_frame_to_caller(InputDeviceHandle device, InputFrame
     out_frame->count = device->event_count;
 
     input_reset_frame(device);
+    device->frame_ready = false;
     return CORE_OK;
 }
 
@@ -226,6 +232,7 @@ static ErrorCode input_emit_sync_lost(InputDeviceHandle device, InputFrame *out_
     device->events[0].code = INPUT_RAW_SYN_DROPPED;
     device->events[0].value = 0;
     device->event_count = 1;
+    device->frame_ready = true;
 
     return input_hand_frame_to_caller(device, out_frame);
 }
@@ -247,8 +254,19 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out
     if (device == NULL || out_status == NULL || out_frame == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (device->raw_device == NULL) {
+    if (device->raw_device == NULL || device->device_lost) {
         return CORE_INVALID_STATE;
+    }
+
+    /* Allocation may have failed after consuming SYN_REPORT/SyncLost. Retry
+     * the completed frame before reading any more events. */
+    if (device->frame_ready) {
+        ErrorCode result = input_hand_frame_to_caller(device, out_frame);
+        if (result != CORE_OK) {
+            return result;
+        }
+        *out_status = INPUT_READ_STATUS_FRAME_READY;
+        return CORE_OK;
     }
 
     for (;;) {
@@ -260,12 +278,14 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out
             ErrorCode result = input_raw_device_read(device->raw_device, device->pending,
                                                      INPUT_FRAME_MAX_EVENTS, &raw_status, &raw_count);
             if (result != CORE_OK) {
-                input_discard_all(device);
+                /* The raw layer has not consumed events on failure. Retain
+                 * the partial frame so a retry can finish it. */
                 return result;
             }
 
             if (raw_status == INPUT_RAW_READ_STATUS_DEVICE_LOST) {
                 input_discard_all(device);
+                device->device_lost = true;
                 *out_status = INPUT_READ_STATUS_DEVICE_LOST;
                 return CORE_OK;
             }
@@ -314,7 +334,7 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out
                 /* An unterminated frame this long is treated as a lost sync. */
                 ErrorCode result;
 
-                device->resyncing = true;
+                device->resyncing = kind != INPUT_EVENT_KIND_SYNC_REPORT;
                 result = input_emit_sync_lost(device, out_frame);
                 if (result != CORE_OK) {
                     return result;
@@ -329,6 +349,7 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out
             device->event_count += 1;
 
             if (kind == INPUT_EVENT_KIND_SYNC_REPORT) {
+                device->frame_ready = true;
                 ErrorCode result = input_hand_frame_to_caller(device, out_frame);
 
                 if (result != CORE_OK) {
@@ -349,8 +370,10 @@ ErrorCode input_frame_destroy(InputFrame *frame)
     if (frame->count > 0) {
         MemoryBlock block;
         block.data = (u8 *)frame->events;
-        block.size = frame->count * sizeof(InputEvent);
-        (void)memory_free(&block);
+        ErrorCode result = core_size_multiply(frame->count, sizeof(InputEvent), &block.size);
+        if (result != CORE_OK) { return result; }
+        result = memory_free(&block);
+        if (result != CORE_OK) { return result; }
     }
 
     frame->events = NULL;

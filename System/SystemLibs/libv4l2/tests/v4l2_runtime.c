@@ -403,6 +403,79 @@ static void test_start_requires_configuration(void)
     destroy(&path);
 }
 
+void fake_v4l2_buffer(u32 index, u32 size);
+void fake_v4l2_set_close_fails(bool value);
+
+static void test_driver_buffer_bounds_and_saved_error(void)
+{
+    String path = fake_node_path();
+    V4l2DeviceConfig config = { &path };
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested = { 0, 640, 480, 30, 0 }, actual;
+    V4l2DequeueStatus status;
+    V4l2Buffer buffer;
+    fake_v4l2_reset();
+    EXPECT(84, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(85, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(86, v4l2_start_capture(device) == CORE_OK);
+    fake_v4l2_buffer(V4L2_BUFFER_COUNT, 1);
+    EXPECT(87, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_IO_ERROR);
+    fake_v4l2_buffer(0, actual.max_frame_bytes + 1);
+    EXPECT(88, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_IO_ERROR);
+    EXPECT(89, v4l2_stop_capture(device) == CORE_OK);
+    EXPECT(90, v4l2_close(&device) == CORE_OK);
+    fake_v4l2_set_device_gone(true);
+    fake_v4l2_set_close_fails(true);
+    EXPECT(91, v4l2_open(&config, &device) == CORE_NOT_FOUND);
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
+void fake_v4l2_fail_streamoff(bool value);
+void fake_v4l2_fail_queue(i32 index);
+void fake_v4l2_buffer_count(u32 count);
+
+static void test_capture_failure_lifecycle(void)
+{
+    String path = fake_node_path();
+    V4l2DeviceConfig config = { &path };
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested = { 0, 640, 480, 30, 0 }, actual;
+    V4l2DequeueStatus status;
+    V4l2Buffer buffer, stale;
+    fake_v4l2_reset();
+    EXPECT(92, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(93, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_INVALID_STATE);
+    fake_v4l2_buffer_count(6); /* Driver may allocate more than requested. */
+    EXPECT(94, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    fake_v4l2_fail_queue(2);
+    EXPECT(95, v4l2_start_capture(device) == CORE_IO_ERROR);
+    EXPECT(96, v4l2_start_capture(device) == CORE_OK);
+    EXPECT(97, v4l2_start_capture(device) == CORE_INVALID_STATE);
+    EXPECT(98, v4l2_configure_capture(device, &requested, &actual) == CORE_INVALID_STATE);
+    fake_v4l2_arm_frame(true);
+    EXPECT(99, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK &&
+               status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+    stale = buffer;
+    EXPECT(100, v4l2_queue_buffer(device, &buffer) == CORE_OK);
+    EXPECT(101, v4l2_queue_buffer(device, &stale) == CORE_INVALID_ARGUMENT);
+    fake_v4l2_arm_frame(true);
+    EXPECT(102, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK);
+    EXPECT(103, v4l2_queue_buffer(device, &stale) == CORE_INVALID_ARGUMENT);
+    EXPECT(104, v4l2_stop_capture(device) == CORE_INVALID_STATE);
+    EXPECT(105, v4l2_queue_buffer(device, &buffer) == CORE_OK);
+    fake_v4l2_fail_streamoff(true);
+    EXPECT(106, v4l2_stop_capture(device) == CORE_IO_ERROR);
+    fake_v4l2_arm_frame(true);
+    EXPECT(107, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK &&
+                status == V4L2_DEQUEUE_STATUS_BUFFER_READY && buffer.data.data != NULL);
+    EXPECT(108, v4l2_queue_buffer(device, &buffer) == CORE_OK);
+    /* close must stop DMA even if STREAMOFF continues to fail. */
+    EXPECT(109, v4l2_close(&device) == CORE_OK && device == NULL);
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -414,6 +487,8 @@ int main(int argc, char **argv, char **envp)
     test_querycap_validation();
     test_device_lost_with_outstanding_buffers();
     test_start_requires_configuration();
+    test_driver_buffer_bounds_and_saved_error();
+    test_capture_failure_lifecycle();
 
     check_passed();
     return 0;

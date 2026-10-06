@@ -81,9 +81,9 @@ crt0.o <objects> libpunos_inputdevice.a libpunos_time.a libpunos_str.a libpunos_
   and `libtime` truncates readings to whole milliseconds, so calling the
   clock once per batch instead of once per event gives the same
   observable timestamps in the near-totality of cases while avoiding
-  redundant syscalls. `libv4l2`'s specification uses the same "immediately
-  after extracting the buffer" phrasing for a single buffer, which is the
-  same idea applied to a batch here.
+  redundant syscalls. The clock is read immediately before `read()` so a
+  clock failure cannot consume events without returning them. `EINTR` is
+  retried without discarding events accumulated by inputlib.
 - **Capabilities come from one `EVIOCGBIT(0, ...)` call**, which asks for
   the bitmask of event *types* (`EV_SYN`, `EV_KEY`, `EV_REL`, `EV_ABS`, ...)
   the device can produce at all, rather than querying each type's

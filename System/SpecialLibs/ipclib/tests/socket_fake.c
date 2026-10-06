@@ -26,6 +26,34 @@
 /* The error the next SO_ERROR read reports; 0 means "connected". Cleared once
  * read, the way the kernel clears it. */
 static i32 pending_so_error;
+static usize send_limit;
+static bool send_would_block;
+
+ssize_t __real_send(i32 fd, const void *buffer, usize size, i32 flags);
+
+void fake_socket_send_limit(usize limit)
+{
+    send_limit = limit;
+}
+
+void fake_socket_block_send(bool block)
+{
+    send_would_block = block;
+}
+
+/* The real peer receives exactly the bytes reported as sent. This makes a
+ * short send deterministic while still checking the reassembled stream. */
+ssize_t __wrap_send(i32 fd, const void *buffer, usize size, i32 flags)
+{
+    if (send_would_block) {
+        errno = EAGAIN;
+        return -1;
+    }
+    if (send_limit != 0 && size > send_limit) {
+        size = send_limit;
+    }
+    return __real_send(fd, buffer, size, flags);
+}
 
 void fake_socket_arm(i32 error_to_report)
 {
@@ -35,6 +63,8 @@ void fake_socket_arm(i32 error_to_report)
 void fake_socket_reset(void)
 {
     pending_so_error = 0;
+    send_limit = 0;
+    send_would_block = false;
 }
 
 /* True while an error is still waiting to be read. */

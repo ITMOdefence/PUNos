@@ -6,6 +6,11 @@
 
 #define SAME_TYPE(a, b) _Generic((a), b: 1, default: 0)
 
+_Static_assert(SAME_TYPE((IpcServerHandle)0, struct IpcServerHandle *), "IpcServerHandle pointer typedef");
+_Static_assert(SAME_TYPE((IpcConnectionHandle)0, struct IpcConnectionHandle *), "IpcConnectionHandle pointer typedef");
+_Static_assert(SAME_TYPE(&ipc_server_create, ErrorCode (*)(const String *, IpcServerHandle *)), "ipc_server_create signature");
+_Static_assert(SAME_TYPE(&ipc_connection_close, ErrorCode (*)(IpcConnectionHandle *)), "ipc_connection_close signature");
+
 _Static_assert(SAME_TYPE((IpcMessageType)0, u32), "IpcMessageType must be u32");
 _Static_assert(sizeof(IpcMessage) == 24, "IpcMessage ABI");
 _Static_assert(sizeof(IpcConnectionState) == 4, "IpcConnectionState ABI");

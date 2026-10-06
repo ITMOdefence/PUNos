@@ -148,7 +148,7 @@ typedef struct CameraConfigurationList {
 /*
  * One ready frame. This is a view, not a copy: data points into a buffer the
  * driver owns and is only valid until camera_frame_release() hands the buffer
- * back. buffer_id says which MMAP buffer it is, so the release can find it.
+ * back. All fields identify the issued frame and must be returned unchanged.
  */
 typedef struct CameraFrame {
     u32 buffer_id;
@@ -192,7 +192,7 @@ ErrorCode camera_open(const CameraConfig *config, CameraHandle *out_camera);
  * close it.
  *
  * Errors: CORE_INVALID_ARGUMENT if camera or out_fd is NULL; CORE_INVALID_
- * STATE if the camera is closed.
+ * STATE if the camera is in DeviceLost.
  */
 ErrorCode camera_get_fd(CameraHandle camera, i32 *out_fd);
 
@@ -207,7 +207,7 @@ ErrorCode camera_get_fd(CameraHandle camera, i32 *out_fd);
  * values cannot be described this way and is reported as unsupported.
  *
  * Errors: CORE_INVALID_ARGUMENT if camera or out_configurations is NULL;
- * CORE_INVALID_STATE if the camera is closed; CORE_UNSUPPORTED if the driver
+ * CORE_INVALID_STATE outside Open or Configured; CORE_UNSUPPORTED if the driver
  * reports ranges rather than discrete values, or offers no combination in a
  * supported format; codes from core_error_from_errno() for an unexpected
  * ioctl() failure; errors of libmem.
@@ -217,8 +217,9 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
 /*
  * Releases a list from camera_get_configurations() and leaves it { NULL, 0 }.
  *
- * Errors: CORE_INVALID_ARGUMENT if configurations or configurations->items is
- * NULL; errors of libmem.
+ * An empty { NULL, 0 } list may also be destroyed.
+ * Errors: CORE_INVALID_ARGUMENT if configurations is NULL or inconsistent;
+ * CORE_OVERFLOW for an invalid count; errors of libmem.
  */
 ErrorCode camera_configuration_list_destroy(CameraConfigurationList *configurations);
 
@@ -277,7 +278,8 @@ ErrorCode camera_frame_release(CameraHandle camera, CameraFrame *frame);
 
 /*
  * Stops capture and releases the MMAP buffers, returning the camera to
- * Configured so it can be reconfigured or started again.
+ * Open. Configure again before starting another capture. If stopping fails,
+ * the camera becomes unusable (DeviceLost) and may only be closed.
  *
  * Errors: CORE_INVALID_ARGUMENT if camera is NULL; CORE_INVALID_STATE if the
  * camera is not streaming, or a frame is still outstanding; codes from

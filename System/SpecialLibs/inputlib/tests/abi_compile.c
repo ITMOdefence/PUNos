@@ -7,6 +7,10 @@
 
 #define SAME_TYPE(a, b) _Generic((a), b: 1, default: 0)
 
+_Static_assert(SAME_TYPE((InputDeviceHandle)0, struct InputDeviceHandle *), "InputDeviceHandle pointer typedef");
+_Static_assert(SAME_TYPE(&input_device_open, ErrorCode (*)(const InputDeviceConfig *, InputDeviceHandle *)), "input_device_open signature");
+_Static_assert(SAME_TYPE(&input_device_close, ErrorCode (*)(InputDeviceHandle *)), "input_device_close signature");
+
 _Static_assert(SAME_TYPE((InputDeviceClass)0, u32), "InputDeviceClass size");
 _Static_assert(SAME_TYPE((InputEventKind)0, u32), "InputEventKind size");
 _Static_assert(SAME_TYPE((InputReadStatus)0, u32), "InputReadStatus size");

@@ -108,7 +108,7 @@ $(DEPENDENCY_ARCHIVES) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY): dependencies
 
 $(RUNTIME_TEST_PROGRAM): $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(DEPENDENCY_ARCHIVES) \
                          $(FAKE_OBJECTS) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
-	$(CC) $(TEST_FAKE_LDFLAGS) -Wl,--allow-multiple-definition -nostdlib -no-pie -Wl,-e,_start \
+	$(CC) $(if $(FAKE_OBJECTS),$(TEST_FAKE_LDFLAGS)) -nostdlib -no-pie -Wl,-e,_start \
 		$(CRT0) $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(FAKE_OBJECTS) \
 		$(call reverse,$(DEPENDENCY_ARCHIVES)) \
 		$(CRT_LIBRARY) $(SYSCALL_LIBRARY) -o $@

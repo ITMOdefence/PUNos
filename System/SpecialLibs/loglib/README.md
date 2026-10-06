@@ -53,10 +53,16 @@ log_store_close(&store);
 - **Records are written as independent frames.** A failed append may leave a
   partial frame at the end of the file.
 - **Rotation opens new file before closing old one.** If opening fails, the
-  old file stays current.
+  old file stays current. If closing fails, libfile still destroys the old
+  handle; the replacement is closed and only `log_store_close()` remains valid.
 
 ## Tests
 
 - `tests/abi_compile.c`: compile-time checks of types and constants.
 - `tests/log_runtime.c`: runtime checks of store/reader lifecycle, frame
   format, rotation and error paths.
+- `tests/file_fake.c`: injects open/close failures while preserving libfile's
+  ownership contract. Checks 88-105 verify both files and the invalid store.
+- Mutation check 93 detects an append allowed after a failed close in rotation.
+- The current revision still needs native Linux/GCC and QEMU validation; see
+  `../README.md`.

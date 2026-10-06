@@ -223,8 +223,10 @@ ErrorCode log_store_flush(LogStoreHandle store);
  * logserv chooses the new name; this library does not generate one.
  *
  * The new file is opened first and only then is the previous one closed, so
- * a failure at either step leaves the previous file current and still
- * writable. config->path is copied.
+ * an open failure leaves the previous file current and writable. If closing
+ * the previous file fails, libfile still releases it: the replacement is
+ * closed too and the store becomes invalid. Only log_store_close() is then
+ * allowed. config->path is copied.
  *
  * Errors: CORE_INVALID_ARGUMENT if store is NULL or config is invalid;
  * CORE_INVALID_STATE if the store is closed; codes from

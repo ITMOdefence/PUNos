@@ -462,6 +462,66 @@ static void test_connect_outcomes(void)
     EXPECT(103, ipc_server_close(&server) == CORE_OK);
 }
 
+void fake_socket_send_limit(usize limit);
+void fake_socket_block_send(bool block);
+
+static void test_partial_send_and_would_block(void)
+{
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle client = NULL, peer = NULL;
+    IpcConnectionState state;
+    IpcReceiveStatus status;
+    IpcMessage received;
+    u8 payload[64];
+    bool pending;
+    for (usize i = 0; i < sizeof(payload); ++i) { payload[i] = (u8)(i + 1); }
+    IpcMessage message = { 0x12345678u, { payload, sizeof(payload) } };
+    EXPECT(104, ipc_server_create(&test_endpoint, &server) == CORE_OK);
+    EXPECT(105, ipc_connection_begin_connect(&test_endpoint, &client) == CORE_OK);
+    EXPECT(106, ipc_connection_finish_connect(client, &state) == CORE_OK &&
+                state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(107, ipc_server_accept(server, &peer) == CORE_OK);
+    IpcMessage invalid = { 1, { NULL, 1 } };
+    EXPECT(126, ipc_connection_send(client, &invalid) == CORE_INVALID_ARGUMENT);
+    invalid.payload.data = (u8 *)USIZE_MAX;
+    EXPECT(127, ipc_connection_send(client, &invalid) == CORE_INVALID_ARGUMENT);
+    EXPECT(108, ipc_connection_send(client, &message) == CORE_OK);
+    EXPECT(109, ipc_connection_send(client, &message) == CORE_OK);
+
+    fake_socket_block_send(true);
+    EXPECT(110, ipc_connection_flush(client, &pending) == CORE_OK && pending);
+    EXPECT(111, ipc_connection_receive(peer, &status, &received) == CORE_OK &&
+                status == IPC_RECEIVE_STATUS_NO_MESSAGE);
+    fake_socket_block_send(false);
+    fake_socket_send_limit(3); /* Shorter than a header, with overlapping tail. */
+    EXPECT(112, ipc_connection_flush(client, &pending) == CORE_OK && pending);
+    EXPECT(113, ipc_connection_receive(peer, &status, &received) == CORE_OK &&
+                status == IPC_RECEIVE_STATUS_NO_MESSAGE);
+    fake_socket_block_send(true);
+    EXPECT(114, ipc_connection_flush(client, &pending) == CORE_OK && pending);
+    fake_socket_block_send(false);
+    for (usize i = 0; i < 100 && pending; ++i) {
+        EXPECT(115, ipc_connection_flush(client, &pending) == CORE_OK);
+    }
+    EXPECT(116, !pending);
+    fake_socket_reset();
+    for (usize i = 0; i < 2; ++i) {
+        EXPECT(117, ipc_connection_receive(peer, &status, &received) == CORE_OK &&
+                    status == IPC_RECEIVE_STATUS_MESSAGE);
+        EXPECT(118, received.type == message.type && received.payload.size == sizeof(payload));
+        for (usize j = 0; j < sizeof(payload); ++j) {
+            EXPECT(119, received.payload.data[j] == payload[j]);
+        }
+        EXPECT(120, ipc_message_destroy(&received) == CORE_OK);
+    }
+    EXPECT(121, ipc_connection_receive(peer, &status, &received) == CORE_OK &&
+                status == IPC_RECEIVE_STATUS_NO_MESSAGE);
+    EXPECT(122, ipc_connection_flush(client, &pending) == CORE_OK && !pending);
+    EXPECT(123, ipc_connection_close(&client) == CORE_OK);
+    EXPECT(124, ipc_connection_close(&peer) == CORE_OK);
+    EXPECT(125, ipc_server_close(&server) == CORE_OK);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -480,6 +540,7 @@ int main(int argc, char **argv, char **envp)
     test_endpoint_validation();
     test_connect_failure();
     test_connect_outcomes();
+    test_partial_send_and_would_block();
 
     destroy_str(&test_endpoint);
 

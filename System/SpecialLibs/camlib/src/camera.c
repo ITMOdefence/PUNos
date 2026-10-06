@@ -20,11 +20,10 @@ struct CameraHandle {
     CameraState state;
     usize outstanding_frames;
     usize configured_frames; /* MMAP buffers held by the device */
-    /* One bit per MMAP buffer, set while that buffer is out with the caller.
-     * CAMERA_BUFFER_COUNT is 4, so a single word covers every buffer. Without
-     * it a released frame, a forged one and a frame from another camera with
-     * a matching buffer_id would all be accepted. */
+    /* Keep both the issued set and the identity of each issued frame. An id
+     * alone cannot distinguish another camera or an earlier use of a buffer. */
     u64 issued_buffers;
+    V4l2Buffer issued_frames[V4L2_BUFFER_COUNT];
 };
 
 static V4l2PixelFormat camera_fourcc(CameraPixelFormat format)
@@ -133,7 +132,7 @@ ErrorCode camera_get_fd(CameraHandle camera, i32 *out_fd)
     if (camera == NULL || out_fd == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (camera->v4l2_device == NULL) {
+    if (camera->v4l2_device == NULL || camera->state == CAMERA_STATE_DEVICE_LOST) {
         return CORE_INVALID_STATE;
     }
     return v4l2_get_fd(camera->v4l2_device, out_fd);
@@ -144,7 +143,8 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
     if (camera == NULL || out_configurations == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (camera->v4l2_device == NULL) {
+    if (camera->v4l2_device == NULL ||
+        (camera->state != CAMERA_STATE_OPEN && camera->state != CAMERA_STATE_CONFIGURED)) {
         return CORE_INVALID_STATE;
     }
 
@@ -162,8 +162,20 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
         return CORE_OK;
     }
 
+    usize count = 0;
+    for (usize index = 0; index < v4l2_list.count; ++index) {
+        CameraPixelFormat format;
+        if (camera_format_from_fourcc(v4l2_list.items[index].pixel_format, &format)) {
+            count += 1;
+        }
+    }
+    if (count == 0) {
+        (void)v4l2_stream_config_list_destroy(&v4l2_list);
+        return CORE_UNSUPPORTED;
+    }
+
     usize allocation_size;
-    if (core_size_multiply(v4l2_list.count, sizeof(CameraStreamConfig), &allocation_size) != CORE_OK) {
+    if (core_size_multiply(count, sizeof(CameraStreamConfig), &allocation_size) != CORE_OK) {
         (void)v4l2_stream_config_list_destroy(&v4l2_list);
         return CORE_OVERFLOW;
     }
@@ -176,7 +188,7 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
     }
 
     CameraStreamConfig *items = (CameraStreamConfig *)block.data;
-    usize count = 0;
+    count = 0;
 
     for (usize index = 0; index < v4l2_list.count; ++index) {
         CameraPixelFormat format;
@@ -197,29 +209,6 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
 
     (void)v4l2_stream_config_list_destroy(&v4l2_list);
 
-    if (count == 0) {
-        memory_free(&block);
-        return CORE_UNSUPPORTED;
-    }
-
-    /* camera_configuration_list_destroy() rebuilds the block size from count,
-     * so the allocation has to be shrunk to exactly the entries handed out.
-     * Freeing a block that is larger than its recorded size is not allowed. */
-    if (count != v4l2_list.count) {
-        usize trimmed_size;
-
-        if (core_size_multiply(count, sizeof(CameraStreamConfig), &trimmed_size) != CORE_OK) {
-            memory_free(&block);
-            return CORE_OVERFLOW;
-        }
-        result = memory_reallocate(&block, trimmed_size);
-        if (result != CORE_OK) {
-            memory_free(&block);
-            return result;
-        }
-        items = (CameraStreamConfig *)block.data;
-    }
-
     out_configurations->items = items;
     out_configurations->count = count;
     return CORE_OK;
@@ -230,14 +219,19 @@ ErrorCode camera_configuration_list_destroy(CameraConfigurationList *configurati
     if (configurations == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (configurations->items == NULL) {
+    if (configurations->items == NULL && configurations->count != 0) {
         return CORE_INVALID_ARGUMENT;
     }
 
     MemoryBlock block;
     block.data = (u8 *)configurations->items;
-    block.size = configurations->count * sizeof(CameraStreamConfig);
-    (void)memory_free(&block);
+    if (core_size_multiply(configurations->count, sizeof(CameraStreamConfig), &block.size) != CORE_OK) {
+        return CORE_OVERFLOW;
+    }
+    ErrorCode result = memory_free(&block);
+    if (result != CORE_OK) {
+        return result;
+    }
 
     configurations->items = NULL;
     configurations->count = 0;
@@ -287,11 +281,16 @@ ErrorCode camera_configure(CameraHandle camera, const CameraStreamConfig *reques
     V4l2StreamConfig actual;
     ErrorCode result = v4l2_configure_capture(camera->v4l2_device, &requested, &actual);
     if (result != CORE_OK) {
+        /* The lower layer may have already released the old configuration. */
+        camera->state = CAMERA_STATE_OPEN;
+        camera->configured_frames = 0;
         return result;
     }
 
     CameraPixelFormat format;
     if (!camera_format_from_fourcc(actual.pixel_format, &format)) {
+        camera->state = CAMERA_STATE_OPEN;
+        camera->configured_frames = 0;
         return CORE_UNSUPPORTED;
     }
 
@@ -349,7 +348,8 @@ ErrorCode camera_dequeue_frame(CameraHandle camera, CameraReadStatus *out_status
 
     switch (v4l2_status) {
     case V4L2_DEQUEUE_STATUS_BUFFER_READY:
-        if (buffer.index >= camera->configured_frames) {
+        if (buffer.index >= camera->configured_frames || buffer.index >= V4L2_BUFFER_COUNT ||
+            (camera->issued_buffers & (((u64)1) << buffer.index)) != 0) {
             /* The driver named a buffer this camera never configured. */
             return CORE_IO_ERROR;
         }
@@ -359,6 +359,7 @@ ErrorCode camera_dequeue_frame(CameraHandle camera, CameraReadStatus *out_status
         out_frame->sequence = buffer.sequence;
         camera->outstanding_frames += 1;
         camera->issued_buffers |= ((u64)1) << buffer.index;
+        camera->issued_frames[buffer.index] = buffer;
         *out_status = CAMERA_READ_STATUS_FRAME_READY;
         return CORE_OK;
     case V4L2_DEQUEUE_STATUS_NO_BUFFER:
@@ -396,6 +397,12 @@ ErrorCode camera_frame_release(CameraHandle camera, CameraFrame *frame)
     if ((camera->issued_buffers & (((u64)1) << frame->buffer_id)) == 0) {
         /* This camera never handed out that buffer: the frame was already
          * released, was never dequeued, or belongs to another camera. */
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    const V4l2Buffer *issued = &camera->issued_frames[frame->buffer_id];
+    if (frame->data.data != issued->data.data || frame->data.size != issued->data.size ||
+        frame->timestamp != issued->timestamp || frame->sequence != issued->sequence) {
         return CORE_INVALID_ARGUMENT;
     }
 
@@ -438,6 +445,11 @@ ErrorCode camera_stop(CameraHandle camera)
 
     ErrorCode result = v4l2_stop_capture(camera->v4l2_device);
     if (result != CORE_OK) {
+        /* Cleanup may already have consumed the mappings. There is no safe
+         * capture operation to retry; retain ownership for close only. */
+        camera->state = CAMERA_STATE_DEVICE_LOST;
+        camera->configured_frames = 0;
+        camera->issued_buffers = 0;
         return result;
     }
 
@@ -472,6 +484,11 @@ ErrorCode camera_close(CameraHandle *camera)
 
     if (target->v4l2_device != NULL) {
         result = v4l2_close(&target->v4l2_device);
+        if (target->v4l2_device != NULL) {
+            /* A rejected close retains ownership: the caller must be able to
+             * retry rather than losing the only reference to the device. */
+            return result != CORE_OK ? result : CORE_INVALID_STATE;
+        }
     }
 
     MemoryBlock block;

@@ -53,6 +53,20 @@ static struct FakeV4l2Device *the_device;
 
 /* Survives the device so a test can read it after close(). */
 static usize start_refusals_total;
+static usize next_config_count = 1;
+static bool unsupported_configs;
+static bool close_rejected;
+static bool stop_failed;
+
+void fake_v4l2_fail_stop(void) { stop_failed = true; }
+
+void fake_v4l2_configurations(usize count, bool unsupported)
+{
+    next_config_count = count;
+    unsupported_configs = unsupported;
+}
+
+void fake_v4l2_reject_close(void) { close_rejected = true; }
 
 /* --- test control surface, used by the runtime test ---------------------- */
 
@@ -172,20 +186,22 @@ ErrorCode v4l2_get_capture_configurations(V4l2DeviceHandle device,
     }
 
     MemoryBlock block;
-    ErrorCode result = memory_allocate(sizeof(V4l2StreamConfig), &block);
+    ErrorCode result = memory_allocate(next_config_count * sizeof(V4l2StreamConfig), &block);
     if (result != CORE_OK) {
         return result;
     }
 
     V4l2StreamConfig *item = (V4l2StreamConfig *)block.data;
-    item->pixel_format = FAKE_FOURCC_YUYV;
-    item->width = 640;
-    item->height = 480;
-    item->frames_per_second = 30;
-    item->max_frame_bytes = (u32)FAKE_FRAME_BYTES;
+    for (usize i = 0; i < next_config_count; ++i) {
+        item[i].pixel_format = (!unsupported_configs && i == 0) ? FAKE_FOURCC_YUYV : 0;
+        item[i].width = 640;
+        item[i].height = 480;
+        item[i].frames_per_second = 30;
+        item[i].max_frame_bytes = (u32)FAKE_FRAME_BYTES;
+    }
 
     out_configurations->items = item;
-    out_configurations->count = 1;
+    out_configurations->count = next_config_count;
     return CORE_OK;
 }
 
@@ -339,6 +355,10 @@ ErrorCode v4l2_stop_capture(V4l2DeviceHandle handle)
     }
     device->buffer_count = 0;
     device->configured = false;
+    if (stop_failed) {
+        stop_failed = false;
+        return CORE_IO_ERROR;
+    }
     return CORE_OK;
 }
 
@@ -349,6 +369,10 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
     }
 
     struct FakeV4l2Device *target = (struct FakeV4l2Device *)*device;
+    if (close_rejected) {
+        close_rejected = false;
+        return CORE_INVALID_STATE;
+    }
     if (target->outstanding_count != 0) {
         return CORE_INVALID_STATE;
     }
@@ -363,7 +387,7 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
 
         (void)memory_free(&block);
     }
-    the_device = NULL;
+    if (the_device == target) { the_device = NULL; }
     *device = NULL;
     return CORE_OK;
 }

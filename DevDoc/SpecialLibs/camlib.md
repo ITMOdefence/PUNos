@@ -41,7 +41,9 @@
    выполняет `camserv` через `libsync`.
 10. Библиотека использует V4L2 streaming I/O с MMAP-буферами. `CameraFrame`
     не владеет памятью: `CameraFrame.data` указывает на отображённый буфер
-    драйвера и действителен только до `camera_frame_release()`.
+    драйвера и действителен только до `camera_frame_release()`. Все поля кадра
+    возвращаются без изменений; проверяются номер буфера, адрес и размер данных,
+    время и sequence. Чужой, изменённый или устаревший кадр отклоняется.
 11. Каждый кадр со статусом `FrameReady` должен быть передан ровно один раз в
     `camera_frame_release()`. Пока камера находится в `Streaming` и хотя бы
     один кадр не возвращён драйверу, `camera_stop()`, `camera_configure()` и
@@ -132,7 +134,7 @@
 | `camera_start(camera)` | `CameraHandle camera` | `ErrorCode` | Ставит все внутренние буферы в очередь V4L2 и запускает захват кадров |
 | `camera_dequeue_frame(camera, out_status, out_frame)` | `CameraHandle camera`, `CameraReadStatus *out_status`, `CameraFrame *out_frame` | `ErrorCode` | Извлекает один готовый V4L2-буфер; при отсутствии кадра возвращает `NoFrame`, при отключении — `DeviceLost` |
 | `camera_frame_release(camera, frame)` | `CameraHandle camera`, `CameraFrame *frame` | `ErrorCode` | Возвращает ранее полученный буфер драйверу V4L2 и делает `CameraFrame` недействительным |
-| `camera_stop(camera)` | `CameraHandle camera` | `ErrorCode` | Останавливает V4L2 streaming и освобождает MMAP-буферы; камера возвращается в состояние `Open`, поэтому её нужно заново настроить через `camera_configure()` перед следующим `camera_start()` |
+| `camera_stop(camera)` | `CameraHandle camera` | `ErrorCode` | Останавливает V4L2 streaming и освобождает MMAP-буферы; при успехе камера возвращается в `Open` и требует новой настройки перед запуском. При ошибке остановки переходит в `DeviceLost`: разрешено только закрытие |
 | `camera_close(camera)` | `CameraHandle *camera` | `ErrorCode` | Закрывает камеру, освобождает все внутренние ресурсы и записывает `NULL` |
 
 ## Ошибки

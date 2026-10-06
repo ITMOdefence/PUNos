@@ -64,3 +64,8 @@ string_destroy(&endpoint);
 - `tests/abi_compile.c`: compile-time checks of types, constants and enum values.
 - `tests/ipc_runtime.c`: runtime checks of server/connection lifecycle,
   message send/receive, error paths and state transitions.
+- `tests/socket_fake.c`: injects SO_ERROR, EAGAIN and a short send. Short sends
+  forward exactly that many bytes to the peer; checks 104-125 reassemble two
+  messages and compare every payload byte. Reverting the queue shift fails 117.
+- The current revision still needs native Linux/GCC and QEMU validation; see
+  `../README.md`.

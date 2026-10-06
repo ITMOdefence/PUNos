@@ -6,6 +6,11 @@
 
 #define SAME_TYPE(a, b) _Generic((a), b: 1, default: 0)
 
+_Static_assert(SAME_TYPE((LogStoreHandle)0, struct LogStoreHandle *), "LogStoreHandle pointer typedef");
+_Static_assert(SAME_TYPE((LogReaderHandle)0, struct LogReaderHandle *), "LogReaderHandle pointer typedef");
+_Static_assert(SAME_TYPE(&log_store_open, ErrorCode (*)(const LogStoreConfig *, LogStoreHandle *)), "log_store_open signature");
+_Static_assert(SAME_TYPE(&log_reader_close, ErrorCode (*)(LogReaderHandle *)), "log_reader_close signature");
+
 _Static_assert(SAME_TYPE((LogSeverity)0, u32), "LogSeverity size");
 _Static_assert(SAME_TYPE((LogReadStatus)0, u32), "LogReadStatus size");
 _Static_assert(sizeof(LogStoreConfig) == 16, "LogStoreConfig ABI");

@@ -201,7 +201,7 @@ ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *
  * close it.
  *
  * Errors: CORE_INVALID_ARGUMENT if device or out_fd is NULL; CORE_INVALID_
- * STATE if the device is closed.
+ * STATE if the device was lost.
  */
 ErrorCode input_device_get_fd(InputDeviceHandle device, i32 *out_fd);
 
@@ -210,7 +210,7 @@ ErrorCode input_device_get_fd(InputDeviceHandle device, i32 *out_fd);
  * *out_info. Reading them needs no syscall.
  *
  * Errors: CORE_INVALID_ARGUMENT if device or out_info is NULL; CORE_INVALID_
- * STATE if the device is closed.
+ * STATE if the device was lost.
  */
 ErrorCode input_device_get_info(InputDeviceHandle device, InputDeviceInfo *out_info);
 
@@ -226,7 +226,7 @@ ErrorCode input_device_get_info(InputDeviceHandle device, InputDeviceInfo *out_i
  * closed afterwards.
  *
  * Errors: CORE_INVALID_ARGUMENT if device, out_status or out_frame is NULL;
- * CORE_INVALID_STATE if the device is closed; codes from
+ * CORE_INVALID_STATE if the device was lost; codes from
  * core_error_from_errno() for an unexpected read failure; errors of libmem.
  */
 ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *out_status,

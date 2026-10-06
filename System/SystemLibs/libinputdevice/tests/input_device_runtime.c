@@ -18,6 +18,7 @@
 #include "../../testing/check.h"
 
 #include <sys/input-device.h>
+#include "../src/key_capabilities.h"
 
 static String str(const char *text)
 {
@@ -206,6 +207,13 @@ int main(int argc, char **argv, char **envp)
 
     test_missing_device();
     test_real_device();
+    EXPECT(36, input_raw_key_class(30) == INPUT_RAW_CAP_KEYBOARD_KEYS); /* KEY_A */
+    EXPECT(37, input_raw_key_class(0x110) == INPUT_RAW_CAP_POINTER_BUTTONS); /* BTN_LEFT */
+    EXPECT(38, input_raw_key_class(0x160) == INPUT_RAW_CAP_KEYBOARD_KEYS); /* KEY_OK */
+    EXPECT(39, input_raw_key_class(0x290) == INPUT_RAW_CAP_KEYBOARD_KEYS); /* KEY_MACRO1 */
+    EXPECT(40, input_raw_key_class(0x220) == INPUT_RAW_CAP_POINTER_BUTTONS); /* BTN_DPAD_UP */
+    EXPECT(41, input_raw_key_class(0x2c0) == INPUT_RAW_CAP_POINTER_BUTTONS); /* BTN_TRIGGER_HAPPY1 */
+    EXPECT(42, input_raw_key_class(0) == 0); /* KEY_RESERVED */
 
     check_passed();
     return 0;

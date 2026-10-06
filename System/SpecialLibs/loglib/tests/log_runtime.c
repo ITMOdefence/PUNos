@@ -321,6 +321,10 @@ static void test_error_cases(void)
 
     EXPECT(56, log_store_append(NULL, &record) == CORE_INVALID_ARGUMENT);
     EXPECT(57, log_store_append(store, NULL) == CORE_INVALID_ARGUMENT);
+    String invalid = { NULL, 1 };
+    LogRecordInput invalid_record = record;
+    invalid_record.message = &invalid;
+    EXPECT(106, log_store_append(store, &invalid_record) == CORE_INVALID_ARGUMENT);
 
     LogRecordInput bad_record = record;
     bad_record.severity = (LogSeverity)99;
@@ -501,6 +505,92 @@ static void test_path_validation(void)
     destroy_str(&empty);
 }
 
+void fake_file_fail_open(void);
+void fake_file_fail_close(void);
+
+static void test_rotation_failures(void)
+{
+    String old_path = make_str("/tmp/loglib_rotate_old.log");
+    String new_path = make_str("/tmp/loglib_rotate_new.log");
+    String component = make_str("rotate");
+    String message = make_str("kept");
+    LogStoreConfig config = { &old_path, 0644 };
+    LogStoreConfig next = { &new_path, 0644 };
+    LogRecordInput record = { 1, 2, 3, LOG_SEVERITY_INFO, &component, &message };
+    LogStoreHandle store = NULL;
+    LogReaderHandle reader = NULL;
+    LogReadStatus status;
+    LogRecord read_record;
+    remove_if_present(&old_path);
+    remove_if_present(&new_path);
+    EXPECT(86, log_store_open(&config, &store) == CORE_OK);
+    EXPECT(87, log_store_append(store, &record) == CORE_OK);
+    fake_file_fail_open();
+    EXPECT(88, log_store_rotate(store, &next) == CORE_IO_ERROR);
+    EXPECT(89, log_store_append(store, &record) == CORE_OK);
+    EXPECT(90, log_store_flush(store) == CORE_OK);
+    EXPECT(91, log_reader_open(&new_path, &reader) == CORE_NOT_FOUND);
+
+    fake_file_fail_close();
+    EXPECT(92, log_store_rotate(store, &next) == CORE_IO_ERROR);
+    EXPECT(93, log_store_append(store, &record) == CORE_INVALID_STATE);
+    EXPECT(94, log_store_flush(store) == CORE_INVALID_STATE);
+    EXPECT(95, log_store_rotate(store, &next) == CORE_INVALID_STATE);
+    EXPECT(96, log_store_close(&store) == CORE_OK && store == NULL);
+    EXPECT(97, log_reader_open(&old_path, &reader) == CORE_OK);
+    for (usize i = 0; i < 2; ++i) {
+        EXPECT(98, log_reader_next(reader, &status, &read_record) == CORE_OK &&
+                   status == LOG_READ_STATUS_LOG_RECORD);
+        EXPECT(99, read_record.message.length == message.length);
+        EXPECT(100, log_record_destroy(&read_record) == CORE_OK);
+    }
+    EXPECT(101, log_reader_next(reader, &status, &read_record) == CORE_OK &&
+                status == LOG_READ_STATUS_END_OF_FILE);
+    EXPECT(102, log_reader_close(&reader) == CORE_OK);
+    EXPECT(103, log_reader_open(&new_path, &reader) == CORE_OK);
+    EXPECT(104, log_reader_next(reader, &status, &read_record) == CORE_OK &&
+                status == LOG_READ_STATUS_END_OF_FILE);
+    EXPECT(105, log_reader_close(&reader) == CORE_OK);
+    remove_if_present(&old_path);
+    remove_if_present(&new_path);
+    destroy_str(&old_path);
+    destroy_str(&new_path);
+    destroy_str(&component);
+    destroy_str(&message);
+}
+
+static void test_empty_and_invalid_utf8_records(void)
+{
+    String path = make_str(TEST_CORRUPT_LOG);
+    String empty = make_str("");
+    LogStoreConfig config = { &path, 0644 };
+    LogStoreHandle store = NULL;
+    LogReaderHandle reader = NULL;
+    LogRecordInput record = { 0, 1, 1, LOG_SEVERITY_INFO, &empty, &empty };
+    LogRecord result;
+    LogReadStatus status;
+    remove_if_present(&path);
+    EXPECT(107, log_store_open(&config, &store) == CORE_OK);
+    EXPECT(108, log_store_append(store, &record) == CORE_OK);
+    EXPECT(109, log_store_close(&store) == CORE_OK);
+    EXPECT(110, log_reader_open(&path, &reader) == CORE_OK);
+    EXPECT(111, log_reader_next(reader, &status, &result) == CORE_OK &&
+                status == LOG_READ_STATUS_LOG_RECORD &&
+                result.component.length == 0 && result.message.length == 0);
+    EXPECT(112, log_record_destroy(&result) == CORE_OK);
+    EXPECT(113, log_reader_close(&reader) == CORE_OK);
+    u8 frame[LOG_FRAME_HEADER_SIZE + 1];
+    for (usize i = 0; i < sizeof(frame); ++i) { frame[i] = 0; }
+    frame[0] = sizeof(frame);
+    frame[21] = 1;
+    frame[LOG_FRAME_HEADER_SIZE] = 0xff; /* Invalid UTF-8 lead byte. */
+    EXPECT(114, write_raw_frame(&path, frame, sizeof(frame), 0) == CORE_OK);
+    EXPECT(115, reader_rejects(&path));
+    remove_if_present(&path);
+    destroy_str(&path);
+    destroy_str(&empty);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -514,6 +604,8 @@ int main(int argc, char **argv, char **envp)
     test_error_cases();
     test_corrupt_frames();
     test_path_validation();
+    test_rotation_failures();
+    test_empty_and_invalid_utf8_records();
 
     check_passed();
     return 0;

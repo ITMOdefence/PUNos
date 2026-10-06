@@ -33,6 +33,8 @@ struct FakeInputDevice {
 };
 
 static struct FakeInputDevice *the_device;
+static bool fail_read;
+void fake_input_fail_read(void) { fail_read = true; }
 
 /* Capabilities the next open() reports. inputlib reads them once, when the
  * device is opened, so a test has to choose before opening. */
@@ -175,6 +177,10 @@ ErrorCode input_raw_device_read(InputRawDeviceHandle handle, InputRawEvent *out_
         device->lost = false;
         *out_status = INPUT_RAW_READ_STATUS_DEVICE_LOST;
         return CORE_OK;
+    }
+    if (fail_read) {
+        fail_read = false;
+        return CORE_OUT_OF_MEMORY;
     }
 
     usize available = device->count - device->pos;

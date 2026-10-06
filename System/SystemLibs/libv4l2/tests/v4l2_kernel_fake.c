@@ -29,7 +29,7 @@
 
 #define FAKE_CAP_VIDEO_CAPTURE 0x00000001u
 #define FAKE_CAP_STREAMING 0x04000000u
-#define FAKE_CAP_DEVICE_CAPS 0x00000080u
+#define FAKE_CAP_DEVICE_CAPS 0x80000000u
 
 struct FakeCapability {
     u8 driver[16];
@@ -168,6 +168,16 @@ static bool one_frame_ready;  /* DQBUF hands out a buffer */
 static bool close_fails;
 static u32 dq_sequence;
 static u32 streamon_calls;
+static u32 next_buffer_index;
+static u32 next_buffer_size = FAKE_FRAME_BYTES;
+static bool queued[FAKE_BUFFER_COUNT];
+static bool fail_streamoff;
+static i32 fail_queue_index = -1;
+static u32 requested_buffer_count = FAKE_BUFFER_COUNT;
+
+void fake_v4l2_fail_streamoff(bool value) { fail_streamoff = value; }
+void fake_v4l2_fail_queue(i32 index) { fail_queue_index = index; }
+void fake_v4l2_buffer_count(u32 count) { requested_buffer_count = count; }
 
 
 /*
@@ -198,6 +208,19 @@ void fake_v4l2_reset(void)
     close_fails = false;
     dq_sequence = 1;
     streamon_calls = 0;
+    next_buffer_index = 0;
+    next_buffer_size = FAKE_FRAME_BYTES;
+    fail_streamoff = false;
+    fail_queue_index = -1;
+    requested_buffer_count = FAKE_BUFFER_COUNT;
+    for (u32 i = 0; i < FAKE_BUFFER_COUNT; ++i) { queued[i] = false; }
+}
+
+void fake_v4l2_buffer(u32 index, u32 size)
+{
+    next_buffer_index = index;
+    next_buffer_size = size;
+    one_frame_ready = true;
 }
 
 void fake_v4l2_set_device_gone(bool gone) { device_gone = gone; }
@@ -388,7 +411,8 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
     case REQ_REQBUFS: {
         struct FakeRequestBuffers *reqbufs = (struct FakeRequestBuffers *)argument;
 
-        reqbufs->count = FAKE_BUFFER_COUNT;
+        for (u32 i = 0; i < FAKE_BUFFER_COUNT; ++i) { queued[i] = false; }
+        if (reqbufs->count != 0) { reqbufs->count = requested_buffer_count; }
         return 0;
     }
 
@@ -400,8 +424,20 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
         return 0;
     }
 
-    case REQ_QBUF:
+    case REQ_QBUF: {
+        struct FakeBuffer *buffer = (struct FakeBuffer *)argument;
+        if ((i32)buffer->index == fail_queue_index) {
+            fail_queue_index = -1;
+            errno = EIO;
+            return -1;
+        }
+        if (buffer->index >= FAKE_BUFFER_COUNT || queued[buffer->index]) {
+            errno = EINVAL;
+            return -1;
+        }
+        queued[buffer->index] = true;
         return 0;
+    }
 
     case REQ_DQBUF: {
         struct FakeBuffer *buffer = (struct FakeBuffer *)argument;
@@ -411,9 +447,10 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
             return -1;
         }
         one_frame_ready = false;
-        buffer->index = 0;
-        buffer->bytesused = FAKE_FRAME_BYTES;
+        buffer->index = next_buffer_index;
+        buffer->bytesused = next_buffer_size;
         buffer->sequence = dq_sequence;
+        if (buffer->index < FAKE_BUFFER_COUNT) { queued[buffer->index] = false; }
         dq_sequence += 1;
         return 0;
     }
@@ -423,6 +460,8 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
         return 0;
 
     case REQ_STREAMOFF:
+        if (fail_streamoff) { errno = EIO; return -1; }
+        for (u32 i = 0; i < FAKE_BUFFER_COUNT; ++i) { queued[i] = false; }
         return 0;
 
     default:

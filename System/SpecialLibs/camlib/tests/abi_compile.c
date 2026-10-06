@@ -6,6 +6,10 @@
 
 #define SAME_TYPE(a, b) _Generic((a), b: 1, default: 0)
 
+_Static_assert(SAME_TYPE((CameraHandle)0, struct CameraHandle *), "CameraHandle pointer typedef");
+_Static_assert(SAME_TYPE(&camera_open, ErrorCode (*)(const CameraConfig *, CameraHandle *)), "camera_open signature");
+_Static_assert(SAME_TYPE(&camera_close, ErrorCode (*)(CameraHandle *)), "camera_close signature");
+
 _Static_assert(SAME_TYPE((CameraPixelFormat)0, u32), "CameraPixelFormat size");
 _Static_assert(SAME_TYPE((CameraReadStatus)0, u32), "CameraReadStatus size");
 _Static_assert(sizeof(CameraStreamConfig) == 20, "CameraStreamConfig ABI");

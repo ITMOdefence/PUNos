@@ -6,13 +6,13 @@ the specification is the contract, and the code must match it.
 
 | Library | Header | Archive | Status |
 | --- | --- | --- | --- |
-| [ipclib](ipclib/README.md) | `<special/ipc.h>` | `libpunos_special_ipc.a` | Host tests pass |
-| [loglib](loglib/README.md) | `<special/log.h>` | `libpunos_special_log.a` | Host tests pass |
-| [inputlib](inputlib/README.md) | `<special/input.h>` | `libpunos_special_input.a` | Host tests pass |
-| [camlib](camlib/README.md) | `<special/camera.h>` | `libpunos_special_camera.a` | Host tests pass |
+| [ipclib](ipclib/README.md) | `<special/ipc.h>` | `libpunos_special_ipc.a` | Linux/QEMU validation pending |
+| [loglib](loglib/README.md) | `<special/log.h>` | `libpunos_special_log.a` | Linux/QEMU validation pending |
+| [inputlib](inputlib/README.md) | `<special/input.h>` | `libpunos_special_input.a` | Linux/QEMU validation pending |
+| [camlib](camlib/README.md) | `<special/camera.h>` | `libpunos_special_camera.a` | Linux/QEMU validation pending |
 
-"Host tests pass" means `make -C System/SpecialLibs check` is green and every
-fix the library claims has a check that fails when the fix is reverted. The
+Acceptance requires `make -C System/SpecialLibs check`, mutation checks and a
+full QEMU boot check on the current revision. The
 paths that need real hardware - a V4L2 capture device, an evdev device - are
 exercised through the fakes described below rather than against a real node, so
 a green run says nothing about the V4L2 and evdev ABIs themselves; that is
@@ -29,6 +29,7 @@ From the repository root:
 make -C System/SpecialLibs check    # build and test every library
 make -C System/SpecialLibs all      # build the static archives only
 make -C System/SpecialLibs clean
+python3 System/SpecialLibs/testing/check_mutations.py
 ```
 
 A single library is built and tested the same way, for example
@@ -86,10 +87,13 @@ convenient. Two details cost real debugging time and are easy to get wrong:
 
 ### Mutation checks
 
-A test that passes proves nothing on its own: it also passes when the fix is
-absent. Every fix below was therefore checked by reverting it and confirming
-that one specific check fails. The check number is the one that fails, which is
-what `make check` prints and what CI reads.
+A mutation check reintroduces a defect in a disposable source copy and requires
+the corresponding test to fail. `testing/check_mutations.py` builds a baseline,
+checks each mutant, restores the source and verifies the restored library.
+It is also run by CI. The original working tree is never changed.
+
+Historical results recorded by earlier commits are retained below. Their native
+GCC/QEMU runs have not been repeated for this revision in this Windows session.
 
 | # | Fix | Check that fails when reverted |
 | --- | --- | --- |
@@ -115,27 +119,69 @@ numbers across functions - `ipc_runtime.c` had eighteen collisions - and since
 `check_fail()` exits with the check number, a failure in one of them could not
 be told apart from a failure in another.
 
-Two fixes are deliberately not in the table:
+The former gaps in **#1** and **#11** are now covered: the send fake forwards a
+short prefix to the peer, and an allocation wrapper compares the exact allocated
+and freed sizes for a configuration list with 300 entries, most filtered out.
+camlib counts supported configurations before allocating, so destruction never
+has to reconstruct a larger allocation from a smaller count.
 
-  - **#1, the outgoing queue shift**, is the one gap. `memory_copy()` rejects
-    overlapping ranges, so reverting it to `memory_move()`'s forbidden twin
-    makes the call fail, which the old code ignored before shrinking
-    `outgoing_size`. Detecting that needs a send that the kernel accepts only in
-    part - a socket buffer full enough to return a short count - and then a
-    peer that reassembles the stream and finds it corrupted. Nothing in the
-    current test does either, so this fix rests on reading, not on a check.
-  - **#11, the configuration array** is trimmed to the count handed out so that
-    `memory_free()` is given the size it was allocated with. Reverting the trim
-    still passes every check, because the only consequence is a mapping that is
-    never fully unmapped - a leak, which a test cannot see without allocation
-    accounting.
+**#12** now has explicit pointer-typedef and function-signature ABI assertions
+in all four libraries. **#7** has injected open/close failures and checks of both
+files: an open failure preserves the old journal, while a close failure makes
+the store invalid because libfile consumes the handle. The header, DevDoc and
+README describe that distinction consistently.
 
-Two more are structural rather than behavioural, and the ABI compile checks
-cover them: **#12**, the pointer handle typedefs, is enforced by the signatures
-having to compile, and **#7** is not a return code at all - `file_close()`
-releases the handle even when `close()` fails, so no code path can leave the
-previous log usable. The store is made explicitly invalid instead, and the
-header no longer promises otherwise.
+### Validation record, 2026-10-06
+
+The available host is Windows without WSL, GNU make/GCC or QEMU. Clang 18 (via
+Zig 0.13) cross-compiled all 12 System Lib implementations and their ABI tests,
+plus all four Special Lib implementations, ABI tests and runtime suites.
+Six x86_64 ELF runtime suites passed in Unicorn 2.1.4 with modelled Linux
+syscalls: ipclib, loglib, inputlib, camlib, libv4l2 and libinputdevice. For this
+supplementary run, symbol substitution was applied during compilation because
+Zig's link driver does not support GNU `--wrap`. The checked-in Linux Makefiles
+use GNU `--wrap` to inject the same fakes.
+
+All 23 mutants below failed at the expected check under that supplementary
+execution; their restored suites passed. This validates the regression logic,
+not the real Linux syscall/device ABI or boot integration. Native
+`make -C System/SpecialLibs check`, the mutation runner with GCC, and the full
+QEMU boot check remain pending. No readiness claim is made for this revision.
+
+| Mutant | Library | Failing check |
+| --- | --- | --- |
+| Overlapping queue copy with ignored error | ipclib | 117 |
+| Forgotten terminal connect error | ipclib | 95 |
+| Missing completed-frame retry after allocation failure | inputlib | 90 |
+| Incorrect resync after an overflow ending at SYN_REPORT | inputlib | 106 |
+| Reading after DeviceLost | inputlib | 110 |
+| Foreign frame accepted by matching buffer id | camlib | 122 |
+| Missing stale sequence check | camlib | 128 |
+| Allocation sized by unfiltered configuration count | camlib | 156 |
+| Configuration enumeration during Streaming | camlib | 142 |
+| File descriptor access after DeviceLost | camlib | 145 |
+| Destroying outer handle after rejected lower close | camlib | 151 |
+| Appending after failed rotation close | loglib | 93 |
+| Wrong V4L2_CAP_DEVICE_CAPS ABI bit | libv4l2 | 16 |
+| Missing bytesused bounds check | libv4l2 | 88 |
+| Reading errno after cleanup instead of using saved errno | libv4l2 | 91 |
+| Classifying extended KEY_* codes as buttons | libinputdevice | 38 |
+| Streaming retained after failed destructive stop | camlib | 166 |
+| Partial input frame discarded on read failure | inputlib | 116 |
+| NULL IPC payload accepted | ipclib | 126 |
+| Invalid String accepted for log append | loglib | 106 |
+| Previously queued prefix queued twice on start retry | libv4l2 | 96 |
+| Extra driver buffers exceed camera ownership table | libv4l2 | 96 |
+| Stale V4L2 buffer accepted | libv4l2 | 103 |
+
+The follow-up audit also cross-compiled libmem's runtime suite and executed its
+focused malformed-MemoryBlock checks 161–166 in the supplementary emulator.
+The full libmem runtime suite requires real Linux fork/signals and remains
+pending. See [AUDIT.md](AUDIT.md) for findings and verification limits.
+
+The V4L2 capability bit and the interleaved KEY_*/BTN_* ranges were verified
+against Linux's [videodev2.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/videodev2.h)
+and [input-event-codes.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h).
 
 One more regression was found this way, in `libinputdevice`: widening the
 capability mask without updating its ABI check broke the QEMU boot run while the

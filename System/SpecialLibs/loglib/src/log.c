@@ -159,6 +159,11 @@ ErrorCode log_store_append(LogStoreHandle store, const LogRecordInput *record)
     if (message_length > LOG_MESSAGE_MAX_LENGTH) {
         return CORE_OVERFLOW;
     }
+    const char *component_data, *message_data;
+    if (string_c_str(record->component, &component_data) != CORE_OK ||
+        string_c_str(record->message, &message_data) != CORE_OK) {
+        return CORE_INVALID_ARGUMENT;
+    }
 
     usize frame_size = LOG_FRAME_HEADER_SIZE + component_length + message_length;
 
@@ -374,15 +379,15 @@ ErrorCode log_reader_next(LogReaderHandle reader, LogReadStatus *out_status, Log
     result = string_from_utf8((Bytes){ block.data, (usize)component_length }, &out_record->component);
     if (result != CORE_OK) {
         memory_free(&block);
-        return result;
+        return result == CORE_INVALID_ARGUMENT ? CORE_IO_ERROR : result;
     }
 
-    result = string_from_utf8((Bytes){ block.data + component_length, (usize)message_length },
+    result = string_from_utf8((Bytes){ payload_size != 0 ? block.data + component_length : NULL, (usize)message_length },
                               &out_record->message);
     if (result != CORE_OK) {
         (void)string_destroy(&out_record->component);
         memory_free(&block);
-        return result;
+        return result == CORE_INVALID_ARGUMENT ? CORE_IO_ERROR : result;
     }
 
     memory_free(&block);

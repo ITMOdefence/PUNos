@@ -34,7 +34,7 @@ jobs:
       - name: Install toolchain
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential
+          apt-get install -y --no-install-recommends build-essential python3
 
       - uses: actions/checkout@v4
 
@@ -49,6 +49,9 @@ jobs:
 
       - name: Special Libs
         run: make -C System/SpecialLibs check
+
+      - name: Special Lib regression mutation checks
+        run: python3 System/SpecialLibs/testing/check_mutations.py
 
       # Races in thread and signal code do not show up on every run.
       - name: Repeat thread, sync and signal tests

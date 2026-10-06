@@ -4,11 +4,8 @@
  *
  * Each check has its own number; see System/SystemLibs/testing/check.h.
  *
- * The test needs a real V4L2 capture device, which neither the host build nor
- * the PUNos initramfs is guaranteed to have. /dev/video0 is used when it is
- * present and openable; otherwise the checks that need a device are skipped
- * and only argument and state validation is verified. The state checks run
- * without a device too, by driving a handle that was never configured.
+ * Linked with v4l2_fake.c, so capture and failure paths run without hardware
+ * on the host and in the PUNos initramfs. libv4l2 has its own driver ABI suite.
  *
  * Check number groups:
  *   1-5    camera_open / camera_close with invalid arguments
@@ -260,6 +257,10 @@ void fake_v4l2_arm_frame(bool ready, usize index);
 bool fake_v4l2_is_configured(void);
 usize fake_v4l2_outstanding(void);
 usize fake_v4l2_start_refusals(void);
+void fake_v4l2_configurations(usize count, bool unsupported);
+void fake_v4l2_reject_close(void);
+usize fake_memory_mismatches(void);
+usize fake_memory_live(void);
 
 static void fill_request(CameraStreamConfig *out)
 {
@@ -478,10 +479,8 @@ static void test_no_frame(void)
 }
 
 /*
- * Issue 11: the configuration array was allocated for every combination the
- * driver reported but handed out fewer, and the destroy path rebuilt the block
- * size from the smaller count. The allocation is trimmed to exactly what is
- * returned, so freeing it is well defined.
+ * Issue 11: allocate exactly the number of supported configurations. The
+ * filtered multi-page case and allocation accounting are tested below too.
  */
 static void test_configuration_list_ownership(void)
 {
@@ -498,9 +497,124 @@ static void test_configuration_list_ownership(void)
 
     EXPECT(112, camera_configuration_list_destroy(&configs) == CORE_OK);
     EXPECT(113, configs.items == NULL && configs.count == 0);
-    EXPECT(114, camera_configuration_list_destroy(&configs) == CORE_INVALID_ARGUMENT);
+    EXPECT(114, camera_configuration_list_destroy(&configs) == CORE_OK);
 
     EXPECT(115, camera_close(&camera) == CORE_OK);
+}
+
+static void test_cross_camera_and_stale_frames(void)
+{
+    CameraStreamConfig requested, actual;
+    CameraReadStatus status;
+    CameraFrame first, second, stale, forged;
+    CameraHandle a = open_fake_camera();
+    fill_request(&requested);
+    EXPECT(116, camera_configure(a, &requested, &actual) == CORE_OK);
+    EXPECT(117, camera_start(a) == CORE_OK);
+    fake_v4l2_arm_frame(true, 0);
+    EXPECT(118, camera_dequeue_frame(a, &status, &first) == CORE_OK &&
+                status == CAMERA_READ_STATUS_FRAME_READY);
+    CameraHandle b = open_fake_camera();
+    EXPECT(119, camera_configure(b, &requested, &actual) == CORE_OK);
+    EXPECT(120, camera_start(b) == CORE_OK);
+    fake_v4l2_arm_frame(true, 0);
+    EXPECT(121, camera_dequeue_frame(b, &status, &second) == CORE_OK &&
+                status == CAMERA_READ_STATUS_FRAME_READY);
+    EXPECT(122, camera_frame_release(a, &second) == CORE_INVALID_ARGUMENT);
+    EXPECT(123, camera_frame_release(b, &first) == CORE_INVALID_ARGUMENT);
+    forged = second;
+    forged.data.size -= 1;
+    EXPECT(124, camera_frame_release(b, &forged) == CORE_INVALID_ARGUMENT);
+    forged = second;
+    forged.timestamp += 1;
+    EXPECT(125, camera_frame_release(b, &forged) == CORE_INVALID_ARGUMENT);
+    stale = second;
+    EXPECT(126, camera_frame_release(b, &second) == CORE_OK);
+    fake_v4l2_arm_frame(true, 0);
+    EXPECT(127, camera_dequeue_frame(b, &status, &second) == CORE_OK &&
+                status == CAMERA_READ_STATUS_FRAME_READY);
+    /* Isolate the sequence check: even with the current timestamp, the old
+     * issuance of this same buffer must not be returned as the new frame. */
+    stale.timestamp = second.timestamp;
+    EXPECT(128, camera_frame_release(b, &stale) == CORE_INVALID_ARGUMENT);
+    EXPECT(129, camera_stop(b) == CORE_INVALID_STATE);
+    EXPECT(130, camera_frame_release(b, &second) == CORE_OK);
+    EXPECT(131, camera_frame_release(a, &first) == CORE_OK);
+    EXPECT(132, camera_stop(a) == CORE_OK);
+    EXPECT(133, camera_stop(b) == CORE_OK);
+    EXPECT(134, camera_close(&a) == CORE_OK);
+    EXPECT(135, camera_close(&b) == CORE_OK);
+}
+
+static void test_state_table_and_close_retry(void)
+{
+    CameraHandle camera = open_fake_camera();
+    CameraStreamConfig requested, actual;
+    CameraConfigurationList configs;
+    CameraFrame frame;
+    CameraReadStatus status;
+    i32 fd;
+    fill_request(&requested);
+    EXPECT(136, camera_configure(camera, &requested, &actual) == CORE_OK);
+    EXPECT(137, camera_configure(camera, &requested, &actual) == CORE_OK);
+    EXPECT(138, camera_get_configurations(camera, &configs) == CORE_OK);
+    EXPECT(139, camera_configuration_list_destroy(&configs) == CORE_OK);
+    EXPECT(140, camera_start(camera) == CORE_OK);
+    EXPECT(141, camera_start(camera) == CORE_INVALID_STATE);
+    EXPECT(142, camera_get_configurations(camera, &configs) == CORE_INVALID_STATE);
+    EXPECT(143, camera_get_fd(camera, &fd) == CORE_OK);
+    fake_v4l2_lose_device();
+    EXPECT(144, camera_dequeue_frame(camera, &status, &frame) == CORE_OK &&
+                status == CAMERA_READ_STATUS_DEVICE_LOST);
+    EXPECT(145, camera_get_fd(camera, &fd) == CORE_INVALID_STATE);
+    EXPECT(146, camera_get_configurations(camera, &configs) == CORE_INVALID_STATE);
+    EXPECT(147, camera_start(camera) == CORE_INVALID_STATE);
+    EXPECT(148, camera_dequeue_frame(camera, &status, &frame) == CORE_INVALID_STATE);
+    EXPECT(149, camera_frame_release(camera, &frame) == CORE_INVALID_STATE);
+    fake_v4l2_reject_close();
+    EXPECT(150, camera_close(&camera) == CORE_INVALID_STATE);
+    EXPECT(151, camera != NULL);
+    EXPECT(152, camera_close(&camera) == CORE_OK && camera == NULL);
+}
+
+static void test_filtered_configuration_allocation(void)
+{
+    usize before = fake_memory_live();
+    CameraHandle camera = open_fake_camera();
+    CameraConfigurationList configs;
+    fake_v4l2_configurations(300, false);
+    EXPECT(153, camera_get_configurations(camera, &configs) == CORE_OK);
+    EXPECT(154, configs.count == 1 && configs.items[0].format == CAMERA_PIXEL_FORMAT_YUYV);
+    EXPECT(155, camera_configuration_list_destroy(&configs) == CORE_OK);
+    EXPECT(156, fake_memory_mismatches() == 0);
+    fake_v4l2_configurations(300, true);
+    EXPECT(157, camera_get_configurations(camera, &configs) == CORE_UNSUPPORTED);
+    fake_v4l2_configurations(0, false);
+    EXPECT(158, camera_get_configurations(camera, &configs) == CORE_OK);
+    EXPECT(159, configs.count == 0 && configs.items == NULL);
+    EXPECT(160, camera_configuration_list_destroy(&configs) == CORE_OK);
+    EXPECT(161, camera_close(&camera) == CORE_OK);
+    EXPECT(162, fake_memory_live() == before && fake_memory_mismatches() == 0);
+    fake_v4l2_configurations(1, false);
+}
+
+void fake_v4l2_fail_stop(void);
+
+static void test_stop_failure_invalidates_capture(void)
+{
+    CameraHandle camera = open_fake_camera();
+    CameraStreamConfig requested, actual;
+    CameraFrame frame;
+    CameraReadStatus status;
+    fill_request(&requested);
+    EXPECT(163, camera_configure(camera, &requested, &actual) == CORE_OK);
+    EXPECT(164, camera_start(camera) == CORE_OK);
+    fake_v4l2_fail_stop();
+    EXPECT(165, camera_stop(camera) == CORE_IO_ERROR);
+    EXPECT(166, camera_dequeue_frame(camera, &status, &frame) == CORE_INVALID_STATE);
+    EXPECT(167, camera_start(camera) == CORE_INVALID_STATE);
+    EXPECT(168, camera_configure(camera, &requested, &actual) == CORE_INVALID_STATE);
+    EXPECT(169, camera_close(&camera) == CORE_OK && camera == NULL);
 }
 
 int main(int argc, char **argv, char **envp)
@@ -524,6 +638,10 @@ int main(int argc, char **argv, char **envp)
     test_device_lost_with_outstanding_frame();
     test_no_frame();
     test_configuration_list_ownership();
+    test_cross_camera_and_stale_frames();
+    test_state_table_and_close_retry();
+    test_filtered_configuration_allocation();
+    test_stop_failure_invalidates_capture();
 
     check_passed();
     return 0;

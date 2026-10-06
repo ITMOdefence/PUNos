@@ -396,6 +396,13 @@ ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *
     if (message->payload.size > IPC_MESSAGE_MAX_SIZE) {
         return CORE_OVERFLOW;
     }
+    if (message->payload.size != 0 && message->payload.data == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    usize payload_end;
+    if (core_size_add((uintptr_t)message->payload.data, message->payload.size, &payload_end) != CORE_OK) {
+        return CORE_INVALID_ARGUMENT;
+    }
 
     usize frame_size = IPC_FRAME_HEADER_SIZE + message->payload.size;
     if (connection->outgoing_size + frame_size > IPC_OUTGOING_QUEUE_MAX_SIZE) {

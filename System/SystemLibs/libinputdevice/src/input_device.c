@@ -1,4 +1,5 @@
 #include <sys/input-device.h>
+#include "key_capabilities.h"
 
 #include <sys/memory.h>
 
@@ -83,8 +84,6 @@ static ErrorCode last_error(void)
     return core_error_from_errno(errno);
 }
 
-/* First BTN_* code (BTN_MISC). Everything below it is a KEY_* code. */
-#define BTN_MISC_CODE 0x100
 /* KEY_MAX is 0x2ff, so 96 bytes cover every key code a device can report. */
 #define KEY_CODE_BITS_BYTES 96
 #define KEY_MAX_CODE 0x2ff
@@ -92,8 +91,8 @@ static ErrorCode last_error(void)
 /*
  * Splits the device's EV_KEY codes into keyboard keys and pointer buttons.
  *
- * The kernel numbers KEY_* below BTN_MISC (0x100) and BTN_* from there up, so
- * one pass over the bitmap tells the two apart. EV_KEY alone does not: a mouse
+ * KEY_* and BTN_* occupy separate ranges in the key bitmap; KEY_* exist both
+ * below and above BTN_MISC. EV_KEY alone does not distinguish them: a mouse
  * reports buttons through EV_KEY as well, and treating that as a keyboard is
  * what made a mouse classify as both.
  */
@@ -120,9 +119,11 @@ static ErrorCode read_key_capabilities(i32 fd, InputRawCapabilityMask *out_capab
         if ((key_bits[index / 8u] & (u8)(1u << (index % 8u))) == 0) {
             continue;
         }
-        if (code < BTN_MISC_CODE) {
+        InputRawCapabilityMask key_class = input_raw_key_class(code);
+        if ((key_class & INPUT_RAW_CAP_KEYBOARD_KEYS) != 0) {
             has_keyboard_key = true;
-        } else {
+        }
+        if ((key_class & INPUT_RAW_CAP_POINTER_BUTTONS) != 0) {
             has_button = true;
         }
     }
@@ -150,9 +151,9 @@ static ErrorCode read_capabilities(i32 fd, InputRawCapabilityMask *out_capabilit
         InputRawCapabilityMask key_capabilities = 0;
 
         *out_capabilities |= INPUT_RAW_CAP_KEY;
-        if (read_key_capabilities(fd, &key_capabilities) == CORE_OK) {
-            *out_capabilities |= key_capabilities;
-        }
+        ErrorCode result = read_key_capabilities(fd, &key_capabilities);
+        if (result != CORE_OK) { return result; }
+        *out_capabilities |= key_capabilities;
     }
     if ((type_bits & (1u << EV_REL)) != 0) {
         *out_capabilities |= INPUT_RAW_CAP_RELATIVE;
@@ -284,7 +285,13 @@ ErrorCode input_raw_device_read(InputRawDeviceHandle device, InputRawEvent *out_
     }
     raw = (struct RawInputEvent *)device->scratch_block.data;
 
-    result = read(device->fd, raw, events_capacity * sizeof(struct RawInputEvent));
+    /* A clock failure must not consume events that the caller cannot see. */
+    error = time_monotonic_now(&now);
+    if (error != CORE_OK) { return error; }
+
+    do {
+        result = read(device->fd, raw, events_capacity * sizeof(struct RawInputEvent));
+    } while (result < 0 && errno == EINTR);
     if (result < 0) {
         if (errno == EAGAIN) {
             *out_status = INPUT_RAW_READ_STATUS_NO_EVENTS;
@@ -303,10 +310,6 @@ ErrorCode input_raw_device_read(InputRawDeviceHandle device, InputRawEvent *out_
 
     /* evdev only ever returns whole struct input_event records. */
     count = (usize)result / sizeof(struct RawInputEvent);
-    error = time_monotonic_now(&now);
-    if (error != CORE_OK) {
-        return error;
-    }
     for (i = 0; i < count; ++i) {
         out_events[i].type = raw[i].type;
         out_events[i].code = raw[i].code;
