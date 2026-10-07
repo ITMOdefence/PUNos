@@ -13,7 +13,7 @@ CRT0 := $(CRT)/build/crt0.o
 CRT_LIBRARY := $(CRT)/build/libpunos_crt.a
 SYSCALL_LIBRARY := $(SYSCALL)/build/libpunos_syscall.a
 
-SYSTEM_DEPENDENCIES := libeventloop libprocess libstr libtime libmem libcore
+SYSTEM_DEPENDENCIES := libeventloop libprocess libstr libtime libmem librandom libcore
 SYSTEM_ARCHIVES := $(foreach dependency,$(SYSTEM_DEPENDENCIES),\
     $(SYSTEM_LIBS)/$(dependency)/build/libpunos_$(patsubst lib%,%,$(dependency)).a)
 IPC_LIBRARY := $(SPECIAL_LIBS)/ipclib/build/libpunos_ipc.a
