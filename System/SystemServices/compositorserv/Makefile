@@ -31,6 +31,7 @@ CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
 BUILD := build
 LIBRARY := $(BUILD)/libpunos_compositorserv.a
 OBJECT := $(BUILD)/compositorserv.o
+RENDERER_OBJECT := $(BUILD)/renderer.o
 MAIN_OBJECT := $(BUILD)/main.o
 PROGRAM := $(BUILD)/compositorserv
 RUNTIME_OBJECT := $(BUILD)/compositorserv_runtime.o
@@ -49,13 +50,16 @@ $(BUILD):
 $(OBJECT): src/compositorserv.c include/compositorserv.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+$(RENDERER_OBJECT): src/renderer.c src/renderer.h | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 $(MAIN_OBJECT): src/main.c include/compositorserv.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(RUNTIME_OBJECT): tests/compositorserv_runtime.c include/compositorserv.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(LIBRARY): $(OBJECT)
+$(LIBRARY): $(OBJECT) $(RENDERER_OBJECT)
 	rm -f $@
 	$(AR) rcs $@ $^
 

@@ -5,6 +5,7 @@
 #include <gui/protocol.h>
 #include <special/ipc.h>
 #include <sys/memory.h>
+#include "../src/renderer.h"
 
 static ErrorCode connect_client(const String *endpoint,
                                 CompositorServiceHandle service,
@@ -493,6 +494,89 @@ static void test_scene_controller_and_graph(void)
     EXPECT(157, string_destroy(&endpoint) == CORE_OK);
 }
 
+
+static void test_software_renderer(void)
+{
+    u8 output[4 * 4 * 4];
+    u8 opaque[2 * 2 * 4] = {
+        10, 20, 30, 0,   40, 50, 60, 0,
+        70, 80, 90, 0,  100, 110, 120, 0
+    };
+    /* Premultiplied 50% red: B=0, G=0, R=128, A=128. */
+    u8 translucent[4] = { 0, 0, 128, 128 };
+    CompositorRenderTarget target = { output, 4, 4, 16 };
+    CompositorRenderLayer layers[2];
+    u8 *pixel;
+
+    layers[0].pixels = opaque;
+    layers[0].width = 2;
+    layers[0].height = 2;
+    layers[0].stride = 8;
+    layers[0].format = GUI_PIXEL_XRGB8888;
+    layers[0].x = 1;
+    layers[0].y = 1;
+    layers[0].clip_set = false;
+    layers[0].clip_x = 0;
+    layers[0].clip_y = 0;
+    layers[0].clip_width = 0;
+    layers[0].clip_height = 0;
+
+    layers[1].pixels = translucent;
+    layers[1].width = 1;
+    layers[1].height = 1;
+    layers[1].stride = 4;
+    layers[1].format = GUI_PIXEL_ARGB8888;
+    layers[1].x = 1;
+    layers[1].y = 1;
+    layers[1].clip_set = false;
+    layers[1].clip_x = 0;
+    layers[1].clip_y = 0;
+    layers[1].clip_width = 0;
+    layers[1].clip_height = 0;
+
+    EXPECT(210, compositor_render_clear(&target, 1, 2, 3) == CORE_OK);
+    EXPECT(211, compositor_render_layers(&target, layers, 2) == CORE_OK);
+
+    pixel = output + 0 * 16 + 0 * 4;
+    EXPECT(212, pixel[0] == 3 && pixel[1] == 2 && pixel[2] == 1 &&
+                pixel[3] == 255);
+
+    pixel = output + 1 * 16 + 1 * 4;
+    EXPECT(213, pixel[0] == 5 && pixel[1] == 10 && pixel[2] == 143 &&
+                pixel[3] == 255);
+
+    pixel = output + 1 * 16 + 2 * 4;
+    EXPECT(214, pixel[0] == 40 && pixel[1] == 50 && pixel[2] == 60 &&
+                pixel[3] == 255);
+
+    /* Verify clipping at the output edge: only one source pixel is visible. */
+    layers[0].x = 3;
+    layers[0].y = 3;
+    EXPECT(215, compositor_render_clear(&target, 0, 0, 0) == CORE_OK);
+    EXPECT(216, compositor_render_layer(&target, &layers[0]) == CORE_OK);
+    pixel = output + 3 * 16 + 3 * 4;
+    EXPECT(217, pixel[0] == 10 && pixel[1] == 20 && pixel[2] == 30 &&
+                pixel[3] == 255);
+    pixel = output + 2 * 16 + 3 * 4;
+    EXPECT(218, pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 &&
+                pixel[3] == 255);
+
+    /* Verify an explicit source clip rectangle. */
+    layers[0].x = 0;
+    layers[0].y = 0;
+    layers[0].clip_set = true;
+    layers[0].clip_x = 1;
+    layers[0].clip_y = 0;
+    layers[0].clip_width = 1;
+    layers[0].clip_height = 2;
+    EXPECT(219, compositor_render_clear(&target, 0, 0, 0) == CORE_OK);
+    EXPECT(220, compositor_render_layer(&target, &layers[0]) == CORE_OK);
+    pixel = output + 0 * 16 + 0 * 4;
+    EXPECT(221, pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0);
+    pixel = output + 0 * 16 + 1 * 4;
+    EXPECT(222, pixel[0] == 40 && pixel[1] == 50 && pixel[2] == 60);
+}
+
 int main(void)
 {
     test_accept_connection();
@@ -500,6 +584,7 @@ int main(void)
     test_buffer_import_destroy();
     test_surface_pending_commit();
     test_scene_controller_and_graph();
+    test_software_renderer();
     check_passed();
     return 0;
 }
