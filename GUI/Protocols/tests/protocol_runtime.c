@@ -219,11 +219,12 @@ static void test_display_information(void)
         CORE_INVALID_ARGUMENT);
 }
 
-void main(void)
+int main(void)
 {
     test_buffer_import();
     test_damage_and_present();
     test_display_control();
     test_display_information();
     check_passed();
+    return 0;
 }

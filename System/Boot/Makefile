@@ -39,7 +39,7 @@ STUB := $(BUILD_DIR)/initserv
 .PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS)
 
 all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) \
-     $(DISPLAYSERV) $(DISPLAYSERV_SELFTEST)
+     system-services
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -58,8 +58,6 @@ $(SYSTEM_LIBS_SELFTESTS):
 
 system-services:
 	$(MAKE) -C $(SYSTEM_SERVICES_DIR) all runtime-test
-
-$(DISPLAYSERV) $(DISPLAYSERV_SELFTEST): system-services
 
 $(INIT_OBJECT): Init/init.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

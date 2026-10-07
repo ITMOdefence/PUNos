@@ -69,8 +69,9 @@ static void test_round_trip(void)
     EXPECT(24, string_destroy(&endpoint) == CORE_OK);
 }
 
-void main(void)
+int main(void)
 {
     test_round_trip();
     check_passed();
+    return 0;
 }

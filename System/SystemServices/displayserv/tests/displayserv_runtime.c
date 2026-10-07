@@ -257,9 +257,10 @@ static void test_invalid_presenter_token_limit(void)
     EXPECT(115, string_destroy(&endpoint) == CORE_OK);
 }
 
-void main(void)
+int main(void)
 {
     test_list_request();
     test_invalid_presenter_token_limit();
     check_passed();
+    return 0;
 }

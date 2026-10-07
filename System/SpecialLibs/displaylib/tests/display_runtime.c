@@ -50,8 +50,9 @@ static void test_software_display(void)
     EXPECT(15, string_destroy(&backend_name) == CORE_OK);
 }
 
-void main(void)
+int main(void)
 {
     test_software_display();
     check_passed();
+    return 0;
 }

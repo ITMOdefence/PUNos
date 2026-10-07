@@ -50,8 +50,9 @@ static void test_software_backend(void)
     EXPECT(13, graphics_device_close(&device) == CORE_OK && device == NULL);
 }
 
-void main(void)
+int main(void)
 {
     test_software_backend();
     check_passed();
+    return 0;
 }
