@@ -13,6 +13,8 @@
  * capture, read/write I/O and multi-planar formats are not. The only
  * syscall wrappers used are open(), close(), ioctl(), mmap() and munmap().
  * All operations return ErrorCode; see <sys/core.h> for the conventions.
+ * After DeviceLost, only v4l2_close() is allowed. Capture configuration and
+ * enumeration are refused while streaming; starting twice is refused too.
  */
 
 #include <sys/core.h>
@@ -160,13 +162,16 @@ ErrorCode v4l2_dequeue_buffer(V4l2DeviceHandle device, V4l2DequeueStatus *out_st
  * *buffer to an invalid, empty V4l2Buffer (its data no longer usable).
  *
  * Errors: CORE_INVALID_ARGUMENT if device or buffer is NULL, or
- * buffer->index is out of range for device; codes from
+ * buffer->index is out of range, or its fields do not match an outstanding
+ * buffer issued by this device; CORE_INVALID_STATE if not streaming; codes from
  * core_error_from_errno() for an unexpected ioctl() failure.
  */
 ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer);
 
 /*
  * Stops streaming and releases the MMAP buffers.
+ * A STREAMOFF failure retains the mappings because DMA may still be active.
+ * A subsequent cleanup failure may consume them; close the device on error.
  *
  * Errors: CORE_INVALID_ARGUMENT if device is NULL; CORE_INVALID_STATE if a
  * V4l2Buffer from this device is still outstanding (contract 9); codes
@@ -175,7 +180,7 @@ ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer);
 ErrorCode v4l2_stop_capture(V4l2DeviceHandle device);
 
 /*
- * Closes device: unmaps any MMAP buffers, closes the file descriptor,
+ * Closes device: closes the file descriptor to stop DMA, unmaps MMAP buffers,
  * releases internal state and sets *device to NULL.
  *
  * Errors: CORE_INVALID_ARGUMENT if device or *device is NULL;

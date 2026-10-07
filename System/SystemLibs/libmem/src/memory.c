@@ -164,8 +164,11 @@ ErrorCode memory_reallocate(MemoryBlock *block, usize new_size)
     if (result != CORE_OK) {
         return result;
     }
-    /* The block was mapped, so its own length always rounds without overflow. */
-    (void)mapping_length(block->size, &old_length);
+    /* Public structs may contain malformed sizes: never use an unwritten
+     * length after overflow while validating a caller-provided block. */
+    if (mapping_length(block->size, &old_length) != CORE_OK) {
+        return CORE_INVALID_ARGUMENT;
+    }
 
     /* The block may have been protected; the data below is read and written. */
     if (mprotect(block->data, old_length, PROT_READ | PROT_WRITE) != 0) {
@@ -225,7 +228,9 @@ ErrorCode memory_free(MemoryBlock *block)
         return CORE_OK;
     }
 
-    (void)mapping_length(block->size, &length);
+    if (mapping_length(block->size, &length) != CORE_OK) {
+        return CORE_INVALID_ARGUMENT;
+    }
     result = unmap_pages(block->data, length);
     if (result != CORE_OK) {
         return result;
@@ -257,7 +262,9 @@ ErrorCode memory_protect(MemoryBlock *block, MemoryProtection protection)
         flags |= PROT_EXEC;
     }
 
-    (void)mapping_length(block->size, &length);
+    if (mapping_length(block->size, &length) != CORE_OK) {
+        return CORE_INVALID_ARGUMENT;
+    }
     if (mprotect(block->data, length, flags) != 0) {
         return last_error();
     }

@@ -338,6 +338,19 @@ static void test_compare(void)
     EXPECT(160, memory_compare(view(NULL, 1), view(right, 1), &result) == CORE_INVALID_ARGUMENT);
 }
 
+static void test_malformed_mapping_size(void)
+{
+    MemoryBlock block;
+    EXPECT(161, memory_allocate(1, &block) == CORE_OK);
+    MemoryBlock invalid = { block.data, (usize)-1 };
+    EXPECT(162, memory_free(&invalid) == CORE_INVALID_ARGUMENT);
+    EXPECT(163, memory_protect(&invalid, MEM_READ) == CORE_INVALID_ARGUMENT);
+    EXPECT(164, memory_reallocate(&invalid, 1) == CORE_INVALID_ARGUMENT);
+    EXPECT(165, invalid.data == block.data && invalid.size == (usize)-1);
+    block.data[0] = 42;
+    EXPECT(166, block.data[0] == 42 && memory_free(&block) == CORE_OK);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -352,6 +365,7 @@ int main(int argc, char **argv, char **envp)
     test_move();
     test_set();
     test_compare();
+    test_malformed_mapping_size();
 
     check_passed();
     return 0;

@@ -261,6 +261,10 @@ libinputdevice runtime test passed
 PUNos initserv stub: libinputdevice self-test passed
 libv4l2 runtime test passed
 PUNos initserv stub: libv4l2 self-test passed
+PUNos initserv stub: ipc self-test passed
+PUNos initserv stub: log self-test passed
+PUNos initserv stub: input self-test passed
+PUNos initserv stub: camera self-test passed
 ```
 
 Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
@@ -327,6 +331,19 @@ runtime-тест на хосте. Отдельная библиотека про
 initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
 структуре библиотек и тестов описаны в `System/SystemLibs/README.md`.
 
+## Проверка Special Libs
+
+Special Libs собираются и тестируются одной командой из корня репозитория:
+
+```bash
+make -C System/SpecialLibs check
+```
+
+Отдельная библиотека проверяется так же, например
+`make -C System/SpecialLibs/ipclib check`. Их runtime-тесты так же входят в
+initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
+структуре описаны в `System/SpecialLibs/README.md`.
+
 ## Непрерывная интеграция
 
 Workflow `.github/workflows/ci.yml` запускается на каждый push, pull request
@@ -335,7 +352,7 @@ Workflow `.github/workflows/ci.yml` запускается на каждый pus
 
 | Job | Что проверяет |
 | --- | --- |
-| Host tests | `check` для SyscallWrappers, CRT и всех System Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд |
+| Host tests | `check` для SyscallWrappers, CRT, всех System Libs и всех Special Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд, как и тесты Special Libs, работающие с сокетами и файлами |
 | Reproducible initramfs | Две сборки `build-initramfs.sh` дают одинаковый SHA-256 |
 | Kernel | `prepare-kernel.sh` и `build-kernel.sh`; `bzImage` кэшируется по содержимому `System/kernel/` и пересобирается только при его изменении |
 | QEMU boot | `check-qemu-boot.sh` на собранных ядре и initramfs; журнал загрузки сохраняется как artifact |
@@ -389,7 +406,8 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 `init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
 (`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
 `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
-`libv4l2`) с владельцем `root:root` и правами `0755`.
+`libv4l2`, `ipc`, `log`, `input`, `camera`) с владельцем `root:root` и правами
+`0755`.
 
 ## Рабочая структура
 

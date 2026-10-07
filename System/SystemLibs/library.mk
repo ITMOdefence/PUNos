@@ -4,6 +4,19 @@
 #   RUNTIME_TEST   base name of tests/<name>.c, the runtime test / QEMU self-test
 #   DEPENDENCIES   System Libs it uses, in dependency order (e.g. libcore libmem)
 #
+# Optional:
+#   TEST_FAKES     whitespace-separated base names of tests/<name>_fake.c files
+#                  to compile and link into the runtime test. A fake provides
+#                  its own definition of the library's dependencies, or of one
+#                  syscall wrapper, so paths that need real hardware can be
+#                  exercised on a machine that has none. The objects are linked
+#                  before the dependency archives.
+#   TEST_FAKE_LDFLAGS
+#                  extra flags for the runtime test link; see
+#                  System/SpecialLibs/special_libs.mk for when a fake that
+#                  replaces a syscall wrapper needs
+#                  -Wl,--allow-multiple-definition.
+#
 # and then includes this file. Every .c file in src/ goes into the archive.
 # See System/SystemLibs/README.md for the conventions behind these rules.
 
@@ -40,6 +53,12 @@ RUNTIME_TEST_OBJECT := $(BUILD_DIR)/$(RUNTIME_TEST).o
 RUNTIME_TEST_PROGRAM := $(BUILD_DIR)/$(RUNTIME_TEST)
 HEADERS := $(wildcard include/sys/*.h src/*.h) \
            $(foreach dependency,$(DEPENDENCIES),$(wildcard ../$(dependency)/include/sys/*.h))
+FAKE_SOURCES := $(foreach fake,$(TEST_FAKES),tests/$(fake).c)
+FAKE_OBJECTS := $(patsubst tests/%.c,$(BUILD_DIR)/%.o,$(FAKE_SOURCES))
+# A comma inside $(if ...) would end the argument list, so it comes from a
+# variable: $(if) would otherwise see "-Wl" and "--allow-multiple-definition".
+comma := ,
+FAKE_LDFLAGS := $(if $(FAKE_OBJECTS),-Wl$(comma)--allow-multiple-definition)
 
 .PHONY: all check clean runtime-test dependencies
 
@@ -68,6 +87,9 @@ $(ABI_TEST_OBJECT): tests/abi_compile.c $(HEADERS) | $(BUILD_DIR)
 $(RUNTIME_TEST_OBJECT): tests/$(RUNTIME_TEST).c ../testing/check.h $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/%_fake.o: tests/%_fake.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 dependencies:
 	@set -e; for dependency in $(DEPENDENCIES); do $(MAKE) -C ../$$dependency all; done
 	$(MAKE) -C $(CRT_DIR) all
@@ -77,9 +99,9 @@ $(DEPENDENCY_ARCHIVES) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY): dependencies
 
 # Dependants before their dependencies: this library, then DEPENDENCIES reversed.
 $(RUNTIME_TEST_PROGRAM): $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(DEPENDENCY_ARCHIVES) \
-                         $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
-	$(CC) -nostdlib -no-pie -Wl,-e,_start \
-		$(CRT0) $(RUNTIME_TEST_OBJECT) $(LIBRARY) \
+                         $(FAKE_OBJECTS) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
+	$(CC) $(TEST_FAKE_LDFLAGS) $(FAKE_LDFLAGS) -nostdlib -no-pie -Wl,-e,_start \
+		$(CRT0) $(RUNTIME_TEST_OBJECT) $(LIBRARY) $(FAKE_OBJECTS) \
 		$(call reverse,$(DEPENDENCY_ARCHIVES)) \
 		$(CRT_LIBRARY) $(SYSCALL_LIBRARY) -o $@
 

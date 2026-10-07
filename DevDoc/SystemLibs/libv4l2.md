@@ -78,8 +78,9 @@
     также возвращает `CORE_UNSUPPORTED`.
 13. Библиотека не интерпретирует пиксели, не декодирует сжатые форматы и не
     использует IPC, event loop, permissions или UI.
-14. `V4l2Buffer.timestamp` получается через `time_monotonic_now()` сразу после
-    успешного извлечения буфера. Метка не является исходной меткой драйвера
+14. `V4l2Buffer.timestamp` получается через `time_monotonic_now()` непосредственно
+    перед попыткой извлечения буфера: ошибка часов не должна потреблять кадр.
+    Метка не является исходной меткой драйвера
     V4L2 и применяется только для упорядочивания и измерения интервалов.
 15. Указатели на структуры V4L2 передаются третьим аргументом `ioctl()` только
     после явного преобразования через `uintptr_t` в `unsigned long`.
@@ -114,7 +115,7 @@
 
 | Операция | Аргументы | Возвращаемое значение | Назначение |
 | -------- | --------- | --------------------- | ---------- |
-| `v4l2_open(config, out_device)` | `const V4l2DeviceConfig *config`, `V4l2DeviceHandle *out_device` | `ErrorCode` | Открывает V4L2 video capture-устройство в неблокирующем режиме |
+| `v4l2_open(config, out_device)` | `const V4l2DeviceConfig *config`, `V4l2DeviceHandle *out_device` | `ErrorCode` | Открывает V4L2 video capture-устройство в неблокирующем режиме и проверяет через `VIDIOC_QUERYCAP`, что устройство поддерживает video capture и streaming |
 | `v4l2_get_fd(device, out_fd)` | `V4l2DeviceHandle device`, `i32 *out_fd` | `ErrorCode` | Возвращает невладеющий файловый дескриптор V4L2-устройства |
 | `v4l2_get_capture_configurations(device, out_configurations)` | `V4l2DeviceHandle device`, `V4l2StreamConfigList *out_configurations` | `ErrorCode` | Возвращает владеющий список дискретных конфигураций, поддерживаемых драйвером |
 | `v4l2_stream_config_list_destroy(configurations)` | `V4l2StreamConfigList *configurations` | `ErrorCode` | Освобождает список конфигураций через `libmem` и делает его недействительным |

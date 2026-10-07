@@ -133,6 +133,13 @@ crt0.o <objects> libpunos_v4l2.a libpunos_time.a libpunos_str.a libpunos_mem.a l
 
 ## Tests
 
+Capture lifecycle checks cover a partial QBUF failure followed by a start
+retry, drivers allocating extra buffers, stale/double buffer returns, and
+STREAMOFF failure. Configuring during capture and starting twice are rejected.
+Closing consumes the descriptor before unmapping so DMA cannot target unmapped
+memory. Timestamps are sampled immediately before DQBUF; a clock error therefore
+cannot consume a frame. After DeviceLost, only closing is allowed.
+
 - `tests/abi_compile.c`: `V4L2_BUFFER_COUNT`/`V4L2_MIN_*`, the ABI numbering
   this library chose for the unpinned `V4l2DequeueStatus`, and the layout
   of `V4l2StreamConfig` and `V4l2Buffer`.

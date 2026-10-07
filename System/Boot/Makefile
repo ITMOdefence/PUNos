@@ -21,6 +21,12 @@ SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libeventloop/build/eventloop_runtime \
                          $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
                          $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
+SPECIAL_LIBS_DIR := ../SpecialLibs
+# Runtime tests of Special Libs, packaged as /punos/bin/<name>-selftest.
+SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
+                         $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
+                         $(SPECIAL_LIBS_DIR)/inputlib/build/input_runtime \
+                         $(SPECIAL_LIBS_DIR)/camlib/build/camera_runtime
 
 CPPFLAGS := -I$(NATIVE_DIR)/include -I$(SYSCALL_DIR)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
@@ -31,9 +37,9 @@ STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv
 
-.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS)
+.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
 
-all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS)
+all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -48,6 +54,9 @@ $(SYSCALL_SELFTEST):
 	$(MAKE) -C $(SYSCALL_DIR) full-test
 
 $(SYSTEM_LIBS_SELFTESTS):
+	$(MAKE) -C $(dir $(@D)) runtime-test
+
+$(SPECIAL_LIBS_SELFTESTS):
 	$(MAKE) -C $(dir $(@D)) runtime-test
 
 $(INIT_OBJECT): Init/init.c | $(BUILD_DIR)
