@@ -197,15 +197,22 @@ static void test_window_lifecycle_input_and_cleanup(void)
                lifecycle.lifecycle == GUI_WINDOW_LIFECYCLE_FOREGROUND);
     EXPECT(30, ipc_message_destroy(&message) == CORE_OK);
 
-    EXPECT(31, window_service_set_display_metrics(service, 1920, 1080,
+    EXPECT(31, receive_message_type(service, app, GUI_WINDOW_CONFIGURE,
+                                    &message) == CORE_OK);
+    EXPECT(32, gui_decode_window_configure(&message, &configure) == CORE_OK &&
+               configure.window_id == window_id &&
+               configure.orientation == GUI_ORIENTATION_NORMAL);
+    EXPECT(33, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(34, window_service_set_display_metrics(service, 1920, 1080,
         GUI_SCALE_1X, GUI_ORIENTATION_LEFT,
         (GuiInsets){ 10, 20, 30, 40 }) == CORE_OK);
-    EXPECT(32, receive_message_type(service, app, GUI_WINDOW_CONFIGURE,
+    EXPECT(35, receive_message_type(service, app, GUI_WINDOW_CONFIGURE,
                                     &message) == CORE_OK);
-    EXPECT(33, gui_decode_window_configure(&message, &configure) == CORE_OK &&
+    EXPECT(36, gui_decode_window_configure(&message, &configure) == CORE_OK &&
                configure.orientation == GUI_ORIENTATION_LEFT &&
                configure.safe_insets.left == 40);
-    EXPECT(34, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(37, ipc_message_destroy(&message) == CORE_OK);
 
     touch.window_id = 0;
     touch.input_serial = 50;
@@ -214,47 +221,47 @@ static void test_window_lifecycle_input_and_cleanup(void)
     touch.phase = GUI_TOUCH_DOWN;
     touch.x = 9 << 8;
     touch.y = 8 << 8;
-    EXPECT(35, window_service_route_touch(service, &touch) == CORE_OK);
-    EXPECT(36, receive_message_type(service, app, GUI_WINDOW_TOUCH,
+    EXPECT(38, window_service_route_touch(service, &touch) == CORE_OK);
+    EXPECT(39, receive_message_type(service, app, GUI_WINDOW_TOUCH,
                                     &message) == CORE_OK);
-    EXPECT(37, gui_decode_window_touch(&message, &decoded_touch) == CORE_OK &&
+    EXPECT(40, gui_decode_window_touch(&message, &decoded_touch) == CORE_OK &&
                decoded_touch.window_id == window_id &&
                decoded_touch.x == (9 << 8));
-    EXPECT(38, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(41, ipc_message_destroy(&message) == CORE_OK);
 
-    EXPECT(39, connect_client(&endpoint, service, &app2) == CORE_OK);
+    EXPECT(42, connect_client(&endpoint, service, &app2) == CORE_OK);
     id_request.prefix.request_id = 5;
     id_request.window_id = window_id;
-    EXPECT(40, gui_encode_window_id_request(&id_request,
+    EXPECT(43, gui_encode_window_id_request(&id_request,
         (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
-    EXPECT(41, send_message(app2, GUI_WINDOW_DESTROY, payload, size) ==
+    EXPECT(44, send_message(app2, GUI_WINDOW_DESTROY, payload, size) ==
                CORE_OK);
-    EXPECT(42, receive_message_type(service, app2, GUI_WINDOW_DESTROY_RESULT,
+    EXPECT(45, receive_message_type(service, app2, GUI_WINDOW_DESTROY_RESULT,
                                     &message) == CORE_OK);
-    EXPECT(43, gui_decode_basic_result(&message, GUI_WINDOW_DESTROY_RESULT,
+    EXPECT(46, gui_decode_basic_result(&message, GUI_WINDOW_DESTROY_RESULT,
                                        &basic) == CORE_OK &&
                basic.error == CORE_PERMISSION_DENIED);
-    EXPECT(44, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(47, ipc_message_destroy(&message) == CORE_OK);
 
-    EXPECT(45, ipc_connection_close(&app) == CORE_OK);
-    EXPECT(46, window_service_poll(service, 0) == CORE_OK);
+    EXPECT(48, ipc_connection_close(&app) == CORE_OK);
+    EXPECT(49, window_service_poll(service, 0) == CORE_OK);
     activate.prefix.request_id = 6;
-    EXPECT(47, gui_encode_shell_activate(&activate,
+    EXPECT(50, gui_encode_shell_activate(&activate,
         (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
-    EXPECT(48, send_message(shell, GUI_SHELL_ACTIVATE, payload, size) ==
+    EXPECT(51, send_message(shell, GUI_SHELL_ACTIVATE, payload, size) ==
                CORE_OK);
-    EXPECT(49, receive_message_type(service, shell,
+    EXPECT(52, receive_message_type(service, shell,
                                     GUI_WINDOW_OPERATION_RESULT,
                                     &message) == CORE_OK);
-    EXPECT(50, gui_decode_basic_result(&message, GUI_WINDOW_OPERATION_RESULT,
+    EXPECT(53, gui_decode_basic_result(&message, GUI_WINDOW_OPERATION_RESULT,
                                        &basic) == CORE_OK &&
                basic.error == CORE_NOT_FOUND);
-    EXPECT(51, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(54, ipc_message_destroy(&message) == CORE_OK);
 
-    EXPECT(52, ipc_connection_close(&app2) == CORE_OK);
-    EXPECT(53, ipc_connection_close(&shell) == CORE_OK);
-    EXPECT(54, window_service_close(&service) == CORE_OK);
-    EXPECT(55, string_destroy(&endpoint) == CORE_OK);
+    EXPECT(55, ipc_connection_close(&app2) == CORE_OK);
+    EXPECT(56, ipc_connection_close(&shell) == CORE_OK);
+    EXPECT(57, window_service_close(&service) == CORE_OK);
+    EXPECT(58, string_destroy(&endpoint) == CORE_OK);
 }
 
 static void test_io_input_frame_routing(void)
