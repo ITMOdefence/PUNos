@@ -5,10 +5,12 @@
 #include <sys/eventloop.h>
 #include <sys/memory.h>
 #include <sys/random.h>
+#include <punos/syscall/syscall.h>
 
 #define COMPOSITOR_SERVICE_CLIENT_MAX ((usize)32)
 #define COMPOSITOR_SERVICE_EVENT_MAX ((usize)64)
 #define COMPOSITOR_SERVICE_SURFACE_MAX ((usize)64)
+#define COMPOSITOR_SERVICE_BUFFER_MAX ((usize)64)
 #define COMPOSITOR_SERVICE_RESPONSE_MAX ((usize)64)
 
 typedef struct CompositorSurface {
@@ -17,10 +19,23 @@ typedef struct CompositorSurface {
     u8 bind_token[GUI_SURFACE_BIND_TOKEN_SIZE];
 } CompositorSurface;
 
+typedef struct CompositorBuffer {
+    bool active;
+    u64 buffer_id;
+    u32 width;
+    u32 height;
+    u32 stride;
+    GuiPixelFormat pixel_format;
+    u64 byte_size;
+    i32 fd;
+    SharedMemoryMapping mapping;
+} CompositorBuffer;
+
 typedef struct CompositorClient {
     IpcConnectionHandle connection;
     EventSourceId source;
     CompositorSurface surfaces[COMPOSITOR_SERVICE_SURFACE_MAX];
+    CompositorBuffer buffers[COMPOSITOR_SERVICE_BUFFER_MAX];
 } CompositorClient;
 
 struct CompositorServiceHandle {
@@ -31,6 +46,7 @@ struct CompositorServiceHandle {
     CompositorClient clients[COMPOSITOR_SERVICE_CLIENT_MAX];
     u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE];
     u64 next_surface_id;
+    u64 next_buffer_id;
 };
 
 static void remove_client(CompositorServiceHandle service,
@@ -90,6 +106,58 @@ static CompositorSurface *find_free_surface(CompositorClient *client)
 
     for (index = 0; index < COMPOSITOR_SERVICE_SURFACE_MAX; ++index) {
         if (!client->surfaces[index].active) return &client->surfaces[index];
+    }
+    return NULL;
+}
+
+static void clear_buffer(CompositorBuffer *buffer)
+{
+    if (buffer->mapping.data != NULL) {
+        (void)memory_shared_unmap(&buffer->mapping);
+    }
+    if (buffer->fd >= 0) {
+        (void)close(buffer->fd);
+    }
+    buffer->active = false;
+    buffer->buffer_id = 0;
+    buffer->width = 0;
+    buffer->height = 0;
+    buffer->stride = 0;
+    buffer->pixel_format = 0;
+    buffer->byte_size = 0;
+    buffer->fd = -1;
+    buffer->mapping.data = NULL;
+    buffer->mapping.size = 0;
+}
+
+static void clear_client_buffers(CompositorClient *client)
+{
+    usize index;
+
+    for (index = 0; index < COMPOSITOR_SERVICE_BUFFER_MAX; ++index) {
+        clear_buffer(&client->buffers[index]);
+    }
+}
+
+static CompositorBuffer *find_buffer(CompositorClient *client, u64 buffer_id)
+{
+    usize index;
+
+    for (index = 0; index < COMPOSITOR_SERVICE_BUFFER_MAX; ++index) {
+        if (client->buffers[index].active &&
+            client->buffers[index].buffer_id == buffer_id) {
+            return &client->buffers[index];
+        }
+    }
+    return NULL;
+}
+
+static CompositorBuffer *find_free_buffer(CompositorClient *client)
+{
+    usize index;
+
+    for (index = 0; index < COMPOSITOR_SERVICE_BUFFER_MAX; ++index) {
+        if (!client->buffers[index].active) return &client->buffers[index];
     }
     return NULL;
 }
@@ -195,6 +263,95 @@ static ErrorCode handle_surface_destroy(CompositorServiceHandle service,
                       request.prefix.request_id, CORE_OK);
 }
 
+static ErrorCode send_buffer_import_result(CompositorServiceHandle service,
+                                           CompositorClient *client,
+                                           u64 request_id, ErrorCode error,
+                                           u64 buffer_id)
+{
+    u8 payload[32];
+    usize size;
+    GuiBufferImportResult response;
+    ErrorCode result;
+
+    response.result.error = error;
+    response.result.request_id = request_id;
+    response.buffer_id = error == CORE_OK ? buffer_id : 0;
+    result = gui_encode_buffer_import_result(
+        &response, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, client, GUI_SURFACE_BUFFER_IMPORT_RESULT,
+                         payload, size);
+}
+
+static ErrorCode handle_buffer_import(CompositorServiceHandle service,
+                                      CompositorClient *client,
+                                      IpcMessage *message)
+{
+    GuiBufferImportRequest request;
+    CompositorBuffer *buffer;
+    SharedMemoryMapping mapping = { NULL, 0 };
+    ErrorCode result = gui_decode_buffer_import(message, &request);
+
+    if (result != CORE_OK) return result;
+
+    buffer = find_free_buffer(client);
+    if (buffer == NULL) {
+        return send_buffer_import_result(service, client,
+                                         request.prefix.request_id,
+                                         CORE_OUT_OF_MEMORY, 0);
+    }
+    if (service->next_buffer_id == 0 || request.byte_size > (u64)USIZE_MAX) {
+        return send_buffer_import_result(service, client,
+                                         request.prefix.request_id,
+                                         CORE_OVERFLOW, 0);
+    }
+
+    result = memory_shared_map_readonly(message->descriptor,
+                                        (usize)request.byte_size, &mapping);
+    if (result != CORE_OK) {
+        return send_buffer_import_result(service, client,
+                                         request.prefix.request_id, result, 0);
+    }
+
+    buffer->active = true;
+    buffer->buffer_id = service->next_buffer_id++;
+    buffer->width = request.width;
+    buffer->height = request.height;
+    buffer->stride = request.stride;
+    buffer->pixel_format = request.pixel_format;
+    buffer->byte_size = request.byte_size;
+    buffer->fd = message->descriptor;
+    buffer->mapping = mapping;
+
+    /* Ownership of the received descriptor moves from IpcMessage to Buffer. */
+    message->descriptor = IPC_NO_DESCRIPTOR;
+
+    return send_buffer_import_result(service, client,
+                                     request.prefix.request_id, CORE_OK,
+                                     buffer->buffer_id);
+}
+
+static ErrorCode handle_buffer_destroy(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiBufferIdRequest request;
+    CompositorBuffer *buffer;
+    ErrorCode result = gui_decode_buffer_id_request(
+        message, GUI_SURFACE_BUFFER_DESTROY, &request);
+
+    if (result != CORE_OK) return result;
+    buffer = find_buffer(client, request.buffer_id);
+    if (buffer == NULL) {
+        return send_basic(service, client, GUI_SURFACE_BUFFER_DESTROY_RESULT,
+                          request.prefix.request_id, CORE_NOT_FOUND);
+    }
+
+    clear_buffer(buffer);
+    return send_basic(service, client, GUI_SURFACE_BUFFER_DESTROY_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
 static ErrorCode dispatch(CompositorServiceHandle service,
                           CompositorClient *client,
                           IpcMessage *message)
@@ -205,7 +362,9 @@ static ErrorCode dispatch(CompositorServiceHandle service,
     case GUI_SURFACE_DESTROY:
         return handle_surface_destroy(service, client, message);
     case GUI_SURFACE_BUFFER_IMPORT:
+        return handle_buffer_import(service, client, message);
     case GUI_SURFACE_BUFFER_DESTROY:
+        return handle_buffer_destroy(service, client, message);
     case GUI_SURFACE_ATTACH:
     case GUI_SURFACE_DAMAGE:
     case GUI_SURFACE_SET_OPAQUE:
@@ -230,6 +389,7 @@ static void remove_client(CompositorServiceHandle service,
     (void)eventloop_remove_source(service->loop, client->source);
     (void)ipc_connection_close(&client->connection);
     clear_client_surfaces(client);
+    clear_client_buffers(client);
     client->source = 0;
 }
 
@@ -268,6 +428,7 @@ static ErrorCode accept_clients(CompositorServiceHandle service)
             }
 
             clear_client_surfaces(&service->clients[index]);
+            clear_client_buffers(&service->clients[index]);
             service->clients[index].connection = connection;
             service->clients[index].source = source;
         }
@@ -370,8 +531,10 @@ ErrorCode compositor_service_create_config(
         service->clients[index].connection = NULL;
         service->clients[index].source = 0;
         clear_client_surfaces(&service->clients[index]);
+        clear_client_buffers(&service->clients[index]);
     }
     service->next_surface_id = 1;
+    service->next_buffer_id = 1;
     for (index = 0; index < COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE; ++index) {
         service->controller_token[index] = config->controller_token[index];
     }

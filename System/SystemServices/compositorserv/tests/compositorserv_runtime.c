@@ -4,6 +4,7 @@
 #include <compositorserv.h>
 #include <gui/protocol.h>
 #include <special/ipc.h>
+#include <sys/memory.h>
 
 static ErrorCode connect_client(const String *endpoint,
                                 CompositorServiceHandle service,
@@ -24,15 +25,24 @@ static ErrorCode connect_client(const String *endpoint,
     return state == IPC_CONNECTION_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
 }
 
-static ErrorCode send_message(IpcConnectionHandle client, IpcMessageType type,
-                              u8 *payload, usize size)
+static ErrorCode send_message_with_descriptor(IpcConnectionHandle client,
+                                              IpcMessageType type,
+                                              u8 *payload, usize size,
+                                              i32 descriptor)
 {
-    IpcMessage message = { type, 0, { payload, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, 0, { payload, size }, descriptor, 0 };
     bool pending;
     ErrorCode result = ipc_connection_send(client, &message);
 
     if (result != CORE_OK) return result;
     return ipc_connection_flush(client, &pending);
+}
+
+static ErrorCode send_message(IpcConnectionHandle client, IpcMessageType type,
+                              u8 *payload, usize size)
+{
+    return send_message_with_descriptor(client, type, payload, size,
+                                        IPC_NO_DESCRIPTOR);
 }
 
 static ErrorCode receive_message(CompositorServiceHandle service,
@@ -129,10 +139,85 @@ static void test_surface_create_destroy(void)
     EXPECT(47, string_destroy(&endpoint) == CORE_OK);
 }
 
+static void test_buffer_import_destroy(void)
+{
+    String endpoint;
+    CompositorServiceHandle service;
+    IpcConnectionHandle client;
+    u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE] = { 3 };
+    SharedMemory memory;
+    u8 payload[64];
+    usize size;
+    GuiBufferImportRequest import_request;
+    GuiBufferImportResult imported;
+    GuiBufferIdRequest destroy;
+    GuiBasicResult destroyed;
+    IpcMessage message;
+
+    EXPECT(60, string_from_c_str("/tmp/punos-compositorserv-buffer-test",
+                                 &endpoint) == CORE_OK);
+    EXPECT(61, compositor_service_create(&endpoint, controller_token, &service) ==
+               CORE_OK);
+    EXPECT(62, connect_client(&endpoint, service, &client) == CORE_OK);
+    EXPECT(63, memory_shared_create(64, &memory) == CORE_OK);
+
+    import_request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    import_request.prefix.request_id = 10;
+    import_request.width = 4;
+    import_request.height = 4;
+    import_request.stride = 16;
+    import_request.pixel_format = GUI_PIXEL_XRGB8888;
+    import_request.byte_size = 64;
+    EXPECT(64, gui_encode_buffer_import(&import_request,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(65, send_message_with_descriptor(client, GUI_SURFACE_BUFFER_IMPORT,
+        payload, size, memory.fd) == CORE_OK);
+    EXPECT(66, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(67, gui_decode_buffer_import_result(&message, &imported) == CORE_OK);
+    EXPECT(68, imported.result.error == CORE_OK);
+    EXPECT(69, imported.result.request_id == 10);
+    EXPECT(70, imported.buffer_id != 0);
+    EXPECT(71, ipc_message_destroy(&message) == CORE_OK);
+
+    destroy.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    destroy.prefix.request_id = 11;
+    destroy.buffer_id = imported.buffer_id;
+    EXPECT(72, gui_encode_buffer_id_request(&destroy,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(73, send_message(client, GUI_SURFACE_BUFFER_DESTROY, payload, size) ==
+               CORE_OK);
+    EXPECT(74, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(75, gui_decode_basic_result(&message, GUI_SURFACE_BUFFER_DESTROY_RESULT,
+                                       &destroyed) == CORE_OK);
+    EXPECT(76, destroyed.error == CORE_OK);
+    EXPECT(77, destroyed.request_id == 11);
+    EXPECT(78, ipc_message_destroy(&message) == CORE_OK);
+
+    /* Metadata is valid, but byte_size must exactly match the backing object. */
+    import_request.prefix.request_id = 12;
+    import_request.byte_size = 68;
+    EXPECT(79, gui_encode_buffer_import(&import_request,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(80, send_message_with_descriptor(client, GUI_SURFACE_BUFFER_IMPORT,
+        payload, size, memory.fd) == CORE_OK);
+    EXPECT(81, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(82, gui_decode_buffer_import_result(&message, &imported) == CORE_OK);
+    EXPECT(83, imported.result.error == CORE_INVALID_ARGUMENT);
+    EXPECT(84, imported.buffer_id == 0);
+    EXPECT(85, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(86, memory_shared_close(&memory) == CORE_OK);
+    EXPECT(87, ipc_connection_close(&client) == CORE_OK);
+    EXPECT(88, compositor_service_poll(service, 0) == CORE_OK);
+    EXPECT(89, compositor_service_close(&service) == CORE_OK);
+    EXPECT(90, string_destroy(&endpoint) == CORE_OK);
+}
+
 int main(void)
 {
     test_accept_connection();
     test_surface_create_destroy();
+    test_buffer_import_destroy();
     check_passed();
     return 0;
 }
