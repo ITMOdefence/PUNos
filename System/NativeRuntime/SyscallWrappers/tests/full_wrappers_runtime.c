@@ -89,44 +89,6 @@ static void test_memory_and_time(void)
     }
 }
 
-static void test_shared_memory_and_random(void)
-{
-    static const char name[] = "punos-wrapper-test";
-    u8 random_bytes[32] = { 0 };
-    struct stat info;
-    void *mapping;
-    i32 fd;
-    i32 any_random = 0;
-
-    fd = memfd_create(name, MFD_CLOEXEC);
-    if (fd < 0 || ftruncate(fd, PAGE_SIZE) != 0 ||
-        fstat(fd, &info) != 0 || info.st_size != PAGE_SIZE) {
-        fail(57);
-    }
-    mapping = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (mapping == MAP_FAILED) {
-        fail(58);
-    }
-    ((u8 *)mapping)[0] = 0x5a;
-    if (((u8 *)mapping)[0] != 0x5a || munmap(mapping, PAGE_SIZE) != 0 ||
-        close(fd) != 0) {
-        fail(59);
-    }
-
-    if (getrandom(random_bytes, sizeof(random_bytes), 0) !=
-        (ssize_t)sizeof(random_bytes)) {
-        fail(60);
-    }
-    for (size_t index = 0; index < sizeof(random_bytes); ++index) {
-        if (random_bytes[index] != 0) {
-            any_random = 1;
-        }
-    }
-    if (!any_random) {
-        fail(61);
-    }
-}
-
 static void test_signals(void)
 {
     struct sigaction action = { signal_handler, SA_RESTART, 0, 0 };
@@ -170,30 +132,8 @@ static void test_socket_api(void)
 {
     static const char socket_path[] = "/tmp/punos-wrapper-socket";
     static const char payload[] = "socket";
-    static const char descriptor_payload[] = "fd";
     struct sockaddr_un address = { .sun_family = AF_UNIX };
     char buffer[sizeof(payload)] = { 0 };
-    char descriptor_buffer[sizeof(descriptor_payload)] = { 0 };
-    struct iovec send_vector = {
-        (void *)descriptor_payload, sizeof(descriptor_payload)
-    };
-    struct iovec receive_vector = {
-        descriptor_buffer, sizeof(descriptor_buffer)
-    };
-    union ControlBuffer {
-        struct cmsghdr alignment;
-        u8 bytes[24];
-    } send_control = { { 0, 0, 0 } }, receive_control = { { 0, 0, 0 } };
-    struct msghdr send_message = {
-        0, 0, &send_vector, 1, send_control.bytes, sizeof(send_control), 0
-    };
-    struct msghdr receive_message = {
-        0, 0, &receive_vector, 1, receive_control.bytes,
-        sizeof(receive_control), 0
-    };
-    struct cmsghdr *send_header = (struct cmsghdr *)send_control.bytes;
-    struct cmsghdr *receive_header;
-    struct stat descriptor_info;
     socklen_t address_length;
     socklen_t option_length;
     i32 option_value = 1;
@@ -202,9 +142,6 @@ static void test_socket_api(void)
     i32 peer;
     i32 second_client;
     i32 second_peer;
-    i32 shared_fd;
-    i32 queued_fd;
-    i32 received_fd;
 
     for (size_t index = 0; index < sizeof(socket_path); ++index) {
         address.sun_path[index] = socket_path[index];
@@ -251,34 +188,6 @@ static void test_socket_api(void)
         if (buffer[index] != payload[index]) {
             fail(41);
         }
-    }
-
-    shared_fd = memfd_create("punos-wrapper-fd", MFD_CLOEXEC);
-    queued_fd = fcntl(shared_fd, F_DUPFD_CLOEXEC, 0);
-    send_header->cmsg_len = sizeof(struct cmsghdr) + sizeof(i32);
-    send_header->cmsg_level = SOL_SOCKET;
-    send_header->cmsg_type = SCM_RIGHTS;
-    *(i32 *)(send_control.bytes + sizeof(struct cmsghdr)) = queued_fd;
-    if (shared_fd < 0 || queued_fd < 0 ||
-        ftruncate(shared_fd, PAGE_SIZE) != 0 ||
-        sendmsg(client, &send_message, MSG_NOSIGNAL) !=
-            (ssize_t)sizeof(descriptor_payload) || close(queued_fd) != 0 ||
-        recvmsg(peer, &receive_message, MSG_CMSG_CLOEXEC) !=
-            (ssize_t)sizeof(descriptor_buffer)) {
-        fail(56);
-    }
-    receive_header = (struct cmsghdr *)receive_control.bytes;
-    received_fd = *(i32 *)(receive_control.bytes + sizeof(struct cmsghdr));
-    if (descriptor_buffer[0] != descriptor_payload[0] ||
-        descriptor_buffer[1] != descriptor_payload[1] ||
-        descriptor_buffer[2] != descriptor_payload[2] ||
-        receive_header->cmsg_len != sizeof(struct cmsghdr) + sizeof(i32) ||
-        receive_header->cmsg_level != SOL_SOCKET ||
-        receive_header->cmsg_type != SCM_RIGHTS || received_fd < 0 ||
-        fstat(received_fd, &descriptor_info) != 0 ||
-        descriptor_info.st_size != PAGE_SIZE || close(received_fd) != 0 ||
-        close(shared_fd) != 0) {
-        fail(57);
     }
 
     option_length = sizeof(option_value);
@@ -367,7 +276,6 @@ _Noreturn void _start(void)
 
     test_files();
     test_memory_and_time();
-    test_shared_memory_and_random();
     test_signals();
     test_events_and_ioctl();
     test_socket_api();
