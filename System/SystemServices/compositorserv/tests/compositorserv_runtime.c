@@ -578,6 +578,121 @@ static void test_software_renderer(void)
     EXPECT(222, pixel[0] == 40 && pixel[1] == 50 && pixel[2] == 60);
 }
 
+
+static void test_resource_cleanup(void)
+{
+    String endpoint;
+    CompositorServiceHandle service;
+    IpcConnectionHandle client;
+    u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE] = { 7 };
+    SharedMemory memory;
+    u8 payload[96];
+    usize size;
+    GuiRequestPrefix create = { GUI_PROTOCOL_VERSION, 300 };
+    GuiSurfaceCreateResult created;
+    GuiBufferImportRequest import_request;
+    GuiBufferImportResult imported;
+    GuiSurfaceAttachRequest attach;
+    GuiSurfaceIdRequest destroy_surface;
+    GuiBufferIdRequest destroy_buffer;
+    GuiBasicResult basic;
+    IpcMessage message;
+    bool reconnect_cleanup_ok = true;
+    usize iteration;
+
+    EXPECT(223, string_from_c_str("/tmp/punos-compositorserv-cleanup-test",
+                                  &endpoint) == CORE_OK);
+    EXPECT(224, compositor_service_create(&endpoint, controller_token, &service) ==
+                CORE_OK);
+    EXPECT(225, connect_client(&endpoint, service, &client) == CORE_OK);
+    EXPECT(226, memory_shared_create(64, &memory) == CORE_OK);
+
+    EXPECT(227, gui_encode_versioned_request(create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(228, send_message(client, GUI_SURFACE_CREATE, payload, size) == CORE_OK);
+    EXPECT(229, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(230, gui_decode_surface_create_result(&message, &created) == CORE_OK);
+    EXPECT(231, created.result.error == CORE_OK);
+    EXPECT(232, ipc_message_destroy(&message) == CORE_OK);
+
+    import_request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    import_request.prefix.request_id = 301;
+    import_request.width = 4;
+    import_request.height = 4;
+    import_request.stride = 16;
+    import_request.pixel_format = GUI_PIXEL_XRGB8888;
+    import_request.byte_size = 64;
+    EXPECT(233, gui_encode_buffer_import(&import_request,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(234, send_message_with_descriptor(client, GUI_SURFACE_BUFFER_IMPORT,
+        payload, size, memory.fd) == CORE_OK);
+    EXPECT(235, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(236, gui_decode_buffer_import_result(&message, &imported) == CORE_OK);
+    EXPECT(237, imported.result.error == CORE_OK);
+    EXPECT(238, ipc_message_destroy(&message) == CORE_OK);
+
+    attach.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    attach.prefix.request_id = 302;
+    attach.surface_id = created.surface_id;
+    attach.buffer_id = imported.buffer_id;
+    EXPECT(239, gui_encode_surface_attach(&attach,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(240, send_message(client, GUI_SURFACE_ATTACH, payload, size) == CORE_OK);
+
+    destroy_surface.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    destroy_surface.prefix.request_id = 303;
+    destroy_surface.surface_id = created.surface_id;
+    EXPECT(241, gui_encode_surface_id_request(&destroy_surface,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(242, send_message(client, GUI_SURFACE_DESTROY, payload, size) == CORE_OK);
+    EXPECT(243, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(244, gui_decode_basic_result(&message, GUI_SURFACE_DESTROY_RESULT,
+                                        &basic) == CORE_OK);
+    EXPECT(245, basic.error == CORE_OK);
+    EXPECT(246, ipc_message_destroy(&message) == CORE_OK);
+
+    /* Destroying a surface must release a pending buffer reservation. */
+    destroy_buffer.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    destroy_buffer.prefix.request_id = 304;
+    destroy_buffer.buffer_id = imported.buffer_id;
+    EXPECT(247, gui_encode_buffer_id_request(&destroy_buffer,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(248, send_message(client, GUI_SURFACE_BUFFER_DESTROY, payload, size) ==
+                CORE_OK);
+    EXPECT(249, receive_message(service, client, &message) == CORE_OK);
+    if (gui_decode_basic_result(&message, GUI_SURFACE_BUFFER_DESTROY_RESULT,
+                                &basic) != CORE_OK || basic.error != CORE_OK ||
+        ipc_message_destroy(&message) != CORE_OK) {
+        reconnect_cleanup_ok = false;
+    }
+
+    EXPECT(250, ipc_connection_close(&client) == CORE_OK);
+    EXPECT(251, compositor_service_poll(service, 0) == CORE_OK);
+
+    /* Reuse the same client slot more times than its buffer table capacity.
+     * Every disconnect must unmap/close imported buffers and reset the table. */
+    for (iteration = 0; iteration < 70 && reconnect_cleanup_ok; ++iteration) {
+        import_request.prefix.request_id = 400 + iteration;
+        if (connect_client(&endpoint, service, &client) != CORE_OK ||
+            gui_encode_buffer_import(&import_request,
+                (Bytes){ payload, sizeof(payload) }, &size) != CORE_OK ||
+            send_message_with_descriptor(client, GUI_SURFACE_BUFFER_IMPORT,
+                payload, size, memory.fd) != CORE_OK ||
+            receive_message(service, client, &message) != CORE_OK ||
+            gui_decode_buffer_import_result(&message, &imported) != CORE_OK ||
+            imported.result.error != CORE_OK ||
+            ipc_message_destroy(&message) != CORE_OK ||
+            ipc_connection_close(&client) != CORE_OK ||
+            compositor_service_poll(service, 0) != CORE_OK) {
+            reconnect_cleanup_ok = false;
+        }
+    }
+    EXPECT(252, reconnect_cleanup_ok);
+    EXPECT(253, memory_shared_close(&memory) == CORE_OK);
+    EXPECT(254, compositor_service_close(&service) == CORE_OK);
+    EXPECT(255, string_destroy(&endpoint) == CORE_OK);
+}
+
 int main(void)
 {
     test_accept_connection();
@@ -586,6 +701,7 @@ int main(void)
     test_surface_pending_commit();
     test_scene_controller_and_graph();
     test_software_renderer();
+    test_resource_cleanup();
     check_passed();
     return 0;
 }

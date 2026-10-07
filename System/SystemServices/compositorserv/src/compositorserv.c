@@ -284,6 +284,25 @@ static CompositorBuffer *find_buffer_any(CompositorClient *client,
     return NULL;
 }
 
+static void release_surface_pending_buffer(CompositorClient *client,
+                                           CompositorSurface *surface)
+{
+    CompositorBuffer *buffer;
+
+    if (client == NULL || surface == NULL || !surface->pending_attach_set ||
+        surface->pending_buffer_id == 0) {
+        return;
+    }
+    buffer = find_buffer_any(client, surface->pending_buffer_id);
+    if (buffer == NULL || buffer->state != COMPOSITOR_BUFFER_PENDING ||
+        buffer->surface_id != surface->surface_id) {
+        return;
+    }
+    buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
+    buffer->surface_id = 0;
+    if (buffer->destroy_pending) clear_buffer(buffer);
+}
+
 static CompositorBuffer *find_free_buffer(CompositorClient *client)
 {
     usize index;
@@ -393,6 +412,22 @@ static void clear_pending_present(CompositorServiceHandle service)
     service->pending_present.frame.reserved = 0;
     service->pending_present.frame.data = NULL;
     service->pending_present.frame.size = 0;
+}
+
+static void drop_present_refs_for_client(CompositorServiceHandle service,
+                                         CompositorClient *client)
+{
+    usize read_index;
+    usize write_index = 0;
+
+    if (!service->pending_present.active || client == NULL) return;
+    for (read_index = 0; read_index < service->pending_present.ref_count;
+         ++read_index) {
+        CompositorPresentRef ref = service->pending_present.refs[read_index];
+        if (ref.owner == client) continue;
+        service->pending_present.refs[write_index++] = ref;
+    }
+    service->pending_present.ref_count = (u16)write_index;
 }
 
 static ErrorCode display_update_interest(CompositorServiceHandle service,
@@ -1120,13 +1155,33 @@ static ErrorCode handle_surface_destroy(CompositorServiceHandle service,
                           request.prefix.request_id, CORE_NOT_FOUND);
     }
 
-    result = remove_scene_surface(service, surface->surface_id,
-                                  GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED);
-    clear_surface(surface);
-    service->frame_dirty = true;
-    if (result != CORE_OK) return result;
-    return send_basic(service, client, GUI_SURFACE_DESTROY_RESULT,
-                      request.prefix.request_id, CORE_OK);
+    {
+        CompositorBuffer *current_buffer = NULL;
+        ErrorCode response_result;
+
+        release_surface_pending_buffer(client, surface);
+        if (surface->current_buffer_set) {
+            current_buffer = find_buffer_any(client, surface->current_buffer_id);
+        }
+        result = remove_scene_surface(service, surface->surface_id,
+                                      GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED);
+        clear_surface(surface);
+        service->frame_dirty = true;
+        if (result != CORE_OK) return result;
+
+        response_result = send_basic(service, client,
+                                     GUI_SURFACE_DESTROY_RESULT,
+                                     request.prefix.request_id, CORE_OK);
+        if (response_result != CORE_OK) return response_result;
+
+        if (current_buffer != NULL &&
+            current_buffer->state == COMPOSITOR_BUFFER_IN_USE) {
+            ErrorCode release_result = send_buffer_released(service, client,
+                                                             current_buffer);
+            if (release_result != CORE_OK) return release_result;
+        }
+        return CORE_OK;
+    }
 }
 
 static ErrorCode send_buffer_import_result(CompositorServiceHandle service,
@@ -1751,17 +1806,26 @@ static ErrorCode dispatch(CompositorServiceHandle service,
 static void remove_client(CompositorServiceHandle service,
                           CompositorClient *client)
 {
+    usize index;
+
     if (service->controller_client == client) {
         service->controller_client = NULL;
         clear_scene(service);
     } else {
         remove_scene_for_client(service, client);
     }
+    drop_present_refs_for_client(service, client);
+    for (index = 0; index < COMPOSITOR_SERVICE_SURFACE_MAX; ++index) {
+        if (client->surfaces[index].active) {
+            release_surface_pending_buffer(client, &client->surfaces[index]);
+        }
+    }
     (void)eventloop_remove_source(service->loop, client->source);
     (void)ipc_connection_close(&client->connection);
     clear_client_surfaces(client);
     clear_client_buffers(client);
     client->source = 0;
+    client->next_event_serial = 1;
     service->frame_dirty = true;
 }
 
