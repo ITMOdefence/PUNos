@@ -213,11 +213,146 @@ static void test_buffer_import_destroy(void)
     EXPECT(90, string_destroy(&endpoint) == CORE_OK);
 }
 
+
+static void test_surface_pending_commit(void)
+{
+    String endpoint;
+    CompositorServiceHandle service;
+    IpcConnectionHandle client;
+    u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE] = { 4 };
+    SharedMemory memory;
+    u8 payload[128];
+    usize size;
+    IpcMessage message;
+    GuiRequestPrefix create = { GUI_PROTOCOL_VERSION, 20 };
+    GuiSurfaceCreateResult created;
+    GuiBufferImportRequest import_request;
+    GuiBufferImportResult imported;
+    GuiSurfaceAttachRequest attach;
+    GuiSurfaceDamageRequest damage;
+    GuiSurfaceRegionRequest opaque;
+    GuiSurfaceFrameRequest frame;
+    GuiSurfaceCommitRequest commit;
+    GuiBasicResult committed;
+
+    EXPECT(100, string_from_c_str("/tmp/punos-compositorserv-commit-test",
+                                  &endpoint) == CORE_OK);
+    EXPECT(101, compositor_service_create(&endpoint, controller_token, &service) ==
+                CORE_OK);
+    EXPECT(102, connect_client(&endpoint, service, &client) == CORE_OK);
+
+    EXPECT(103, gui_encode_versioned_request(create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(104, send_message(client, GUI_SURFACE_CREATE, payload, size) == CORE_OK);
+    EXPECT(105, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(106, gui_decode_surface_create_result(&message, &created) == CORE_OK);
+    EXPECT(107, created.result.error == CORE_OK);
+    EXPECT(108, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(109, memory_shared_create(64, &memory) == CORE_OK);
+    import_request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    import_request.prefix.request_id = 21;
+    import_request.width = 4;
+    import_request.height = 4;
+    import_request.stride = 16;
+    import_request.pixel_format = GUI_PIXEL_ARGB8888;
+    import_request.byte_size = 64;
+    EXPECT(110, gui_encode_buffer_import(&import_request,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(111, send_message_with_descriptor(client, GUI_SURFACE_BUFFER_IMPORT,
+        payload, size, memory.fd) == CORE_OK);
+    EXPECT(112, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(113, gui_decode_buffer_import_result(&message, &imported) == CORE_OK);
+    EXPECT(114, imported.result.error == CORE_OK);
+    EXPECT(115, ipc_message_destroy(&message) == CORE_OK);
+
+    attach.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    attach.prefix.request_id = 22;
+    attach.surface_id = created.surface_id;
+    attach.buffer_id = imported.buffer_id;
+    EXPECT(116, gui_encode_surface_attach(&attach,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(117, send_message(client, GUI_SURFACE_ATTACH, payload, size) == CORE_OK);
+
+    damage.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    damage.prefix.request_id = 23;
+    damage.surface_id = created.surface_id;
+    damage.flags = GUI_FULL_DAMAGE;
+    damage.rect_count = 0;
+    EXPECT(118, gui_encode_surface_damage(&damage,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(119, send_message(client, GUI_SURFACE_DAMAGE, payload, size) == CORE_OK);
+
+    opaque.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    opaque.prefix.request_id = 24;
+    opaque.surface_id = created.surface_id;
+    opaque.rect_count = 1;
+    opaque.rects[0] = (GuiRect){ 0, 0, 2, 2 };
+    EXPECT(120, gui_encode_surface_region(&opaque,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(121, send_message(client, GUI_SURFACE_SET_OPAQUE, payload, size) == CORE_OK);
+
+    frame.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    frame.prefix.request_id = 25;
+    frame.surface_id = created.surface_id;
+    EXPECT(122, gui_encode_surface_frame_request(&frame,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(123, send_message(client, GUI_SURFACE_REQUEST_FRAME, payload, size) ==
+                CORE_OK);
+
+    commit.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    commit.prefix.request_id = 26;
+    commit.surface_id = created.surface_id;
+    commit.commit_serial = 1;
+    EXPECT(124, gui_encode_surface_commit(&commit,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(125, send_message(client, GUI_SURFACE_COMMIT, payload, size) == CORE_OK);
+    EXPECT(126, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(127, gui_decode_basic_result(&message, GUI_SURFACE_COMMIT_RESULT,
+                                        &committed) == CORE_OK);
+    EXPECT(128, committed.error == CORE_OK);
+    EXPECT(129, committed.request_id == 26);
+    EXPECT(130, ipc_message_destroy(&message) == CORE_OK);
+
+    commit.prefix.request_id = 27;
+    EXPECT(131, gui_encode_surface_commit(&commit,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(132, send_message(client, GUI_SURFACE_COMMIT, payload, size) == CORE_OK);
+    EXPECT(133, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(134, gui_decode_basic_result(&message, GUI_SURFACE_COMMIT_RESULT,
+                                        &committed) == CORE_OK);
+    EXPECT(135, committed.error == CORE_INVALID_STATE);
+    EXPECT(136, ipc_message_destroy(&message) == CORE_OK);
+
+    attach.prefix.request_id = 28;
+    attach.buffer_id = 0;
+    EXPECT(137, gui_encode_surface_attach(&attach,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(138, send_message(client, GUI_SURFACE_ATTACH, payload, size) == CORE_OK);
+    commit.prefix.request_id = 29;
+    commit.commit_serial = 2;
+    EXPECT(139, gui_encode_surface_commit(&commit,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(140, send_message(client, GUI_SURFACE_COMMIT, payload, size) == CORE_OK);
+    EXPECT(141, receive_message(service, client, &message) == CORE_OK);
+    EXPECT(142, gui_decode_basic_result(&message, GUI_SURFACE_COMMIT_RESULT,
+                                        &committed) == CORE_OK);
+    EXPECT(143, committed.error == CORE_OK);
+    EXPECT(144, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(145, memory_shared_close(&memory) == CORE_OK);
+    EXPECT(146, ipc_connection_close(&client) == CORE_OK);
+    EXPECT(147, compositor_service_poll(service, 0) == CORE_OK);
+    EXPECT(148, compositor_service_close(&service) == CORE_OK);
+    EXPECT(149, string_destroy(&endpoint) == CORE_OK);
+}
+
 int main(void)
 {
     test_accept_connection();
     test_surface_create_destroy();
     test_buffer_import_destroy();
+    test_surface_pending_commit();
     check_passed();
     return 0;
 }

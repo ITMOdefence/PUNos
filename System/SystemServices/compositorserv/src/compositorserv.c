@@ -17,10 +17,41 @@ typedef struct CompositorSurface {
     bool active;
     u64 surface_id;
     u8 bind_token[GUI_SURFACE_BIND_TOKEN_SIZE];
+
+    bool pending_attach_set;
+    u64 pending_buffer_id;
+    bool current_buffer_set;
+    u64 current_buffer_id;
+
+    bool pending_full_damage;
+    u16 pending_damage_count;
+    GuiRect pending_damage[GUI_MAX_DAMAGE_RECTS];
+
+    bool pending_opaque_set;
+    u16 pending_opaque_count;
+    GuiRect pending_opaque[GUI_MAX_DAMAGE_RECTS];
+    u16 current_opaque_count;
+    GuiRect current_opaque[GUI_MAX_DAMAGE_RECTS];
+
+    bool pending_frame;
+    u64 pending_frame_request_id;
+    bool committed_frame;
+    u64 committed_frame_request_id;
+    u64 committed_frame_serial;
+
+    u64 last_commit_serial;
+    ErrorCode pending_error;
 } CompositorSurface;
+
+typedef enum CompositorBufferState {
+    COMPOSITOR_BUFFER_AVAILABLE = 0,
+    COMPOSITOR_BUFFER_PENDING = 1,
+    COMPOSITOR_BUFFER_IN_USE = 2
+} CompositorBufferState;
 
 typedef struct CompositorBuffer {
     bool active;
+    bool destroy_pending;
     u64 buffer_id;
     u32 width;
     u32 height;
@@ -29,6 +60,8 @@ typedef struct CompositorBuffer {
     u64 byte_size;
     i32 fd;
     SharedMemoryMapping mapping;
+    CompositorBufferState state;
+    u64 surface_id;
 } CompositorBuffer;
 
 typedef struct CompositorClient {
@@ -75,6 +108,27 @@ static void clear_surface(CompositorSurface *surface)
     for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
         surface->bind_token[index] = 0;
     }
+    surface->pending_attach_set = false;
+    surface->pending_buffer_id = 0;
+    surface->current_buffer_set = false;
+    surface->current_buffer_id = 0;
+    surface->pending_full_damage = false;
+    surface->pending_damage_count = 0;
+    surface->pending_opaque_set = false;
+    surface->pending_opaque_count = 0;
+    surface->current_opaque_count = 0;
+    surface->pending_frame = false;
+    surface->pending_frame_request_id = 0;
+    surface->committed_frame = false;
+    surface->committed_frame_request_id = 0;
+    surface->committed_frame_serial = 0;
+    surface->last_commit_serial = 0;
+    surface->pending_error = CORE_OK;
+    for (index = 0; index < GUI_MAX_DAMAGE_RECTS; ++index) {
+        surface->pending_damage[index] = (GuiRect){ 0, 0, 0, 0 };
+        surface->pending_opaque[index] = (GuiRect){ 0, 0, 0, 0 };
+        surface->current_opaque[index] = (GuiRect){ 0, 0, 0, 0 };
+    }
 }
 
 static void clear_client_surfaces(CompositorClient *client)
@@ -119,6 +173,7 @@ static void clear_buffer(CompositorBuffer *buffer)
         (void)close(buffer->fd);
     }
     buffer->active = false;
+    buffer->destroy_pending = false;
     buffer->buffer_id = 0;
     buffer->width = 0;
     buffer->height = 0;
@@ -128,6 +183,8 @@ static void clear_buffer(CompositorBuffer *buffer)
     buffer->fd = -1;
     buffer->mapping.data = NULL;
     buffer->mapping.size = 0;
+    buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
+    buffer->surface_id = 0;
 }
 
 static void clear_client_buffers(CompositorClient *client)
@@ -145,6 +202,7 @@ static CompositorBuffer *find_buffer(CompositorClient *client, u64 buffer_id)
 
     for (index = 0; index < COMPOSITOR_SERVICE_BUFFER_MAX; ++index) {
         if (client->buffers[index].active &&
+            !client->buffers[index].destroy_pending &&
             client->buffers[index].buffer_id == buffer_id) {
             return &client->buffers[index];
         }
@@ -314,6 +372,7 @@ static ErrorCode handle_buffer_import(CompositorServiceHandle service,
     }
 
     buffer->active = true;
+    buffer->destroy_pending = false;
     buffer->buffer_id = service->next_buffer_id++;
     buffer->width = request.width;
     buffer->height = request.height;
@@ -322,6 +381,8 @@ static ErrorCode handle_buffer_import(CompositorServiceHandle service,
     buffer->byte_size = request.byte_size;
     buffer->fd = message->descriptor;
     buffer->mapping = mapping;
+    buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
+    buffer->surface_id = 0;
 
     /* Ownership of the received descriptor moves from IpcMessage to Buffer. */
     message->descriptor = IPC_NO_DESCRIPTOR;
@@ -347,8 +408,292 @@ static ErrorCode handle_buffer_destroy(CompositorServiceHandle service,
                           request.prefix.request_id, CORE_NOT_FOUND);
     }
 
-    clear_buffer(buffer);
+    if (buffer->state == COMPOSITOR_BUFFER_AVAILABLE) {
+        clear_buffer(buffer);
+    } else {
+        /* The id becomes invalid immediately; storage stays until release. */
+        buffer->destroy_pending = true;
+    }
     return send_basic(service, client, GUI_SURFACE_BUFFER_DESTROY_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+
+static CompositorBuffer *surface_effective_buffer(CompositorClient *client,
+                                                  CompositorSurface *surface)
+{
+    u64 buffer_id;
+
+    if (surface->pending_attach_set) {
+        buffer_id = surface->pending_buffer_id;
+    } else if (surface->current_buffer_set) {
+        buffer_id = surface->current_buffer_id;
+    } else {
+        return NULL;
+    }
+    if (buffer_id == 0) return NULL;
+    return find_buffer(client, buffer_id);
+}
+
+static bool rect_inside_buffer(const GuiRect *rect,
+                               const CompositorBuffer *buffer)
+{
+    u64 right;
+    u64 bottom;
+
+    if (rect->x < 0 || rect->y < 0) return false;
+    right = (u64)(u32)rect->x + (u64)rect->width;
+    bottom = (u64)(u32)rect->y + (u64)rect->height;
+    return right <= (u64)buffer->width && bottom <= (u64)buffer->height;
+}
+
+static void release_pending_reservation(CompositorClient *client,
+                                        CompositorSurface *surface)
+{
+    CompositorBuffer *buffer;
+
+    if (!surface->pending_attach_set || surface->pending_buffer_id == 0) return;
+    buffer = find_buffer(client, surface->pending_buffer_id);
+    if (buffer != NULL && buffer->state == COMPOSITOR_BUFFER_PENDING &&
+        buffer->surface_id == surface->surface_id) {
+        buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
+        buffer->surface_id = 0;
+    }
+}
+
+static ErrorCode handle_surface_attach(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiSurfaceAttachRequest request;
+    CompositorSurface *surface;
+    CompositorBuffer *buffer;
+    ErrorCode result = gui_decode_surface_attach(message, &request);
+
+    (void)service;
+    if (result != CORE_OK) return result;
+    surface = find_surface(client, request.surface_id);
+    if (surface == NULL) return CORE_NOT_FOUND;
+
+    release_pending_reservation(client, surface);
+    surface->pending_attach_set = true;
+    surface->pending_buffer_id = request.buffer_id;
+
+    if (request.buffer_id == 0) return CORE_OK;
+    buffer = find_buffer(client, request.buffer_id);
+    if (buffer == NULL) {
+        surface->pending_error = CORE_NOT_FOUND;
+        return CORE_OK;
+    }
+    if (buffer->state != COMPOSITOR_BUFFER_AVAILABLE) {
+        surface->pending_error = CORE_INVALID_STATE;
+        return CORE_OK;
+    }
+    buffer->state = COMPOSITOR_BUFFER_PENDING;
+    buffer->surface_id = surface->surface_id;
+    return CORE_OK;
+}
+
+static ErrorCode handle_surface_damage(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiSurfaceDamageRequest request;
+    CompositorSurface *surface;
+    CompositorBuffer *buffer;
+    usize index;
+    ErrorCode result = gui_decode_surface_damage(message, &request);
+
+    (void)service;
+    if (result != CORE_OK) return result;
+    surface = find_surface(client, request.surface_id);
+    if (surface == NULL) return CORE_NOT_FOUND;
+    buffer = surface_effective_buffer(client, surface);
+    if (buffer == NULL) {
+        surface->pending_error = CORE_INVALID_STATE;
+        return CORE_OK;
+    }
+    for (index = 0; index < request.rect_count; ++index) {
+        if (!rect_inside_buffer(&request.rects[index], buffer)) {
+            surface->pending_error = CORE_INVALID_ARGUMENT;
+            return CORE_OK;
+        }
+    }
+    if ((request.flags & GUI_FULL_DAMAGE) != 0) {
+        surface->pending_full_damage = true;
+        surface->pending_damage_count = 0;
+        return CORE_OK;
+    }
+    if (surface->pending_full_damage) return CORE_OK;
+    if ((usize)surface->pending_damage_count + (usize)request.rect_count >
+        GUI_MAX_DAMAGE_RECTS) {
+        surface->pending_full_damage = true;
+        surface->pending_damage_count = 0;
+        return CORE_OK;
+    }
+    for (index = 0; index < request.rect_count; ++index) {
+        surface->pending_damage[surface->pending_damage_count++] =
+            request.rects[index];
+    }
+    return CORE_OK;
+}
+
+static ErrorCode handle_surface_opaque(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiSurfaceRegionRequest request;
+    CompositorSurface *surface;
+    CompositorBuffer *buffer;
+    usize index;
+    ErrorCode result = gui_decode_surface_region(message, &request);
+
+    (void)service;
+    if (result != CORE_OK) return result;
+    surface = find_surface(client, request.surface_id);
+    if (surface == NULL) return CORE_NOT_FOUND;
+    buffer = surface_effective_buffer(client, surface);
+    if (buffer == NULL && request.rect_count != 0) {
+        surface->pending_error = CORE_INVALID_STATE;
+        return CORE_OK;
+    }
+    for (index = 0; index < request.rect_count; ++index) {
+        if (!rect_inside_buffer(&request.rects[index], buffer)) {
+            surface->pending_error = CORE_INVALID_ARGUMENT;
+            return CORE_OK;
+        }
+    }
+    surface->pending_opaque_set = true;
+    surface->pending_opaque_count = request.rect_count;
+    for (index = 0; index < request.rect_count; ++index) {
+        surface->pending_opaque[index] = request.rects[index];
+    }
+    return CORE_OK;
+}
+
+static ErrorCode handle_surface_frame_request(CompositorServiceHandle service,
+                                              CompositorClient *client,
+                                              const IpcMessage *message)
+{
+    GuiSurfaceFrameRequest request;
+    CompositorSurface *surface;
+    ErrorCode result = gui_decode_surface_frame_request(message, &request);
+
+    (void)service;
+    if (result != CORE_OK) return result;
+    surface = find_surface(client, request.surface_id);
+    if (surface == NULL) return CORE_NOT_FOUND;
+    if (surface->pending_frame) {
+        surface->pending_error = CORE_INVALID_STATE;
+        return CORE_OK;
+    }
+    surface->pending_frame = true;
+    surface->pending_frame_request_id = request.prefix.request_id;
+    return CORE_OK;
+}
+
+static ErrorCode handle_surface_commit(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiSurfaceCommitRequest request;
+    CompositorSurface *surface;
+    CompositorBuffer *new_buffer = NULL;
+    CompositorBuffer *old_buffer = NULL;
+    ErrorCode error = CORE_OK;
+    usize index;
+    ErrorCode result = gui_decode_surface_commit(message, &request);
+
+    if (result != CORE_OK) return result;
+    surface = find_surface(client, request.surface_id);
+    if (surface == NULL) {
+        return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
+                          request.prefix.request_id, CORE_NOT_FOUND);
+    }
+    if (request.commit_serial <= surface->last_commit_serial) {
+        error = CORE_INVALID_STATE;
+    } else if (surface->pending_error != CORE_OK) {
+        error = surface->pending_error;
+    } else if (surface->pending_frame && surface->committed_frame) {
+        error = CORE_WOULD_BLOCK;
+    }
+
+    if (error != CORE_OK) {
+        surface->pending_error = CORE_OK;
+        surface->pending_frame = false;
+        surface->pending_frame_request_id = 0;
+        return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
+                          request.prefix.request_id, error);
+    }
+
+    if (surface->pending_attach_set && surface->pending_buffer_id != 0) {
+        new_buffer = find_buffer(client, surface->pending_buffer_id);
+        if (new_buffer == NULL || new_buffer->state != COMPOSITOR_BUFFER_PENDING ||
+            new_buffer->surface_id != surface->surface_id) {
+            surface->pending_error = CORE_INVALID_STATE;
+            return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
+                              request.prefix.request_id, CORE_INVALID_STATE);
+        }
+    }
+
+    if (surface->current_buffer_set) {
+        old_buffer = find_buffer(client, surface->current_buffer_id);
+        if (old_buffer == NULL) {
+            /* A destroyed in-use buffer is intentionally hidden by find_buffer. */
+            usize buffer_index;
+            for (buffer_index = 0; buffer_index < COMPOSITOR_SERVICE_BUFFER_MAX;
+                 ++buffer_index) {
+                CompositorBuffer *candidate = &client->buffers[buffer_index];
+                if (candidate->active &&
+                    candidate->buffer_id == surface->current_buffer_id) {
+                    old_buffer = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (surface->pending_attach_set) {
+        if (old_buffer != NULL && old_buffer != new_buffer &&
+            old_buffer->surface_id == surface->surface_id) {
+            old_buffer->surface_id = 0;
+        }
+        if (new_buffer == NULL) {
+            surface->current_buffer_set = false;
+            surface->current_buffer_id = 0;
+        } else {
+            new_buffer->state = COMPOSITOR_BUFFER_IN_USE;
+            new_buffer->surface_id = surface->surface_id;
+            surface->current_buffer_set = true;
+            surface->current_buffer_id = new_buffer->buffer_id;
+        }
+    }
+
+    if (surface->pending_opaque_set) {
+        surface->current_opaque_count = surface->pending_opaque_count;
+        for (index = 0; index < surface->pending_opaque_count; ++index) {
+            surface->current_opaque[index] = surface->pending_opaque[index];
+        }
+    }
+
+    if (surface->pending_frame) {
+        surface->committed_frame = true;
+        surface->committed_frame_request_id = surface->pending_frame_request_id;
+        surface->committed_frame_serial = request.commit_serial;
+    }
+
+    surface->last_commit_serial = request.commit_serial;
+    surface->pending_attach_set = false;
+    surface->pending_buffer_id = 0;
+    surface->pending_full_damage = false;
+    surface->pending_damage_count = 0;
+    surface->pending_opaque_set = false;
+    surface->pending_opaque_count = 0;
+    surface->pending_frame = false;
+    surface->pending_frame_request_id = 0;
+    surface->pending_error = CORE_OK;
+
+    return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
 
@@ -366,10 +711,15 @@ static ErrorCode dispatch(CompositorServiceHandle service,
     case GUI_SURFACE_BUFFER_DESTROY:
         return handle_buffer_destroy(service, client, message);
     case GUI_SURFACE_ATTACH:
+        return handle_surface_attach(service, client, message);
     case GUI_SURFACE_DAMAGE:
+        return handle_surface_damage(service, client, message);
     case GUI_SURFACE_SET_OPAQUE:
+        return handle_surface_opaque(service, client, message);
     case GUI_SURFACE_REQUEST_FRAME:
+        return handle_surface_frame_request(service, client, message);
     case GUI_SURFACE_COMMIT:
+        return handle_surface_commit(service, client, message);
     case GUI_COMPOSITOR_BIND_CONTROLLER:
     case GUI_SCENE_BIND_WINDOW:
     case GUI_SCENE_SET_GEOMETRY:
