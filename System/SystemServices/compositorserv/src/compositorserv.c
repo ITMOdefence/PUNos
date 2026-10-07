@@ -7,6 +7,8 @@
 #include <sys/random.h>
 #include <punos/syscall/syscall.h>
 
+#include "renderer.h"
+
 #define COMPOSITOR_SERVICE_CLIENT_MAX ((usize)32)
 #define COMPOSITOR_SERVICE_EVENT_MAX ((usize)64)
 #define COMPOSITOR_SERVICE_SURFACE_MAX ((usize)64)
@@ -89,6 +91,20 @@ typedef struct CompositorSceneNode {
     u64 display_id;
 } CompositorSceneNode;
 
+typedef struct CompositorPresentRef {
+    CompositorClient *owner;
+    u64 surface_id;
+    u64 buffer_id;
+} CompositorPresentRef;
+
+typedef struct CompositorPendingPresent {
+    bool active;
+    u64 request_id;
+    SharedMemory frame;
+    u16 ref_count;
+    CompositorPresentRef refs[COMPOSITOR_SERVICE_SCENE_MAX];
+} CompositorPendingPresent;
+
 typedef enum CompositorDisplayState {
     COMPOSITOR_DISPLAY_DISABLED = 0,
     COMPOSITOR_DISPLAY_CONNECTING = 1,
@@ -117,6 +133,8 @@ struct CompositorServiceHandle {
     GuiDisplayInfo display_info;
     bool display_info_valid;
     u64 next_display_request_id;
+    bool frame_dirty;
+    CompositorPendingPresent pending_present;
 };
 
 static void remove_client(CompositorServiceHandle service,
@@ -247,6 +265,20 @@ static CompositorBuffer *find_buffer(CompositorClient *client, u64 buffer_id)
     return NULL;
 }
 
+static CompositorBuffer *find_buffer_any(CompositorClient *client,
+                                         u64 buffer_id)
+{
+    usize index;
+
+    for (index = 0; index < COMPOSITOR_SERVICE_BUFFER_MAX; ++index) {
+        if (client->buffers[index].active &&
+            client->buffers[index].buffer_id == buffer_id) {
+            return &client->buffers[index];
+        }
+    }
+    return NULL;
+}
+
 static CompositorBuffer *find_free_buffer(CompositorClient *client)
 {
     usize index;
@@ -344,6 +376,20 @@ static bool token_equal(const u8 *a, const u8 *b, usize size)
     return difference == 0;
 }
 
+static void clear_pending_present(CompositorServiceHandle service)
+{
+    if (service->pending_present.active) {
+        (void)memory_shared_close(&service->pending_present.frame);
+    }
+    service->pending_present.active = false;
+    service->pending_present.request_id = 0;
+    service->pending_present.ref_count = 0;
+    service->pending_present.frame.fd = -1;
+    service->pending_present.frame.reserved = 0;
+    service->pending_present.frame.data = NULL;
+    service->pending_present.frame.size = 0;
+}
+
 static ErrorCode display_update_interest(CompositorServiceHandle service,
                                          bool writable)
 {
@@ -357,6 +403,22 @@ static ErrorCode display_queue(CompositorServiceHandle service,
                                IpcMessageType type, u8 *data, usize size)
 {
     IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    bool pending;
+    ErrorCode result;
+
+    if (service->display_connection == NULL) return CORE_INVALID_STATE;
+    result = ipc_connection_send(service->display_connection, &message);
+    if (result != CORE_OK) return result;
+    result = ipc_connection_flush(service->display_connection, &pending);
+    if (result != CORE_OK) return result;
+    return display_update_interest(service, pending);
+}
+
+static ErrorCode display_queue_descriptor(CompositorServiceHandle service,
+                                          IpcMessageType type, u8 *data,
+                                          usize size, i32 descriptor)
+{
+    IpcMessage message = { type, 0, { data, size }, descriptor, 0 };
     bool pending;
     ErrorCode result;
 
@@ -413,8 +475,196 @@ static ErrorCode display_send_list(CompositorServiceHandle service)
     return result;
 }
 
+static bool scene_targets_display(const CompositorSceneNode *node,
+                                  const GuiDisplayInfo *display)
+{
+    if (!node->active || node->visibility != GUI_SCENE_VISIBLE ||
+        !node->geometry_set) {
+        return false;
+    }
+    return node->display_id == 0 || node->display_id == display->display_id;
+}
+
+static i32 scene_order_compare(const CompositorSceneNode *left,
+                               const CompositorSceneNode *right)
+{
+    if (left->layer < right->layer) return -1;
+    if (left->layer > right->layer) return 1;
+    if (left->above_window_id == right->window_id) return 1;
+    if (right->above_window_id == left->window_id) return -1;
+    if (left->window_id < right->window_id) return -1;
+    if (left->window_id > right->window_id) return 1;
+    return 0;
+}
+
+static void sort_scene_nodes(CompositorSceneNode **nodes, usize count)
+{
+    usize index;
+    for (index = 1; index < count; ++index) {
+        CompositorSceneNode *value = nodes[index];
+        usize position = index;
+        while (position != 0 &&
+               scene_order_compare(nodes[position - 1], value) > 0) {
+            nodes[position] = nodes[position - 1];
+            --position;
+        }
+        nodes[position] = value;
+    }
+}
+
+static ErrorCode compose_output_frame(CompositorServiceHandle service,
+                                      SharedMemory *out_frame,
+                                      CompositorPresentRef *out_refs,
+                                      u16 *out_ref_count)
+{
+    CompositorSceneNode *nodes[COMPOSITOR_SERVICE_SCENE_MAX];
+    CompositorRenderLayer layers[COMPOSITOR_SERVICE_SCENE_MAX];
+    CompositorRenderTarget target;
+    u32 width;
+    u32 height;
+    usize byte_size;
+    usize node_count = 0;
+    usize layer_count = 0;
+    usize index;
+    ErrorCode result;
+
+    if (!service->display_info_valid || out_frame == NULL ||
+        out_refs == NULL || out_ref_count == NULL) {
+        return CORE_INVALID_STATE;
+    }
+    width = service->display_info.current_mode.width_px;
+    height = service->display_info.current_mode.height_px;
+    if (width == 0 || height == 0 ||
+        (service->display_info.flags & GUI_DISPLAY_ENABLED) == 0) {
+        return CORE_INVALID_STATE;
+    }
+    result = core_size_multiply((usize)width, (usize)height, &byte_size);
+    if (result != CORE_OK) return result;
+    result = core_size_multiply(byte_size, (usize)4, &byte_size);
+    if (result != CORE_OK) return result;
+    result = memory_shared_create(byte_size, out_frame);
+    if (result != CORE_OK) return result;
+
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        CompositorSceneNode *node = &service->scene[index];
+        if (scene_targets_display(node, &service->display_info)) {
+            nodes[node_count++] = node;
+        }
+    }
+    sort_scene_nodes(nodes, node_count);
+
+    for (index = 0; index < node_count; ++index) {
+        CompositorSceneNode *node = nodes[index];
+        CompositorSurface *surface = find_surface(node->surface_owner,
+                                                   node->surface_id);
+        CompositorBuffer *buffer;
+        CompositorRenderLayer *layer;
+        if (surface == NULL || !surface->current_buffer_set) continue;
+        buffer = find_buffer_any(node->surface_owner,
+                                 surface->current_buffer_id);
+        if (buffer == NULL || buffer->mapping.data == NULL) continue;
+        if (node->geometry.width != buffer->width ||
+            node->geometry.height != buffer->height) {
+            continue;
+        }
+
+        layer = &layers[layer_count];
+        layer->pixels = buffer->mapping.data;
+        layer->width = buffer->width;
+        layer->height = buffer->height;
+        layer->stride = buffer->stride;
+        layer->format = buffer->pixel_format;
+        layer->x = node->geometry.x >> 8;
+        layer->y = node->geometry.y >> 8;
+        layer->clip_set = node->clip_width != 0 && node->clip_height != 0;
+        layer->clip_x = node->clip_x;
+        layer->clip_y = node->clip_y;
+        layer->clip_width = node->clip_width;
+        layer->clip_height = node->clip_height;
+
+        out_refs[layer_count].owner = node->surface_owner;
+        out_refs[layer_count].surface_id = surface->surface_id;
+        out_refs[layer_count].buffer_id = buffer->buffer_id;
+        ++layer_count;
+    }
+
+    target.pixels = out_frame->data;
+    target.width = width;
+    target.height = height;
+    target.stride = width * 4;
+    result = compositor_render_clear(&target, 0, 0, 0);
+    if (result == CORE_OK) {
+        result = compositor_render_layers(&target, layers, layer_count);
+    }
+    if (result != CORE_OK) {
+        (void)memory_shared_close(out_frame);
+        return result;
+    }
+    *out_ref_count = (u16)layer_count;
+    return CORE_OK;
+}
+
+static ErrorCode display_present_frame(CompositorServiceHandle service)
+{
+    SharedMemory frame = { -1, 0, NULL, 0 };
+    CompositorPresentRef refs[COMPOSITOR_SERVICE_SCENE_MAX];
+    GuiDisplayPresentRequest request;
+    u8 payload[128];
+    usize size;
+    u16 ref_count = 0;
+    usize index;
+    u64 request_id;
+    ErrorCode result;
+
+    if (!service->frame_dirty || service->pending_present.active ||
+        service->display_state != COMPOSITOR_DISPLAY_READY ||
+        !service->display_info_valid) {
+        return CORE_OK;
+    }
+    result = compose_output_frame(service, &frame, refs, &ref_count);
+    if (result == CORE_INVALID_STATE) return CORE_OK;
+    if (result != CORE_OK) return result;
+
+    request_id = next_display_request_id(service);
+    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    request.prefix.request_id = request_id;
+    request.display_id = service->display_info.display_id;
+    request.generation = service->display_info.generation;
+    request.width = service->display_info.current_mode.width_px;
+    request.height = service->display_info.current_mode.height_px;
+    request.stride = request.width * 4;
+    request.pixel_format = GUI_PIXEL_XRGB8888;
+    request.byte_size = frame.size;
+    request.flags = GUI_FULL_DAMAGE;
+    request.damage_count = 0;
+    result = gui_encode_display_present(&request,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) {
+        (void)memory_shared_close(&frame);
+        return result;
+    }
+    result = display_queue_descriptor(service, GUI_DISPLAY_PRESENT,
+                                      payload, size, frame.fd);
+    if (result != CORE_OK) {
+        (void)memory_shared_close(&frame);
+        return result;
+    }
+
+    service->pending_present.active = true;
+    service->pending_present.request_id = request_id;
+    service->pending_present.frame = frame;
+    service->pending_present.ref_count = ref_count;
+    for (index = 0; index < ref_count; ++index) {
+        service->pending_present.refs[index] = refs[index];
+    }
+    service->frame_dirty = false;
+    return CORE_OK;
+}
+
 static void display_suspend(CompositorServiceHandle service)
 {
+    clear_pending_present(service);
+    service->frame_dirty = true;
     if (service->display_connection != NULL) {
         (void)eventloop_remove_source(service->loop, service->display_source);
         (void)ipc_connection_close(&service->display_connection);
@@ -427,6 +677,44 @@ static void display_suspend(CompositorServiceHandle service)
 static ErrorCode display_handle_message(CompositorServiceHandle service,
                                         IpcMessage *message)
 {
+    if (message->type == GUI_DISPLAY_PRESENT_RESULT) {
+        GuiBasicResult result;
+        ErrorCode code = gui_decode_basic_result(message,
+            GUI_DISPLAY_PRESENT_RESULT, &result);
+        if (code != CORE_OK) return code;
+        if (!service->pending_present.active ||
+            result.request_id != service->pending_present.request_id) {
+            return CORE_NOT_FOUND;
+        }
+        if (result.error != CORE_OK) {
+            clear_pending_present(service);
+            service->frame_dirty = true;
+        }
+        return CORE_OK;
+    }
+    if (message->type == GUI_DISPLAY_PRESENTED) {
+        GuiDisplayPresentedEvent event;
+        ErrorCode code = gui_decode_display_presented(message, &event);
+        if (code != CORE_OK) return code;
+        if (!service->pending_present.active ||
+            event.request_id != service->pending_present.request_id) {
+            return CORE_NOT_FOUND;
+        }
+        clear_pending_present(service);
+        return CORE_OK;
+    }
+    if (message->type == GUI_DISPLAY_PRESENT_FAILED) {
+        GuiDisplayPresentFailedEvent event;
+        ErrorCode code = gui_decode_display_present_failed(message, &event);
+        if (code != CORE_OK) return code;
+        if (!service->pending_present.active ||
+            event.request_id != service->pending_present.request_id) {
+            return CORE_NOT_FOUND;
+        }
+        clear_pending_present(service);
+        service->frame_dirty = true;
+        return CORE_OK;
+    }
     if (message->type == GUI_DISPLAY_BIND_PRESENTER_RESULT) {
         GuiBasicResult result;
         ErrorCode code = gui_decode_basic_result(message,
@@ -453,6 +741,7 @@ static ErrorCode display_handle_message(CompositorServiceHandle service,
             service->display_info_valid = true;
         }
         service->display_state = COMPOSITOR_DISPLAY_READY;
+        service->frame_dirty = true;
         return CORE_OK;
     }
     if (message->type == GUI_DISPLAY_CHANGED ||
@@ -465,15 +754,20 @@ static ErrorCode display_handle_message(CompositorServiceHandle service,
         if (code != CORE_OK) return code;
         service->display_info = info;
         service->display_info_valid = true;
+        service->frame_dirty = true;
         return CORE_OK;
     }
     if (message->type == GUI_DISPLAY_REMOVED) {
         service->display_info_valid = false;
+        clear_pending_present(service);
+        service->frame_dirty = true;
         return CORE_OK;
     }
     if (message->type == GUI_DISPLAY_BACKEND_LOST) {
         service->display_info_valid = false;
         service->display_state = COMPOSITOR_DISPLAY_SUSPENDED;
+        clear_pending_present(service);
+        service->frame_dirty = true;
         return CORE_OK;
     }
     return CORE_OK;
@@ -558,18 +852,7 @@ static ErrorCode display_begin_connect(CompositorServiceHandle service,
     if (result != CORE_OK) goto fail;
     service->display_connection = connection;
     service->display_state = COMPOSITOR_DISPLAY_CONNECTING;
-    result = ipc_connection_finish_connect(connection, &state);
-    if (result != CORE_OK) {
-        display_suspend(service);
-        return result;
-    }
-    if (state == IPC_CONNECTION_OPEN) {
-        result = display_send_bind(service);
-        if (result != CORE_OK) {
-            display_suspend(service);
-            return result;
-        }
-    }
+    (void)state;
     return CORE_OK;
 
 fail:
@@ -717,6 +1000,7 @@ static ErrorCode handle_surface_destroy(CompositorServiceHandle service,
     result = remove_scene_surface(service, surface->surface_id,
                                   GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED);
     clear_surface(surface);
+    service->frame_dirty = true;
     if (result != CORE_OK) return result;
     return send_basic(service, client, GUI_SURFACE_DESTROY_RESULT,
                       request.prefix.request_id, CORE_OK);
@@ -1092,6 +1376,7 @@ static ErrorCode handle_surface_commit(CompositorServiceHandle service,
     surface->pending_frame = false;
     surface->pending_frame_request_id = 0;
     surface->pending_error = CORE_OK;
+    service->frame_dirty = true;
 
     return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
                       request.prefix.request_id, CORE_OK);
@@ -1162,6 +1447,7 @@ static ErrorCode handle_scene_bind(CompositorServiceHandle service,
     node->window_id = request.window_id;
     node->surface_id = request.surface_id;
     node->surface_owner = owner;
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1187,6 +1473,7 @@ static ErrorCode handle_scene_geometry(CompositorServiceHandle service,
     node->clip_y = request.clip_y;
     node->clip_width = request.clip_width;
     node->clip_height = request.clip_height;
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1214,6 +1501,7 @@ static ErrorCode handle_scene_visibility(CompositorServiceHandle service,
         }
     }
     node->visibility = request.visibility;
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1238,6 +1526,7 @@ static ErrorCode handle_scene_stack(CompositorServiceHandle service,
     }
     node->layer = request.layer;
     node->above_window_id = request.above_window_id;
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1256,6 +1545,7 @@ static ErrorCode handle_scene_output(CompositorServiceHandle service,
     if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
         request.prefix.request_id, CORE_NOT_FOUND);
     node->display_id = request.display_id;
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1274,6 +1564,7 @@ static ErrorCode handle_scene_remove(CompositorServiceHandle service,
     if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
         request.prefix.request_id, CORE_NOT_FOUND);
     clear_scene_node(node);
+    service->frame_dirty = true;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -1348,6 +1639,7 @@ static void remove_client(CompositorServiceHandle service,
     clear_client_surfaces(client);
     clear_client_buffers(client);
     client->source = 0;
+    service->frame_dirty = true;
 }
 
 static ErrorCode accept_clients(CompositorServiceHandle service)
@@ -1492,6 +1784,14 @@ ErrorCode compositor_service_create_config(
     service->display_state = COMPOSITOR_DISPLAY_DISABLED;
     service->display_info_valid = false;
     service->next_display_request_id = 1;
+    service->frame_dirty = false;
+    service->pending_present.active = false;
+    service->pending_present.request_id = 0;
+    service->pending_present.ref_count = 0;
+    service->pending_present.frame.fd = -1;
+    service->pending_present.frame.reserved = 0;
+    service->pending_present.frame.data = NULL;
+    service->pending_present.frame.size = 0;
 
     for (index = 0; index < COMPOSITOR_SERVICE_CLIENT_MAX; ++index) {
         service->clients[index].connection = NULL;
@@ -1573,7 +1873,8 @@ ErrorCode compositor_service_poll(CompositorServiceHandle service,
         if (result != CORE_OK) return result;
     }
 
-    return CORE_OK;
+    result = display_present_frame(service);
+    return result;
 }
 
 ErrorCode compositor_service_close(CompositorServiceHandle *service)
@@ -1592,6 +1893,7 @@ ErrorCode compositor_service_close(CompositorServiceHandle *service)
         }
     }
 
+    clear_pending_present(handle);
     if (handle->display_connection != NULL) {
         (void)eventloop_remove_source(handle->loop, handle->display_source);
         (void)ipc_connection_close(&handle->display_connection);
