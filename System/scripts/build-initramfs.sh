@@ -9,7 +9,7 @@ ROOTFS_DIR="${SYSTEM_DIR}/rootfs"
 IMAGES_DIR="${SYSTEM_DIR}/images"
 ARCHIVE_PATH="${IMAGES_DIR}/punos-initramfs.cpio.gz"
 
-for command_name in cpio find grep gzip install make nm readelf sort touch; do
+for command_name in cpio find grep gzip install make nm python3 readelf sort touch; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "Required command is not installed: ${command_name}" >&2
         exit 1
@@ -37,6 +37,7 @@ SELF_TESTS=(
     "SpecialLibs/loglib/build/log_runtime:log-selftest"
     "SpecialLibs/inputlib/build/input_runtime:input-selftest"
     "SpecialLibs/camlib/build/camera_runtime:camera-selftest"
+    "SystemServices/appserv/build/service_test:appserv-selftest"
 )
 
 verify_elf() {
@@ -59,6 +60,7 @@ verify_elf() {
 
 verify_elf "${BOOT_DIR}/build/init"
 verify_elf "${BOOT_DIR}/build/initserv"
+verify_elf "${SYSTEM_DIR}/SystemServices/appserv/build/appserv"
 for self_test in "${SELF_TESTS[@]}"; do
     verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
 done
@@ -82,6 +84,8 @@ install -d -m 01777 "${ROOTFS_DIR}/tmp"
 install -m 0755 "${BOOT_DIR}/build/init" "${ROOTFS_DIR}/init"
 install -m 0755 "${BOOT_DIR}/build/initserv" \
     "${ROOTFS_DIR}/punos/bin/initserv"
+install -m 0755 "${SYSTEM_DIR}/SystemServices/appserv/build/appserv" \
+    "${ROOTFS_DIR}/punos/bin/appserv"
 for self_test in "${SELF_TESTS[@]}"; do
     install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
         "${ROOTFS_DIR}/punos/bin/${self_test##*:}"

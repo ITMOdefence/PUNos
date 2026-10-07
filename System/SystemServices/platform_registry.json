@@ -1,0 +1,11 @@
+{
+  "services": [
+    {
+      "service_id": "appserv",
+      "executable": "/punos/bin/appserv",
+      "enabled": false,
+      "requires": ["logserv"]
+    }
+  ],
+  "native_apps": []
+}

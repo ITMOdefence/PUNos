@@ -63,6 +63,9 @@ static const struct SelfTest self_tests[] = {
     { "/punos/bin/camera-selftest",
       "PUNos initserv stub: camera self-test passed\n",
       "PUNos initserv stub: camera self-test failed\n" },
+    { "/punos/bin/appserv-selftest",
+      "PUNos initserv stub: appserv self-test passed\n",
+      "PUNos initserv stub: appserv self-test failed\n" },
 };
 
 static size_t text_length(const char *text)

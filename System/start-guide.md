@@ -18,9 +18,10 @@
    initramfs.
 5. Запустить ядро и первый userspace PUNos в QEMU.
 
-Настоящий initserv и остальные System Services пока не реализованы. В образ
-включается явно обозначенный initserv smoke-test stub, подтверждающий работу
-границы `/init` → `fork()` → `execve()`.
+Настоящие initserv и logserv пока не реализованы. В образ включается явно
+обозначенный initserv smoke-test stub, подтверждающий работу границы
+`/init` → `fork()` → `execve()`. Также в образ включены appserv и его self-test;
+производственный appserv не запускается до реализации его зависимостей.
 
 ## Быстрый запуск
 
@@ -265,6 +266,8 @@ PUNos initserv stub: ipc self-test passed
 PUNos initserv stub: log self-test passed
 PUNos initserv stub: input self-test passed
 PUNos initserv stub: camera self-test passed
+appserv runtime test passed
+PUNos initserv stub: appserv self-test passed
 ```
 
 Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
@@ -344,6 +347,28 @@ make -C System/SpecialLibs check
 initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
 структуре описаны в `System/SpecialLibs/README.md`.
 
+## Интеграция appserv
+
+appserv собирается вместе с Boot и включается в initramfs как
+`/punos/bin/appserv`. Его freestanding self-test включается как
+`/punos/bin/appserv-selftest` и запускается smoke-test stub при загрузке.
+Проверить все тесты сервиса на Linux-хосте можно отдельно:
+
+```bash
+make -C System/SystemServices check
+```
+
+Сборочный реестр и каталог принадлежат PUNos и находятся в
+`System/SystemServices/platform_registry.json` и `applications.json`.
+appserv генерирует из них статический каталог и общий PlatformRegistryId,
+используя библиотеки текущего checkout; сетевых загрузок при сборке нет.
+
+Автозапуск appserv пока отключён (`enabled: false`): в этой версии отсутствуют
+настоящие initserv и logserv. Smoke-test stub не интерпретирует сервисный реестр
+и не запускает производственный appserv. Для активации будущий initserv должен
+использовать тот же реестр и запускать appserv после готовности endpoint logserv.
+См. `System/SystemServices/README.md`.
+
 ## Непрерывная интеграция
 
 Workflow `.github/workflows/ci.yml` запускается на каждый push, pull request
@@ -352,7 +377,7 @@ Workflow `.github/workflows/ci.yml` запускается на каждый pus
 
 | Job | Что проверяет |
 | --- | --- |
-| Host tests | `check` для SyscallWrappers, CRT, всех System Libs и всех Special Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд, как и тесты Special Libs, работающие с сокетами и файлами |
+| Host tests | `check` для SyscallWrappers, CRT, System Libs, Special Libs и appserv; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд, как и тесты Special Libs, работающие с сокетами и файлами |
 | Reproducible initramfs | Две сборки `build-initramfs.sh` дают одинаковый SHA-256 |
 | Kernel | `prepare-kernel.sh` и `build-kernel.sh`; `bzImage` кэшируется по содержимому `System/kernel/` и пересобирается только при его изменении |
 | QEMU boot | `check-qemu-boot.sh` на собранных ядре и initramfs; журнал загрузки сохраняется как artifact |
@@ -403,10 +428,10 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 ```
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
-`init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
+`init`, `punos/bin/initserv`, `punos/bin/appserv` и self-test'ы `punos/bin/*-selftest`
 (`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
 `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
-`libv4l2`, `ipc`, `log`, `input`, `camera`) с владельцем `root:root` и правами
+`libv4l2`, `ipc`, `log`, `input`, `camera`, `appserv`) с владельцем `root:root` и правами
 `0755`.
 
 ## Рабочая структура
@@ -429,6 +454,7 @@ System/
 ├── Boot/                     # исходники /init и smoke-test initserv
 ├── NativeRuntime/            # CRT и Syscall Wrappers
 ├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
+├── SystemServices/           # appserv и общий сборочный реестр приложений
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует
@@ -538,7 +564,8 @@ mv System/linux-6.12.111 System/linux-6.12.111.incomplete
 ## Граница ответственности этого окружения
 
 Этот репозиторный срез предоставляет зафиксированное ядро, Syscall Wrappers,
-CRT, реализованные System Libs, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
-PlatformRegistry и последующих System Services принадлежит соответствующим
-командам. Smoke-test stub существует только как проверяемая точка передачи
-управления следующему слою.
+CRT, реализованные System Libs, `/init`, сборку initramfs, appserv в образе и
+запуск в QEMU. Runtime-активация appserv ожидает настоящие initserv и logserv;
+для неё подготовлен общий сборочный реестр. Реализация этих сервисов принадлежит
+соответствующим командам. Smoke-test stub существует только как проверяемая
+точка передачи управления следующему слою.

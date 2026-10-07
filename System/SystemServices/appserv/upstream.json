@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/ITMOdefence/appserv",
+  "commit": "d4067cafd3d0071d0ded36a6632b07c240a672d3",
+  "excluded": ["vendor", ".github", "config", "punos.ref", "tools/fetch_punos.py"],
+  "integration_changes": ["Makefile defaults/setup", "README.md", "upstream.json"]
+}

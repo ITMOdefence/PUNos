@@ -22,6 +22,7 @@ SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
                          $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 SPECIAL_LIBS_DIR := ../SpecialLibs
+SYSTEM_SERVICES_DIR := ../SystemServices
 # Runtime tests of Special Libs, packaged as /punos/bin/<name>-selftest.
 SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
                          $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
@@ -37,9 +38,12 @@ STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv
 
-.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
+.PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
 
-all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
+all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) system-services
+
+system-services:
+	$(MAKE) -C $(SYSTEM_SERVICES_DIR) all runtime-test
 
 $(BUILD_DIR):
 	mkdir -p $@
