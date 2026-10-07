@@ -3,6 +3,7 @@
 #include <special/ipc.h>
 #include <sys/eventloop.h>
 #include <sys/memory.h>
+#include <sys/time.h>
 
 #define WINDOW_SERVICE_CLIENT_MAX ((usize)32)
 #define WINDOW_SERVICE_WINDOW_MAX ((usize)512)
@@ -38,6 +39,15 @@ typedef enum WindowIoState {
     WINDOW_IO_SUSPENDED = 4
 } WindowIoState;
 
+typedef enum WindowSceneStep {
+    WINDOW_SCENE_STEP_NONE = 0,
+    WINDOW_SCENE_STEP_BIND = 1,
+    WINDOW_SCENE_STEP_GEOMETRY = 2,
+    WINDOW_SCENE_STEP_STACK = 3,
+    WINDOW_SCENE_STEP_VISIBILITY = 4,
+    WINDOW_SCENE_STEP_REMOVE = 5
+} WindowSceneStep;
+
 typedef struct WindowClient {
     IpcConnectionHandle connection;
     EventSourceId source;
@@ -48,8 +58,11 @@ typedef struct WindowClient {
 typedef struct WindowRecord {
     bool active;
     bool scene_bound;
+    bool scene_operation_pending;
+    bool create_pending;
     u64 window_id;
     WindowClient *owner;
+    WindowClient *create_client;
     u64 surface_id;
     u8 surface_bind_token[GUI_SURFACE_BIND_TOKEN_SIZE];
     GuiWindowRole role;
@@ -58,6 +71,12 @@ typedef struct WindowRecord {
     u16 title_length;
     u8 title[GUI_WINDOW_TITLE_MAX];
     GuiWindowLifecycle lifecycle;
+    GuiWindowLifecycle lifecycle_before_suspend;
+    GuiWindowLifecycle lifecycle_before_close;
+    WindowSceneStep pending_scene_step;
+    u64 pending_scene_request_id;
+    u64 create_request_id;
+    u64 pending_close_serial;
     u64 pending_configure_serial;
     GuiWindowConfigureEvent confirmed_configure;
 } WindowRecord;
@@ -85,11 +104,15 @@ struct WindowServiceHandle {
     IpcConnectionHandle compositor_connection;
     EventSourceId compositor_source;
     WindowCompositorState compositor_state;
+    bool has_compositor_endpoint;
+    String compositor_endpoint;
     u8 controller_token[WINDOW_SERVICE_CONTROLLER_TOKEN_SIZE];
     u64 next_scene_request_id;
     IpcConnectionHandle io_connection;
     EventSourceId io_source;
     WindowIoState io_state;
+    bool has_io_endpoint;
+    String io_endpoint;
     u32 io_touch_x;
     u32 io_touch_y;
     i32 io_pointer_x;
@@ -101,6 +124,13 @@ struct WindowServiceHandle {
 static void remove_client(WindowServiceHandle service, WindowClient *client);
 static ErrorCode send_configure(WindowServiceHandle service,
                                 WindowRecord *window);
+static ErrorCode apply_scene_policy(WindowServiceHandle service,
+                                    WindowRecord *window);
+static void compositor_suspend(WindowServiceHandle service);
+static void io_suspend(WindowServiceHandle service);
+static u64 next_input_serial(WindowServiceHandle service);
+static WindowRecord *input_target_window(WindowServiceHandle service,
+                                         bool keyboard);
 
 static bool token_equal(const u8 *left, const u8 *right, usize size)
 {
@@ -152,6 +182,21 @@ static WindowRecord *find_window(WindowServiceHandle service, u64 window_id)
     return NULL;
 }
 
+static WindowRecord *find_scene_request_window(WindowServiceHandle service,
+                                               u64 request_id)
+{
+    usize index;
+
+    for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+        if (service->windows[index].active &&
+            service->windows[index].scene_operation_pending &&
+            service->windows[index].pending_scene_request_id == request_id) {
+            return &service->windows[index];
+        }
+    }
+    return NULL;
+}
+
 static WindowRecord *find_free_window(WindowServiceHandle service)
 {
     usize index;
@@ -175,6 +220,24 @@ static usize client_window_count(WindowServiceHandle service,
         }
     }
     return count;
+}
+
+static WindowRecord *find_home_window(WindowServiceHandle service)
+{
+    usize index;
+    WindowRecord *best = NULL;
+
+    for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+        WindowRecord *window = &service->windows[index];
+        if (window->active && window->role == GUI_WINDOW_ROLE_HOME &&
+            window->lifecycle != GUI_WINDOW_LIFECYCLE_HIDDEN &&
+            window->lifecycle != GUI_WINDOW_LIFECYCLE_CLOSING) {
+            if (best == NULL || window->window_id > best->window_id) {
+                best = window;
+            }
+        }
+    }
+    return best;
 }
 
 static GuiSceneLayer scene_layer_for_role(GuiWindowRole role)
@@ -205,7 +268,8 @@ static bool role_can_activate(GuiWindowRole role)
     return role == GUI_WINDOW_ROLE_APP || role == GUI_WINDOW_ROLE_HOME;
 }
 
-static bool window_is_visible(const WindowRecord *window)
+static bool window_is_visible_in_service(WindowServiceHandle service,
+                                         const WindowRecord *window)
 {
     if (!window->active ||
         window->lifecycle == GUI_WINDOW_LIFECYCLE_HIDDEN ||
@@ -219,7 +283,9 @@ static bool window_is_visible(const WindowRecord *window)
     }
     if (window->role == GUI_WINDOW_ROLE_DIALOG ||
         window->role == GUI_WINDOW_ROLE_TRANSIENT) {
-        return window->lifecycle == GUI_WINDOW_LIFECYCLE_FOREGROUND;
+        return window->lifecycle == GUI_WINDOW_LIFECYCLE_FOREGROUND &&
+               (window->parent_id == 0 ||
+                window->parent_id == service->active_window_id);
     }
     return true;
 }
@@ -273,6 +339,71 @@ static ErrorCode send_operation(WindowServiceHandle service,
                       request_id, error);
 }
 
+static ErrorCode send_create_result(WindowServiceHandle service,
+                                    WindowClient *client, u64 request_id,
+                                    ErrorCode error, u64 window_id)
+{
+    GuiWindowCreateResult response;
+    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
+    usize size;
+    ErrorCode result;
+
+    if (client == NULL || client->connection == NULL) return CORE_OK;
+    response.result.error = error;
+    response.result.request_id = request_id;
+    response.window_id = error == CORE_OK ? window_id : 0;
+    result = gui_encode_window_create_result(
+        &response, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, client, GUI_WINDOW_CREATE_RESULT,
+                         payload, size);
+}
+
+static ErrorCode send_service_event(WindowServiceHandle service,
+                                    WindowRecord *window,
+                                    IpcMessageType type,
+                                    GuiWindowLifecycleReason reason)
+{
+    GuiWindowServiceEvent event;
+    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
+    usize size;
+    ErrorCode result;
+
+    if (window->owner == NULL || window->owner->connection == NULL) {
+        return CORE_OK;
+    }
+    if (window->owner->next_event_serial == 0) return CORE_OVERFLOW;
+    event.serial = window->owner->next_event_serial++;
+    event.window_id = window->window_id;
+    event.reason = reason;
+    result = gui_encode_window_service_event(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, window->owner, type, payload, size);
+}
+
+static ErrorCode send_close_request(WindowServiceHandle service,
+                                    WindowRecord *window)
+{
+    GuiWindowCloseEvent event;
+    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
+    usize size;
+    ErrorCode result;
+
+    if (window->owner == NULL || window->owner->connection == NULL) {
+        return CORE_OK;
+    }
+    if (window->owner->next_event_serial == 0) return CORE_OVERFLOW;
+    event.close_serial = window->owner->next_event_serial++;
+    event.window_id = window->window_id;
+    window->pending_close_serial = event.close_serial;
+    result = gui_encode_window_close_event(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, window->owner, GUI_WINDOW_CLOSE_REQUESTED,
+                         payload, size);
+}
+
 static u64 next_scene_request_id(WindowServiceHandle service)
 {
     u64 value = service->next_scene_request_id++;
@@ -309,126 +440,113 @@ static ErrorCode compositor_queue(WindowServiceHandle service,
     return compositor_update_interest(service, pending);
 }
 
-static ErrorCode scene_bind_window(WindowServiceHandle service,
-                                   WindowRecord *window)
+static ErrorCode scene_queue_step(WindowServiceHandle service,
+                                  WindowRecord *window,
+                                  WindowSceneStep step)
 {
-    GuiSceneBindRequest request;
     u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
-    usize index;
-    ErrorCode result;
+    usize size = 0;
+    IpcMessageType type = 0;
+    u64 request_id;
+    ErrorCode result = CORE_OK;
 
-    if (window->scene_bound) return CORE_OK;
+    if (window->scene_operation_pending) return CORE_OK;
     if (service->compositor_connection == NULL ||
         service->compositor_state != WINDOW_COMPOSITOR_READY) {
         return CORE_OK;
     }
-    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
-    request.prefix.request_id = next_scene_request_id(service);
-    request.window_id = window->window_id;
-    request.surface_id = window->surface_id;
-    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
-        request.surface_bind_token[index] = window->surface_bind_token[index];
+    request_id = next_scene_request_id(service);
+
+    if (step == WINDOW_SCENE_STEP_BIND) {
+        GuiSceneBindRequest request;
+        usize index;
+        request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+        request.prefix.request_id = request_id;
+        request.window_id = window->window_id;
+        request.surface_id = window->surface_id;
+        for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+            request.surface_bind_token[index] =
+                window->surface_bind_token[index];
+        }
+        result = gui_encode_scene_bind(&request,
+            (Bytes){ payload, sizeof(payload) }, &size);
+        type = GUI_SCENE_BIND_WINDOW;
+    } else if (step == WINDOW_SCENE_STEP_GEOMETRY) {
+        GuiSceneGeometryRequest request;
+        request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+        request.prefix.request_id = request_id;
+        request.window_id = window->window_id;
+        request.geometry.x = 0;
+        request.geometry.y = 0;
+        request.geometry.width = service->viewport_width;
+        request.geometry.height = service->viewport_height;
+        request.clip_x = 0;
+        request.clip_y = 0;
+        request.clip_width = 0;
+        request.clip_height = 0;
+        result = gui_encode_scene_geometry(&request,
+            (Bytes){ payload, sizeof(payload) }, &size);
+        type = GUI_SCENE_SET_GEOMETRY;
+    } else if (step == WINDOW_SCENE_STEP_STACK) {
+        GuiSceneStackRequest request;
+        request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+        request.prefix.request_id = request_id;
+        request.window_id = window->window_id;
+        request.layer = scene_layer_for_role(window->role);
+        request.above_window_id = 0;
+        result = gui_encode_scene_stack(&request,
+            (Bytes){ payload, sizeof(payload) }, &size);
+        type = GUI_SCENE_SET_STACK;
+    } else if (step == WINDOW_SCENE_STEP_VISIBILITY) {
+        GuiSceneVisibilityRequest request;
+        request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+        request.prefix.request_id = request_id;
+        request.window_id = window->window_id;
+        request.visibility = window_is_visible_in_service(service, window) ?
+                             GUI_SCENE_VISIBLE : GUI_SCENE_HIDDEN;
+        result = gui_encode_scene_visibility(&request,
+            (Bytes){ payload, sizeof(payload) }, &size);
+        type = GUI_SCENE_SET_VISIBILITY;
+    } else if (step == WINDOW_SCENE_STEP_REMOVE) {
+        GuiSceneWindowRequest request;
+        request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+        request.prefix.request_id = request_id;
+        request.window_id = window->window_id;
+        result = gui_encode_scene_window(&request,
+            (Bytes){ payload, sizeof(payload) }, &size);
+        type = GUI_SCENE_REMOVE_WINDOW;
+    } else {
+        return CORE_INVALID_ARGUMENT;
     }
-    result = gui_encode_scene_bind(&request,
-        (Bytes){ payload, sizeof(payload) }, &size);
+
     if (result != CORE_OK) return result;
-    result = compositor_queue(service, GUI_SCENE_BIND_WINDOW, payload, size);
-    if (result == CORE_OK) window->scene_bound = true;
-    return result;
-}
-
-static ErrorCode scene_set_geometry(WindowServiceHandle service,
-                                    WindowRecord *window)
-{
-    GuiSceneGeometryRequest request;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
-    ErrorCode result;
-
-    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
-    request.prefix.request_id = next_scene_request_id(service);
-    request.window_id = window->window_id;
-    request.geometry.x = 0;
-    request.geometry.y = 0;
-    request.geometry.width = service->viewport_width;
-    request.geometry.height = service->viewport_height;
-    request.clip_x = 0;
-    request.clip_y = 0;
-    request.clip_width = 0;
-    request.clip_height = 0;
-    result = gui_encode_scene_geometry(&request,
-        (Bytes){ payload, sizeof(payload) }, &size);
+    result = compositor_queue(service, type, payload, size);
     if (result != CORE_OK) return result;
-    return compositor_queue(service, GUI_SCENE_SET_GEOMETRY, payload, size);
-}
-
-static ErrorCode scene_set_stack(WindowServiceHandle service,
-                                 WindowRecord *window)
-{
-    GuiSceneStackRequest request;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
-    ErrorCode result;
-
-    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
-    request.prefix.request_id = next_scene_request_id(service);
-    request.window_id = window->window_id;
-    request.layer = scene_layer_for_role(window->role);
-    request.above_window_id = 0;
-    result = gui_encode_scene_stack(&request,
-        (Bytes){ payload, sizeof(payload) }, &size);
-    if (result != CORE_OK) return result;
-    return compositor_queue(service, GUI_SCENE_SET_STACK, payload, size);
-}
-
-static ErrorCode scene_set_visibility(WindowServiceHandle service,
-                                      WindowRecord *window)
-{
-    GuiSceneVisibilityRequest request;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
-    ErrorCode result;
-
-    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
-    request.prefix.request_id = next_scene_request_id(service);
-    request.window_id = window->window_id;
-    request.visibility = window_is_visible(window) ? GUI_SCENE_VISIBLE :
-                         GUI_SCENE_HIDDEN;
-    result = gui_encode_scene_visibility(&request,
-        (Bytes){ payload, sizeof(payload) }, &size);
-    if (result != CORE_OK) return result;
-    return compositor_queue(service, GUI_SCENE_SET_VISIBILITY, payload, size);
+    window->scene_operation_pending = true;
+    window->pending_scene_step = step;
+    window->pending_scene_request_id = request_id;
+    return CORE_OK;
 }
 
 static ErrorCode scene_remove_window(WindowServiceHandle service,
                                      WindowRecord *window)
 {
-    GuiSceneWindowRequest request;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
-    ErrorCode result;
-
-    if (!window->scene_bound) return CORE_OK;
-    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
-    request.prefix.request_id = next_scene_request_id(service);
-    request.window_id = window->window_id;
-    result = gui_encode_scene_window(&request,
-        (Bytes){ payload, sizeof(payload) }, &size);
-    if (result != CORE_OK) return result;
-    window->scene_bound = false;
-    return compositor_queue(service, GUI_SCENE_REMOVE_WINDOW, payload, size);
+    if (!window->scene_bound || window->scene_operation_pending) return CORE_OK;
+    return scene_queue_step(service, window, WINDOW_SCENE_STEP_REMOVE);
 }
 
 static ErrorCode apply_scene_policy(WindowServiceHandle service,
                                     WindowRecord *window)
 {
-    ErrorCode result = scene_bind_window(service, window);
-
-    if (result == CORE_OK) result = scene_set_geometry(service, window);
-    if (result == CORE_OK) result = scene_set_stack(service, window);
-    if (result == CORE_OK) result = scene_set_visibility(service, window);
-    return result;
+    if (!window->active || window->scene_operation_pending) return CORE_OK;
+    if (service->compositor_state != WINDOW_COMPOSITOR_READY ||
+        service->compositor_connection == NULL) {
+        return CORE_OK;
+    }
+    return scene_queue_step(
+        service, window,
+        window->scene_bound ? WINDOW_SCENE_STEP_GEOMETRY :
+                              WINDOW_SCENE_STEP_BIND);
 }
 
 static ErrorCode send_lifecycle(WindowServiceHandle service,
@@ -496,7 +614,7 @@ static ErrorCode send_visibility(WindowServiceHandle service,
     if (window->owner->next_event_serial == 0) return CORE_OVERFLOW;
     event.serial = window->owner->next_event_serial++;
     event.window_id = window->window_id;
-    event.visible = window_is_visible(window);
+    event.visible = window_is_visible_in_service(service, window);
     result = gui_encode_window_visibility(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
@@ -526,8 +644,11 @@ static void clear_window(WindowRecord *window)
 
     window->active = false;
     window->scene_bound = false;
+    window->scene_operation_pending = false;
+    window->create_pending = false;
     window->window_id = 0;
     window->owner = NULL;
+    window->create_client = NULL;
     window->surface_id = 0;
     for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
         window->surface_bind_token[index] = 0;
@@ -540,6 +661,12 @@ static void clear_window(WindowRecord *window)
         window->title[index] = 0;
     }
     window->lifecycle = 0;
+    window->lifecycle_before_suspend = 0;
+    window->lifecycle_before_close = 0;
+    window->pending_scene_step = WINDOW_SCENE_STEP_NONE;
+    window->pending_scene_request_id = 0;
+    window->create_request_id = 0;
+    window->pending_close_serial = 0;
     window->pending_configure_serial = 0;
     window->confirmed_configure = (GuiWindowConfigureEvent){ 0 };
 }
@@ -572,6 +699,8 @@ static ErrorCode cancel_active_touch(WindowServiceHandle service)
 {
     WindowRecord *window;
     GuiWindowTouchEvent event;
+    MonotonicTime now;
+    ErrorCode result;
 
     if (!service->touch_active) return CORE_OK;
     window = find_window(service, service->touch_window_id);
@@ -582,9 +711,11 @@ static ErrorCode cancel_active_touch(WindowServiceHandle service)
         service->touch_id = 0;
         return CORE_OK;
     }
+    result = time_monotonic_now(&now);
+    if (result != CORE_OK) return result;
     event.window_id = window->window_id;
-    event.input_serial = service->next_configure_serial++;
-    event.timestamp_ms = 0;
+    event.input_serial = next_input_serial(service);
+    event.timestamp_ms = now;
     event.touch_id = service->touch_id;
     event.phase = GUI_TOUCH_CANCEL;
     event.x = 0;
@@ -597,38 +728,40 @@ static ErrorCode handle_window_create(WindowServiceHandle service,
                                       const IpcMessage *message)
 {
     GuiWindowCreateRequest request;
-    GuiWindowCreateResult response;
     WindowRecord *window = NULL;
     WindowRecord *parent;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
     usize index;
+    ErrorCode error = CORE_OK;
     ErrorCode result = gui_decode_window_create(message, &request);
 
     if (result != CORE_OK) return result;
 
-    response.result.request_id = request.prefix.request_id;
-    response.window_id = 0;
     if (role_is_shell_only(request.role) && !client->is_shell) {
-        response.result.error = CORE_PERMISSION_DENIED;
+        error = CORE_PERMISSION_DENIED;
     } else if (client_window_count(service, client) >=
                WINDOW_SERVICE_CLIENT_WINDOW_MAX) {
-        response.result.error = CORE_OUT_OF_MEMORY;
+        error = CORE_OUT_OF_MEMORY;
     } else if (request.parent_id != 0 &&
                ((parent = find_window(service, request.parent_id)) == NULL ||
                 parent->owner != client)) {
-        response.result.error = CORE_PERMISSION_DENIED;
+        error = CORE_PERMISSION_DENIED;
     } else if (service->next_window_id == 0) {
-        response.result.error = CORE_OVERFLOW;
+        error = CORE_OVERFLOW;
+    } else if (service->has_compositor_endpoint &&
+               service->compositor_state != WINDOW_COMPOSITOR_READY) {
+        error = CORE_INVALID_STATE;
     } else {
         window = find_free_window(service);
         if (window == NULL) {
-            response.result.error = CORE_OUT_OF_MEMORY;
+            error = CORE_OUT_OF_MEMORY;
         } else {
             window->active = true;
             window->scene_bound = false;
+            window->scene_operation_pending = false;
+            window->create_pending = false;
             window->window_id = service->next_window_id++;
             window->owner = client;
+            window->create_client = NULL;
             window->surface_id = request.surface_id;
             for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
                 window->surface_bind_token[index] =
@@ -644,20 +777,20 @@ static ErrorCode handle_window_create(WindowServiceHandle service,
             window->lifecycle = GUI_WINDOW_LIFECYCLE_HIDDEN;
             window->pending_configure_serial = 0;
             window->confirmed_configure = (GuiWindowConfigureEvent){ 0 };
-            response.result.error = CORE_OK;
-            response.window_id = window->window_id;
         }
     }
 
-    result = gui_encode_window_create_result(
-        &response, (Bytes){ payload, sizeof(payload) }, &size);
-    if (result != CORE_OK) return result;
-    result = queue_payload(service, client, GUI_WINDOW_CREATE_RESULT,
-                           payload, size);
-    if (result == CORE_OK && window != NULL) {
-        result = scene_bind_window(service, window);
+    if (error != CORE_OK || window == NULL ||
+        !service->has_compositor_endpoint) {
+        return send_create_result(service, client, request.prefix.request_id,
+                                  error, window == NULL ? 0 : window->window_id);
     }
-    return result;
+    window->create_pending = true;
+    window->create_client = client;
+    window->create_request_id = request.prefix.request_id;
+    result = apply_scene_policy(service, window);
+    if (result != CORE_OK) return result;
+    return CORE_OK;
 }
 
 static ErrorCode handle_window_destroy(WindowServiceHandle service,
@@ -860,13 +993,21 @@ static ErrorCode handle_surface_rebind(WindowServiceHandle service,
         return send_operation(service, client, request.prefix.request_id,
                               CORE_PERMISSION_DENIED);
     }
-    (void)scene_remove_window(service, window);
+    if (window->scene_operation_pending) {
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_INVALID_STATE);
+    }
+    result = scene_remove_window(service, window);
+    if (result != CORE_OK) return result;
     window->surface_id = request.surface_id;
     for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
         window->surface_bind_token[index] = request.surface_bind_token[index];
     }
-    result = scene_bind_window(service, window);
-    if (result != CORE_OK) return result;
+    if (!window->scene_operation_pending) {
+        window->scene_bound = false;
+        result = apply_scene_policy(service, window);
+        if (result != CORE_OK) return result;
+    }
     return send_operation(service, client, request.prefix.request_id, CORE_OK);
 }
 
@@ -965,6 +1106,49 @@ static ErrorCode send_configure_to_live_windows(WindowServiceHandle service)
     return first_error;
 }
 
+static ErrorCode request_window_close(WindowServiceHandle service,
+                                      WindowRecord *window,
+                                      GuiWindowLifecycleReason reason)
+{
+    ErrorCode result;
+
+    if (window == NULL || window->lifecycle == GUI_WINDOW_LIFECYCLE_CLOSING) {
+        return CORE_INVALID_STATE;
+    }
+    result = cancel_active_touch(service);
+    if (result != CORE_OK) return result;
+    window->lifecycle_before_close = window->lifecycle;
+    window->lifecycle = GUI_WINDOW_LIFECYCLE_CLOSING;
+    result = apply_scene_policy(service, window);
+    if (result == CORE_OK) result = send_lifecycle(service, window, reason);
+    if (result == CORE_OK) result = send_visibility(service, window);
+    if (result == CORE_OK) result = send_close_request(service, window);
+    return result;
+}
+
+static ErrorCode send_navigation_event(WindowServiceHandle service,
+                                       WindowRecord *target,
+                                       GuiNavigationAction action)
+{
+    GuiWindowNavigationEvent event;
+    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
+    usize size;
+    ErrorCode result;
+
+    if (target->owner == NULL || target->owner->connection == NULL) {
+        return CORE_OK;
+    }
+    if (target->owner->next_event_serial == 0) return CORE_OVERFLOW;
+    event.serial = target->owner->next_event_serial++;
+    event.window_id = target->window_id;
+    event.action = action;
+    result = gui_encode_window_navigation(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, target->owner,
+                         GUI_WINDOW_NAVIGATION_REQUESTED, payload, size);
+}
+
 static ErrorCode handle_shell_insets(WindowServiceHandle service,
                                      WindowClient *client,
                                      const IpcMessage *message)
@@ -990,9 +1174,6 @@ static ErrorCode handle_shell_navigate(WindowServiceHandle service,
 {
     GuiShellNavigateRequest request;
     WindowRecord *target;
-    GuiWindowNavigationEvent event;
-    u8 payload[WINDOW_SERVICE_RESPONSE_MAX];
-    usize size;
     ErrorCode result = gui_decode_shell_navigate(message, &request);
 
     if (result != CORE_OK) return result;
@@ -1000,27 +1181,54 @@ static ErrorCode handle_shell_navigate(WindowServiceHandle service,
         return send_operation(service, client, request.prefix.request_id,
                               CORE_PERMISSION_DENIED);
     }
-    target = find_window(service, request.target_id != 0 ?
-                         request.target_id : service->active_window_id);
+
+    if (request.action == GUI_NAVIGATION_HOME) {
+        target = find_home_window(service);
+        if (target == NULL) {
+            return send_operation(service, client, request.prefix.request_id,
+                                  CORE_NOT_FOUND);
+        }
+        result = activate_window(service, target);
+        if (result != CORE_OK) return result;
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
+
+    if (request.action == GUI_NAVIGATION_OVERVIEW) {
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
+
+    target = request.target_id != 0 ?
+        find_window(service, request.target_id) :
+        input_target_window(service, false);
     if (target == NULL) {
         return send_operation(service, client, request.prefix.request_id,
                               CORE_NOT_FOUND);
     }
+
+    if (request.action == GUI_NAVIGATION_BACK &&
+        (target->flags & GUI_WINDOW_FLAG_HANDLES_BACK) == 0) {
+        WindowRecord *parent = target->parent_id != 0 ?
+            find_window(service, target->parent_id) : NULL;
+        WindowRecord *home = find_home_window(service);
+        if (parent != NULL && role_can_activate(parent->role)) {
+            result = activate_window(service, parent);
+        } else if (home != NULL && target != home) {
+            result = activate_window(service, home);
+        } else {
+            result = request_window_close(
+                service, target, GUI_WINDOW_REASON_CLIENT_REQUEST);
+        }
+        if (result != CORE_OK) return result;
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
+
     result = send_operation(service, client, request.prefix.request_id,
                             CORE_OK);
     if (result != CORE_OK) return result;
-    if (target->owner == NULL || target->owner->connection == NULL) {
-        return CORE_OK;
-    }
-    if (target->owner->next_event_serial == 0) return CORE_OVERFLOW;
-    event.serial = target->owner->next_event_serial++;
-    event.window_id = target->window_id;
-    event.action = request.action;
-    result = gui_encode_window_navigation(&event,
-        (Bytes){ payload, sizeof(payload) }, &size);
-    if (result != CORE_OK) return result;
-    return queue_payload(service, target->owner,
-                         GUI_WINDOW_NAVIGATION_REQUESTED, payload, size);
+    return send_navigation_event(service, target, request.action);
 }
 
 static ErrorCode handle_close_response(WindowServiceHandle service,
@@ -1041,8 +1249,33 @@ static ErrorCode handle_close_response(WindowServiceHandle service,
         return send_operation(service, client, request.prefix.request_id,
                               CORE_PERMISSION_DENIED);
     }
-    (void)request.close_serial;
-    (void)request.response;
+    if (window->lifecycle != GUI_WINDOW_LIFECYCLE_CLOSING ||
+        window->pending_close_serial == 0 ||
+        window->pending_close_serial != request.close_serial) {
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_INVALID_STATE);
+    }
+    if (request.response == GUI_CLOSE_ALLOW) {
+        result = destroy_window(service, window);
+        if (result != CORE_OK) return result;
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
+    if (request.response == GUI_CLOSE_DENY) {
+        window->pending_close_serial = 0;
+        window->lifecycle = window->lifecycle_before_close != 0 ?
+            window->lifecycle_before_close : GUI_WINDOW_LIFECYCLE_BACKGROUND;
+        window->lifecycle_before_close = 0;
+        result = publish_window_update(service, window,
+                                       GUI_WINDOW_REASON_CLIENT_REQUEST);
+        if (result != CORE_OK) return result;
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
+    if (request.response == GUI_CLOSE_DEFER) {
+        return send_operation(service, client, request.prefix.request_id,
+                              CORE_OK);
+    }
     return send_operation(service, client, request.prefix.request_id, CORE_OK);
 }
 
@@ -1136,8 +1369,146 @@ static void compositor_suspend(WindowServiceHandle service)
     service->compositor_source = 0;
     service->compositor_state = WINDOW_COMPOSITOR_SUSPENDED;
     for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
-        service->windows[index].scene_bound = false;
+        WindowRecord *window = &service->windows[index];
+        if (!window->active) continue;
+        window->scene_bound = false;
+        window->scene_operation_pending = false;
+        window->pending_scene_step = WINDOW_SCENE_STEP_NONE;
+        window->pending_scene_request_id = 0;
+        if (window->create_pending) {
+            (void)send_create_result(service, window->create_client,
+                                     window->create_request_id,
+                                     CORE_INVALID_STATE, 0);
+            clear_window(window);
+            continue;
+        }
+        if (window->lifecycle != GUI_WINDOW_LIFECYCLE_HIDDEN &&
+            window->lifecycle != GUI_WINDOW_LIFECYCLE_CLOSING &&
+            window->lifecycle != GUI_WINDOW_LIFECYCLE_SUSPENDED) {
+            window->lifecycle_before_suspend = window->lifecycle;
+            window->lifecycle = GUI_WINDOW_LIFECYCLE_SUSPENDED;
+            (void)send_service_event(
+                service, window, GUI_WINDOW_RENDERING_SUSPENDED,
+                GUI_WINDOW_REASON_DISPLAY_LOSS);
+            (void)send_lifecycle(service, window,
+                                  GUI_WINDOW_REASON_DISPLAY_LOSS);
+            (void)send_visibility(service, window);
+        }
     }
+}
+
+static ErrorCode restore_windows_after_compositor_bind(
+    WindowServiceHandle service)
+{
+    usize index;
+    ErrorCode first_error = CORE_OK;
+
+    for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+        WindowRecord *window = &service->windows[index];
+        if (!window->active) continue;
+        if (window->lifecycle == GUI_WINDOW_LIFECYCLE_SUSPENDED &&
+            window->lifecycle_before_suspend != 0) {
+            ErrorCode result;
+            window->lifecycle = window->lifecycle_before_suspend;
+            window->lifecycle_before_suspend = 0;
+            result = send_lifecycle(service, window,
+                                    GUI_WINDOW_REASON_RECOVERY);
+            if (result == CORE_OK) result = send_visibility(service, window);
+            if (result == CORE_OK) result = send_configure(service, window);
+            if (result != CORE_OK && first_error == CORE_OK) {
+                first_error = result;
+            }
+        }
+        {
+            ErrorCode result = apply_scene_policy(service, window);
+            if (result != CORE_OK && first_error == CORE_OK) {
+                first_error = result;
+            }
+        }
+    }
+    return first_error;
+}
+
+static ErrorCode scene_fail_window(WindowServiceHandle service,
+                                   WindowRecord *window,
+                                   ErrorCode error)
+{
+    if (window->create_pending) {
+        ErrorCode result = send_create_result(
+            service, window->create_client, window->create_request_id,
+            error, 0);
+        clear_window(window);
+        return result;
+    }
+    window->scene_bound = false;
+    window->scene_operation_pending = false;
+    window->pending_scene_step = WINDOW_SCENE_STEP_NONE;
+    window->pending_scene_request_id = 0;
+    if (window->lifecycle != GUI_WINDOW_LIFECYCLE_HIDDEN &&
+        window->lifecycle != GUI_WINDOW_LIFECYCLE_CLOSING &&
+        window->lifecycle != GUI_WINDOW_LIFECYCLE_SUSPENDED) {
+        ErrorCode result;
+        window->lifecycle_before_suspend = window->lifecycle;
+        window->lifecycle = GUI_WINDOW_LIFECYCLE_SUSPENDED;
+        result = send_service_event(
+            service, window, GUI_WINDOW_RENDERING_SUSPENDED,
+            GUI_WINDOW_REASON_DISPLAY_LOSS);
+        if (result == CORE_OK) {
+            result = send_lifecycle(service, window,
+                                    GUI_WINDOW_REASON_DISPLAY_LOSS);
+        }
+        if (result == CORE_OK) result = send_visibility(service, window);
+        return result;
+    }
+    return CORE_OK;
+}
+
+static ErrorCode scene_handle_result(WindowServiceHandle service,
+                                     const GuiBasicResult *result)
+{
+    WindowRecord *window = find_scene_request_window(
+        service, result->request_id);
+    WindowSceneStep completed;
+    WindowSceneStep next = WINDOW_SCENE_STEP_NONE;
+    ErrorCode code;
+
+    if (window == NULL) return CORE_OK;
+    completed = window->pending_scene_step;
+    window->scene_operation_pending = false;
+    window->pending_scene_step = WINDOW_SCENE_STEP_NONE;
+    window->pending_scene_request_id = 0;
+
+    if (result->error != CORE_OK) {
+        return scene_fail_window(service, window, result->error);
+    }
+
+    if (completed == WINDOW_SCENE_STEP_BIND) {
+        window->scene_bound = true;
+        if (window->create_pending) {
+            code = send_create_result(
+                service, window->create_client, window->create_request_id,
+                CORE_OK, window->window_id);
+            if (code != CORE_OK) return code;
+            window->create_pending = false;
+            window->create_client = NULL;
+            window->create_request_id = 0;
+        }
+        next = WINDOW_SCENE_STEP_GEOMETRY;
+    } else if (completed == WINDOW_SCENE_STEP_GEOMETRY) {
+        next = WINDOW_SCENE_STEP_STACK;
+    } else if (completed == WINDOW_SCENE_STEP_STACK) {
+        next = WINDOW_SCENE_STEP_VISIBILITY;
+    } else if (completed == WINDOW_SCENE_STEP_VISIBILITY) {
+        next = WINDOW_SCENE_STEP_NONE;
+    } else if (completed == WINDOW_SCENE_STEP_REMOVE) {
+        window->scene_bound = false;
+        if (window->active) next = WINDOW_SCENE_STEP_BIND;
+    }
+
+    if (next != WINDOW_SCENE_STEP_NONE && window->active) {
+        return scene_queue_step(service, window, next);
+    }
+    return CORE_OK;
 }
 
 static ErrorCode compositor_handle_message(WindowServiceHandle service,
@@ -1147,23 +1518,20 @@ static ErrorCode compositor_handle_message(WindowServiceHandle service,
         GuiBasicResult result;
         ErrorCode code = gui_decode_basic_result(
             message, GUI_COMPOSITOR_BIND_CONTROLLER_RESULT, &result);
-        usize index;
         if (code != CORE_OK) return code;
-        service->compositor_state = result.error == CORE_OK ?
-            WINDOW_COMPOSITOR_READY : WINDOW_COMPOSITOR_SUSPENDED;
-        if (service->compositor_state == WINDOW_COMPOSITOR_READY) {
-            for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
-                if (service->windows[index].active) {
-                    code = apply_scene_policy(service, &service->windows[index]);
-                    if (code != CORE_OK) return code;
-                }
-            }
+        if (result.error != CORE_OK) {
+            compositor_suspend(service);
+            return CORE_OK;
         }
-        return CORE_OK;
+        service->compositor_state = WINDOW_COMPOSITOR_READY;
+        return restore_windows_after_compositor_bind(service);
     }
     if (message->type == GUI_SCENE_RESULT) {
         GuiBasicResult result;
-        return gui_decode_basic_result(message, GUI_SCENE_RESULT, &result);
+        ErrorCode code = gui_decode_basic_result(
+            message, GUI_SCENE_RESULT, &result);
+        if (code != CORE_OK) return code;
+        return scene_handle_result(service, &result);
     }
     if (message->type == GUI_SCENE_BINDING_LOST) {
         GuiSceneBindingLostEvent event;
@@ -1231,6 +1599,7 @@ static ErrorCode handle_compositor_event(WindowServiceHandle service,
             }
             result = compositor_handle_message(service, &message);
             (void)ipc_message_destroy(&message);
+            if (service->compositor_connection == NULL) break;
             if (result != CORE_OK) {
                 compositor_suspend(service);
                 return CORE_OK;
@@ -1328,15 +1697,70 @@ static bool key_is_shell_reserved(u16 code)
            code == LINUX_KEY_VOLUMEUP || code == LINUX_KEY_VOLUMEDOWN;
 }
 
+static ErrorCode input_timestamp(MonotonicTime *out_time)
+{
+    return time_monotonic_now(out_time);
+}
+
+static u32 clamp_u32(u32 value, u32 min, u32 max)
+{
+    if (max < min) max = min;
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+static u32 physical_to_logical(WindowServiceHandle service, u32 value)
+{
+    u64 scaled;
+
+    if (service->scale == 0) return value;
+    scaled = ((u64)value * (u64)GUI_SCALE_1X) / (u64)service->scale;
+    return scaled > 0xffffffffULL ? 0xffffffffU : (u32)scaled;
+}
+
+static void normalize_input_point(WindowServiceHandle service, u32 raw_x,
+                                  u32 raw_y, i32 *out_x, i32 *out_y)
+{
+    u32 x = physical_to_logical(service, raw_x);
+    u32 y = physical_to_logical(service, raw_y);
+    u32 nx = x;
+    u32 ny = y;
+    u32 max_x = service->viewport_width == 0 ? 0 :
+                service->viewport_width - 1;
+    u32 max_y = service->viewport_height == 0 ? 0 :
+                service->viewport_height - 1;
+
+    if (service->orientation == GUI_ORIENTATION_RIGHT) {
+        nx = y > max_x ? 0 : max_x - y;
+        ny = x;
+    } else if (service->orientation == GUI_ORIENTATION_INVERTED) {
+        nx = x > max_x ? 0 : max_x - x;
+        ny = y > max_y ? 0 : max_y - y;
+    } else if (service->orientation == GUI_ORIENTATION_LEFT) {
+        nx = y;
+        ny = x > max_y ? 0 : max_y - x;
+    }
+
+    nx = clamp_u32(nx, 0, max_x);
+    ny = clamp_u32(ny, 0, max_y);
+    *out_x = (i32)(nx << 8);
+    *out_y = (i32)(ny << 8);
+}
+
 static ErrorCode route_io_key(WindowServiceHandle service, u16 code, i32 value)
 {
     GuiWindowKeyEvent event;
+    MonotonicTime now;
+    ErrorCode result;
 
     if (key_is_shell_reserved(code)) return CORE_OK;
     if (value != 0 && value != 1 && value != 2) return CORE_OK;
+    result = input_timestamp(&now);
+    if (result != CORE_OK) return result;
     event.window_id = 0;
     event.input_serial = next_input_serial(service);
-    event.timestamp_ms = 0;
+    event.timestamp_ms = now;
     event.key_code = code;
     event.phase = value == 0 ? GUI_KEY_UP :
                   value == 2 ? GUI_KEY_REPEAT : GUI_KEY_DOWN;
@@ -1348,15 +1772,23 @@ static ErrorCode route_io_touch_contact(WindowServiceHandle service,
                                         bool down)
 {
     GuiWindowTouchEvent event;
+    MonotonicTime now;
+    ErrorCode result;
+    i32 x;
+    i32 y;
 
     if (down == service->io_touch_down) return CORE_OK;
+    result = input_timestamp(&now);
+    if (result != CORE_OK) return result;
+    normalize_input_point(service, service->io_touch_x, service->io_touch_y,
+                          &x, &y);
     event.window_id = 0;
     event.input_serial = next_input_serial(service);
-    event.timestamp_ms = 0;
+    event.timestamp_ms = now;
     event.touch_id = 0;
     event.phase = down ? GUI_TOUCH_DOWN : GUI_TOUCH_UP;
-    event.x = (i32)(service->io_touch_x << 8);
-    event.y = (i32)(service->io_touch_y << 8);
+    event.x = x;
+    event.y = y;
     service->io_touch_down = down;
     return window_service_route_touch(service, &event);
 }
@@ -1364,15 +1796,23 @@ static ErrorCode route_io_touch_contact(WindowServiceHandle service,
 static ErrorCode route_io_touch_move(WindowServiceHandle service)
 {
     GuiWindowTouchEvent event;
+    MonotonicTime now;
+    ErrorCode result;
+    i32 x;
+    i32 y;
 
     if (!service->io_touch_down) return CORE_OK;
+    result = input_timestamp(&now);
+    if (result != CORE_OK) return result;
+    normalize_input_point(service, service->io_touch_x, service->io_touch_y,
+                          &x, &y);
     event.window_id = 0;
     event.input_serial = next_input_serial(service);
-    event.timestamp_ms = 0;
+    event.timestamp_ms = now;
     event.touch_id = 0;
     event.phase = GUI_TOUCH_MOVE;
-    event.x = (i32)(service->io_touch_x << 8);
-    event.y = (i32)(service->io_touch_y << 8);
+    event.x = x;
+    event.y = y;
     return window_service_route_touch(service, &event);
 }
 
@@ -1380,10 +1820,14 @@ static ErrorCode route_io_pointer_button(WindowServiceHandle service,
                                          bool down)
 {
     GuiWindowPointerEvent event;
+    MonotonicTime now;
+    ErrorCode result;
 
+    result = input_timestamp(&now);
+    if (result != CORE_OK) return result;
     event.window_id = 0;
     event.input_serial = next_input_serial(service);
-    event.timestamp_ms = 0;
+    event.timestamp_ms = now;
     event.pointer_id = 0;
     event.phase = down ? GUI_POINTER_DOWN : GUI_POINTER_UP;
     event.buttons = down ? 1 : 0;
@@ -1397,14 +1841,18 @@ static ErrorCode route_io_pointer_move(WindowServiceHandle service,
                                        i32 dx, i32 dy)
 {
     GuiWindowPointerEvent event;
+    MonotonicTime now;
+    ErrorCode result;
 
     service->io_pointer_x += dx;
     service->io_pointer_y += dy;
     if (service->io_pointer_x < 0) service->io_pointer_x = 0;
     if (service->io_pointer_y < 0) service->io_pointer_y = 0;
+    result = input_timestamp(&now);
+    if (result != CORE_OK) return result;
     event.window_id = 0;
     event.input_serial = next_input_serial(service);
-    event.timestamp_ms = 0;
+    event.timestamp_ms = now;
     event.pointer_id = 0;
     event.phase = GUI_POINTER_MOVE;
     event.buttons = 0;
@@ -1476,8 +1924,11 @@ static ErrorCode io_handle_message(WindowServiceHandle service,
         ErrorCode code = gui_decode_io_result(
             message, GUI_IO_SUBSCRIBE_RESULT, &result);
         if (code != CORE_OK) return code;
-        service->io_state = result.error == CORE_OK ?
-            WINDOW_IO_READY : WINDOW_IO_SUSPENDED;
+        if (result.error != CORE_OK) {
+            io_suspend(service);
+            return CORE_OK;
+        }
+        service->io_state = WINDOW_IO_READY;
         return CORE_OK;
     }
     if (message->type == GUI_IO_INPUT_FRAME) {
@@ -1541,6 +1992,7 @@ static ErrorCode handle_io_event(WindowServiceHandle service, EventMask mask)
             }
             result = io_handle_message(service, &message);
             (void)ipc_message_destroy(&message);
+            if (service->io_connection == NULL) break;
             if (result != CORE_OK) {
                 io_suspend(service);
                 return CORE_OK;
@@ -1571,6 +2023,21 @@ static ErrorCode io_begin_connect(WindowServiceHandle service,
 fail:
     (void)ipc_connection_close(&connection);
     return result;
+}
+
+static ErrorCode reconnect_dependencies(WindowServiceHandle service)
+{
+    if (service->has_compositor_endpoint &&
+        service->compositor_state == WINDOW_COMPOSITOR_SUSPENDED &&
+        service->compositor_connection == NULL) {
+        (void)compositor_begin_connect(service, &service->compositor_endpoint);
+    }
+    if (service->has_io_endpoint &&
+        service->io_state == WINDOW_IO_SUSPENDED &&
+        service->io_connection == NULL) {
+        (void)io_begin_connect(service, &service->io_endpoint);
+    }
+    return CORE_OK;
 }
 
 static ErrorCode accept_clients(WindowServiceHandle service)
@@ -1724,6 +2191,18 @@ ErrorCode window_service_create_config(
             service->controller_token[index] = config->controller_token[index];
         }
     }
+    if (config->compositor_endpoint != NULL &&
+        config->controller_token != NULL) {
+        result = string_copy(config->compositor_endpoint,
+                             &service->compositor_endpoint);
+        if (result != CORE_OK) goto fail;
+        service->has_compositor_endpoint = true;
+    }
+    if (config->io_endpoint != NULL) {
+        result = string_copy(config->io_endpoint, &service->io_endpoint);
+        if (result != CORE_OK) goto fail;
+        service->has_io_endpoint = true;
+    }
 
     result = eventloop_create(&service->loop);
     if (result != CORE_OK) goto fail;
@@ -1736,14 +2215,13 @@ ErrorCode window_service_create_config(
         &service->server_source);
     if (result != CORE_OK) goto fail;
     service->compositor_state = WINDOW_COMPOSITOR_DISABLED;
-    if (config->compositor_endpoint != NULL &&
-        config->controller_token != NULL) {
-        result = compositor_begin_connect(service, config->compositor_endpoint);
+    if (service->has_compositor_endpoint) {
+        result = compositor_begin_connect(service, &service->compositor_endpoint);
         if (result != CORE_OK) goto fail;
     }
     service->io_state = WINDOW_IO_DISABLED;
-    if (config->io_endpoint != NULL) {
-        result = io_begin_connect(service, config->io_endpoint);
+    if (service->has_io_endpoint) {
+        result = io_begin_connect(service, &service->io_endpoint);
         if (result != CORE_OK) goto fail;
     }
 
@@ -1764,6 +2242,8 @@ ErrorCode window_service_poll(WindowServiceHandle service,
     ErrorCode result;
 
     if (service == NULL) return CORE_INVALID_ARGUMENT;
+    result = reconnect_dependencies(service);
+    if (result != CORE_OK) return result;
     result = eventloop_wait(service->loop, events, WINDOW_SERVICE_EVENT_MAX,
                             timeout_ms, &count);
     if (result != CORE_OK) return result;
@@ -1784,7 +2264,7 @@ ErrorCode window_service_poll(WindowServiceHandle service,
         }
         if (result != CORE_OK) return result;
     }
-    return CORE_OK;
+    return reconnect_dependencies(service);
 }
 
 ErrorCode window_service_close(WindowServiceHandle *service)
@@ -1805,6 +2285,12 @@ ErrorCode window_service_close(WindowServiceHandle *service)
     if (handle->io_connection != NULL) {
         (void)eventloop_remove_source(handle->loop, handle->io_source);
         (void)ipc_connection_close(&handle->io_connection);
+    }
+    if (handle->has_compositor_endpoint) {
+        (void)string_destroy(&handle->compositor_endpoint);
+    }
+    if (handle->has_io_endpoint) {
+        (void)string_destroy(&handle->io_endpoint);
     }
     if (handle->server != NULL) {
         (void)eventloop_remove_source(handle->loop, handle->server_source);
@@ -1852,15 +2338,60 @@ ErrorCode window_service_set_display_metrics(
     return first_error;
 }
 
-static WindowRecord *foreground_window(WindowServiceHandle service)
+static bool window_can_receive_input(const WindowRecord *window)
 {
-    WindowRecord *window = find_window(service, service->active_window_id);
+    return window != NULL && window->active &&
+           window->lifecycle == GUI_WINDOW_LIFECYCLE_FOREGROUND &&
+           window->owner != NULL && window->owner->connection != NULL;
+}
 
-    if (window == NULL ||
-        window->lifecycle != GUI_WINDOW_LIFECYCLE_FOREGROUND) {
+static bool modal_blocks_active_window(WindowServiceHandle service,
+                                       const WindowRecord *window)
+{
+    if (window->role != GUI_WINDOW_ROLE_DIALOG &&
+        window->role != GUI_WINDOW_ROLE_TRANSIENT) {
+        return false;
+    }
+    if (window->parent_id == 0) return true;
+    return window->parent_id == service->active_window_id;
+}
+
+static WindowRecord *input_target_window(WindowServiceHandle service,
+                                         bool keyboard)
+{
+    WindowRecord *active = find_window(service, service->active_window_id);
+    WindowRecord *best = NULL;
+    usize index;
+
+    for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+        WindowRecord *window = &service->windows[index];
+        if (window_can_receive_input(window) &&
+            window->role == GUI_WINDOW_ROLE_LOCK) {
+            if (best == NULL || window->window_id > best->window_id) {
+                best = window;
+            }
+        }
+    }
+    if (best != NULL) return best;
+
+    best = NULL;
+    for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+        WindowRecord *window = &service->windows[index];
+        if (window_can_receive_input(window) &&
+            modal_blocks_active_window(service, window)) {
+            if (best == NULL || window->window_id > best->window_id) {
+                best = window;
+            }
+        }
+    }
+    if (best != NULL) return best;
+
+    if (!window_can_receive_input(active)) return NULL;
+    if (keyboard &&
+        (active->flags & GUI_WINDOW_FLAG_ACCEPTS_KEYBOARD) == 0) {
         return NULL;
     }
-    return window;
+    return active;
 }
 
 ErrorCode window_service_route_touch(WindowServiceHandle service,
@@ -1876,7 +2407,7 @@ ErrorCode window_service_route_touch(WindowServiceHandle service,
         return CORE_INVALID_ARGUMENT;
     }
     if (event->phase == GUI_TOUCH_DOWN) {
-        window = foreground_window(service);
+        window = input_target_window(service, false);
         if (window == NULL) return CORE_NOT_FOUND;
         service->touch_active = true;
         service->touch_id = event->touch_id;
@@ -1915,7 +2446,7 @@ ErrorCode window_service_route_pointer(WindowServiceHandle service,
     if (service == NULL || event == NULL || event->input_serial == 0) {
         return CORE_INVALID_ARGUMENT;
     }
-    window = foreground_window(service);
+    window = input_target_window(service, false);
     if (window == NULL) return CORE_NOT_FOUND;
     routed = *event;
     routed.window_id = window->window_id;
@@ -1938,11 +2469,8 @@ ErrorCode window_service_route_key(WindowServiceHandle service,
     if (service == NULL || event == NULL || event->input_serial == 0) {
         return CORE_INVALID_ARGUMENT;
     }
-    window = foreground_window(service);
+    window = input_target_window(service, true);
     if (window == NULL) return CORE_NOT_FOUND;
-    if ((window->flags & GUI_WINDOW_FLAG_ACCEPTS_KEYBOARD) == 0) {
-        return CORE_PERMISSION_DENIED;
-    }
     routed = *event;
     routed.window_id = window->window_id;
     result = gui_encode_window_key(

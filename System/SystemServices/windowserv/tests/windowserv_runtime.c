@@ -38,6 +38,20 @@ static ErrorCode send_message(IpcConnectionHandle client, IpcMessageType type,
     return ipc_connection_flush(client, &pending);
 }
 
+static ErrorCode send_basic_message(IpcConnectionHandle client,
+                                    IpcMessageType type,
+                                    ErrorCode error, u64 request_id)
+{
+    GuiBasicResult basic = { error, request_id };
+    u8 payload[64];
+    usize size;
+    ErrorCode result = gui_encode_basic_result(
+        &basic, (Bytes){ payload, sizeof(payload) }, &size);
+
+    if (result != CORE_OK) return result;
+    return send_message(client, type, payload, size);
+}
+
 static ErrorCode receive_message_type(WindowServiceHandle service,
                                       IpcConnectionHandle client,
                                       IpcMessageType type,
@@ -403,10 +417,265 @@ static void test_io_input_frame_routing(void)
     EXPECT(142, string_destroy(&endpoint) == CORE_OK);
 }
 
+static void test_scene_bind_result_controls_create(void)
+{
+    String endpoint;
+    String compositor_endpoint;
+    IpcServerHandle compositor_server;
+    IpcConnectionHandle compositor_peer;
+    WindowServiceHandle service;
+    WindowServiceConfig config;
+    IpcConnectionHandle app;
+    u8 shell_token[WINDOW_SERVICE_SHELL_TOKEN_SIZE];
+    u8 controller_token[WINDOW_SERVICE_CONTROLLER_TOKEN_SIZE];
+    u8 payload[320];
+    usize size;
+    IpcMessage message;
+    GuiControllerBindRequest controller_bind;
+    GuiWindowCreateRequest create = { 0 };
+    GuiSceneBindRequest scene_bind;
+    GuiWindowCreateResult created;
+
+    fill_token(shell_token, WINDOW_SERVICE_SHELL_TOKEN_SIZE, 110);
+    fill_token(controller_token, WINDOW_SERVICE_CONTROLLER_TOKEN_SIZE, 140);
+    EXPECT(150, string_from_c_str("/tmp/punos-windowserv-scene-window",
+                                  &endpoint) == CORE_OK);
+    EXPECT(151, string_from_c_str("/tmp/punos-windowserv-scene-compositor",
+                                  &compositor_endpoint) == CORE_OK);
+    EXPECT(152, ipc_server_create(&compositor_endpoint,
+                                  &compositor_server) == CORE_OK);
+
+    config.endpoint = &endpoint;
+    config.compositor_endpoint = &compositor_endpoint;
+    config.io_endpoint = NULL;
+    config.controller_token = controller_token;
+    config.shell_token = shell_token;
+    config.viewport_width = 100;
+    config.viewport_height = 200;
+    config.scale = GUI_SCALE_1X;
+    config.orientation = GUI_ORIENTATION_NORMAL;
+    config.safe_insets = (GuiInsets){ 0, 0, 0, 0 };
+    EXPECT(153, window_service_create_config(&config, &service) == CORE_OK);
+    EXPECT(154, accept_peer(compositor_server, service,
+                            &compositor_peer) == CORE_OK);
+    EXPECT(155, receive_message_type(service, compositor_peer,
+                                     GUI_COMPOSITOR_BIND_CONTROLLER,
+                                     &message) == CORE_OK);
+    EXPECT(156, gui_decode_controller_bind(&message, &controller_bind) ==
+                CORE_OK);
+    EXPECT(157, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(158, send_basic_message(compositor_peer,
+                                   GUI_COMPOSITOR_BIND_CONTROLLER_RESULT,
+                                   CORE_OK,
+                                   controller_bind.prefix.request_id) ==
+                CORE_OK);
+    EXPECT(159, window_service_poll(service, 0) == CORE_OK);
+
+    EXPECT(160, connect_client(&endpoint, service, &app) == CORE_OK);
+    create.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    create.prefix.request_id = 1;
+    create.surface_id = 500;
+    fill_token(create.surface_bind_token, GUI_SURFACE_BIND_TOKEN_SIZE, 180);
+    create.role = GUI_WINDOW_ROLE_APP;
+    create.flags = GUI_WINDOW_FLAG_ACCEPTS_KEYBOARD;
+    EXPECT(161, gui_encode_window_create(&create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(162, send_message(app, GUI_WINDOW_CREATE, payload, size) == CORE_OK);
+    EXPECT(163, receive_message_type(service, compositor_peer,
+                                     GUI_SCENE_BIND_WINDOW,
+                                     &message) == CORE_OK);
+    EXPECT(164, gui_decode_scene_bind(&message, &scene_bind) == CORE_OK &&
+                scene_bind.surface_id == 500);
+    EXPECT(165, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(166, send_basic_message(compositor_peer, GUI_SCENE_RESULT,
+                                   CORE_PERMISSION_DENIED,
+                                   scene_bind.prefix.request_id) == CORE_OK);
+    EXPECT(167, receive_message_type(service, app, GUI_WINDOW_CREATE_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(168, gui_decode_window_create_result(&message, &created) ==
+                CORE_OK &&
+                created.result.error == CORE_PERMISSION_DENIED &&
+                created.window_id == 0);
+    EXPECT(169, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(170, ipc_connection_close(&app) == CORE_OK);
+    EXPECT(171, ipc_connection_close(&compositor_peer) == CORE_OK);
+    EXPECT(172, ipc_server_close(&compositor_server) == CORE_OK);
+    EXPECT(173, window_service_close(&service) == CORE_OK);
+    EXPECT(174, string_destroy(&compositor_endpoint) == CORE_OK);
+    EXPECT(175, string_destroy(&endpoint) == CORE_OK);
+}
+
+static void test_modal_and_lock_input_routing(void)
+{
+    String endpoint;
+    WindowServiceHandle service;
+    IpcConnectionHandle app;
+    IpcConnectionHandle shell;
+    u8 shell_token[WINDOW_SERVICE_SHELL_TOKEN_SIZE];
+    u8 payload[320];
+    usize size;
+    IpcMessage message;
+    GuiShellBindRequest bind = { 0 };
+    GuiWindowCreateRequest create = { 0 };
+    GuiWindowCreateResult app_created;
+    GuiWindowCreateResult dialog_created;
+    GuiWindowCreateResult lock_created;
+    GuiWindowIdRequest show;
+    GuiShellActivateRequest activate;
+    GuiWindowTouchEvent touch;
+    GuiWindowTouchEvent decoded_touch;
+
+    fill_token(shell_token, WINDOW_SERVICE_SHELL_TOKEN_SIZE, 210);
+    EXPECT(200, string_from_c_str("/tmp/punos-windowserv-modal-lock",
+                                  &endpoint) == CORE_OK);
+    EXPECT(201, window_service_create(&endpoint, shell_token, &service) ==
+                CORE_OK);
+    EXPECT(202, connect_client(&endpoint, service, &app) == CORE_OK);
+    EXPECT(203, connect_client(&endpoint, service, &shell) == CORE_OK);
+
+    bind.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    bind.prefix.request_id = 1;
+    fill_token(bind.shell_token, GUI_SHELL_TOKEN_SIZE, 210);
+    EXPECT(204, gui_encode_shell_bind(&bind,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(205, send_message(shell, GUI_WINDOW_BIND_SHELL, payload, size) ==
+                CORE_OK);
+    EXPECT(206, receive_message_type(service, shell,
+                                     GUI_WINDOW_BIND_SHELL_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(207, ipc_message_destroy(&message) == CORE_OK);
+
+    create.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    create.prefix.request_id = 2;
+    create.surface_id = 600;
+    fill_token(create.surface_bind_token, GUI_SURFACE_BIND_TOKEN_SIZE, 220);
+    create.role = GUI_WINDOW_ROLE_APP;
+    create.flags = GUI_WINDOW_FLAG_ACCEPTS_KEYBOARD;
+    EXPECT(208, gui_encode_window_create(&create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(209, send_message(app, GUI_WINDOW_CREATE, payload, size) == CORE_OK);
+    EXPECT(210, receive_message_type(service, app, GUI_WINDOW_CREATE_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(211, gui_decode_window_create_result(&message, &app_created) ==
+                CORE_OK);
+    EXPECT(212, ipc_message_destroy(&message) == CORE_OK);
+
+    show.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    show.prefix.request_id = 3;
+    show.window_id = app_created.window_id;
+    EXPECT(213, gui_encode_window_id_request(&show,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(214, send_message(app, GUI_WINDOW_SHOW, payload, size) == CORE_OK);
+    EXPECT(215, receive_message_type(service, app,
+                                     GUI_WINDOW_OPERATION_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(216, ipc_message_destroy(&message) == CORE_OK);
+
+    activate.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    activate.prefix.request_id = 4;
+    activate.window_id = app_created.window_id;
+    EXPECT(217, gui_encode_shell_activate(&activate,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(218, send_message(shell, GUI_SHELL_ACTIVATE, payload, size) ==
+                CORE_OK);
+    EXPECT(219, receive_message_type(service, shell,
+                                     GUI_WINDOW_OPERATION_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(220, ipc_message_destroy(&message) == CORE_OK);
+
+    create.prefix.request_id = 5;
+    create.surface_id = 601;
+    fill_token(create.surface_bind_token, GUI_SURFACE_BIND_TOKEN_SIZE, 230);
+    create.role = GUI_WINDOW_ROLE_DIALOG;
+    create.parent_id = app_created.window_id;
+    create.flags = 0;
+    EXPECT(221, gui_encode_window_create(&create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(222, send_message(app, GUI_WINDOW_CREATE, payload, size) == CORE_OK);
+    EXPECT(223, receive_message_type(service, app, GUI_WINDOW_CREATE_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(224, gui_decode_window_create_result(&message, &dialog_created) ==
+                CORE_OK);
+    EXPECT(225, ipc_message_destroy(&message) == CORE_OK);
+
+    show.prefix.request_id = 6;
+    show.window_id = dialog_created.window_id;
+    EXPECT(226, gui_encode_window_id_request(&show,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(227, send_message(app, GUI_WINDOW_SHOW, payload, size) == CORE_OK);
+    EXPECT(228, receive_message_type(service, app,
+                                     GUI_WINDOW_OPERATION_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(229, ipc_message_destroy(&message) == CORE_OK);
+
+    touch.window_id = 0;
+    touch.input_serial = 70;
+    touch.timestamp_ms = 1000;
+    touch.touch_id = 2;
+    touch.phase = GUI_TOUCH_DOWN;
+    touch.x = 1 << 8;
+    touch.y = 2 << 8;
+    EXPECT(230, window_service_route_touch(service, &touch) == CORE_OK);
+    EXPECT(231, receive_message_type(service, app, GUI_WINDOW_TOUCH,
+                                     &message) == CORE_OK);
+    EXPECT(232, gui_decode_window_touch(&message, &decoded_touch) == CORE_OK &&
+                decoded_touch.window_id == dialog_created.window_id);
+    EXPECT(233, ipc_message_destroy(&message) == CORE_OK);
+    touch.input_serial = 71;
+    touch.phase = GUI_TOUCH_UP;
+    EXPECT(234, window_service_route_touch(service, &touch) == CORE_OK);
+    EXPECT(235, receive_message_type(service, app, GUI_WINDOW_TOUCH,
+                                     &message) == CORE_OK);
+    EXPECT(236, ipc_message_destroy(&message) == CORE_OK);
+
+    create.prefix.request_id = 7;
+    create.surface_id = 602;
+    fill_token(create.surface_bind_token, GUI_SURFACE_BIND_TOKEN_SIZE, 240);
+    create.role = GUI_WINDOW_ROLE_LOCK;
+    create.parent_id = 0;
+    create.flags = 0;
+    EXPECT(237, gui_encode_window_create(&create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(238, send_message(shell, GUI_WINDOW_CREATE, payload, size) == CORE_OK);
+    EXPECT(239, receive_message_type(service, shell, GUI_WINDOW_CREATE_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(240, gui_decode_window_create_result(&message, &lock_created) ==
+                CORE_OK);
+    EXPECT(241, ipc_message_destroy(&message) == CORE_OK);
+
+    show.prefix.request_id = 8;
+    show.window_id = lock_created.window_id;
+    EXPECT(242, gui_encode_window_id_request(&show,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(243, send_message(shell, GUI_WINDOW_SHOW, payload, size) == CORE_OK);
+    EXPECT(244, receive_message_type(service, shell,
+                                     GUI_WINDOW_OPERATION_RESULT,
+                                     &message) == CORE_OK);
+    EXPECT(245, ipc_message_destroy(&message) == CORE_OK);
+
+    touch.input_serial = 72;
+    touch.touch_id = 3;
+    touch.phase = GUI_TOUCH_DOWN;
+    EXPECT(246, window_service_route_touch(service, &touch) == CORE_OK);
+    EXPECT(247, receive_message_type(service, shell, GUI_WINDOW_TOUCH,
+                                     &message) == CORE_OK);
+    EXPECT(248, gui_decode_window_touch(&message, &decoded_touch) == CORE_OK &&
+                decoded_touch.window_id == lock_created.window_id);
+    EXPECT(249, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(250, ipc_connection_close(&app) == CORE_OK);
+    EXPECT(251, ipc_connection_close(&shell) == CORE_OK);
+    EXPECT(252, window_service_close(&service) == CORE_OK);
+    EXPECT(253, string_destroy(&endpoint) == CORE_OK);
+}
+
 int main(void)
 {
     test_window_lifecycle_input_and_cleanup();
     test_io_input_frame_routing();
+    test_scene_bind_result_controls_create();
+    test_modal_and_lock_input_routing();
     check_passed();
     return 0;
 }
