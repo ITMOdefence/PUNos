@@ -4,6 +4,7 @@
 #include <sys/process.h>
 
 #define DEFAULT_ENDPOINT "/run/punos/compositorserv.sock"
+#define DEFAULT_DISPLAY_ENDPOINT "/run/punos/displayserv.sock"
 
 static bool option_value(const char *argument, const char *name,
                          const char **out_value)
@@ -53,10 +54,14 @@ int main(int argc, char **argv, char **envp)
 {
     const char *endpoint_text = DEFAULT_ENDPOINT;
     const char *controller_token_text = NULL;
+    const char *presenter_token_text = NULL;
+    const char *display_endpoint_text = DEFAULT_DISPLAY_ENDPOINT;
     String endpoint = { NULL, 0 };
+    String display_endpoint = { NULL, 0 };
     CompositorServiceConfig config;
     CompositorServiceHandle service = NULL;
     u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE];
+    u8 presenter_token[COMPOSITOR_SERVICE_PRESENTER_TOKEN_SIZE];
     i32 index;
     ErrorCode result;
 
@@ -68,20 +73,30 @@ int main(int argc, char **argv, char **envp)
             endpoint_text = value;
         } else if (option_value(argv[index], "--controller-token", &value)) {
             controller_token_text = value;
+        } else if (option_value(argv[index], "--presenter-token", &value)) {
+            presenter_token_text = value;
+        } else if (option_value(argv[index], "--display-endpoint", &value)) {
+            display_endpoint_text = value;
         } else {
             return PROCESS_EXIT_INVALID_ARGUMENT;
         }
     }
 
-    if (!parse_token(controller_token_text, controller_token)) {
+    if (!parse_token(controller_token_text, controller_token) ||
+        !parse_token(presenter_token_text, presenter_token)) {
         return PROCESS_EXIT_INVALID_ARGUMENT;
     }
 
     result = string_from_c_str(endpoint_text, &endpoint);
+    if (result == CORE_OK) {
+        result = string_from_c_str(display_endpoint_text, &display_endpoint);
+    }
     if (result != CORE_OK) goto initialization_failed;
 
     config.endpoint = &endpoint;
     config.controller_token = controller_token;
+    config.display_endpoint = &display_endpoint;
+    config.presenter_token = presenter_token;
     result = compositor_service_create_config(&config, &service);
     if (result != CORE_OK) goto initialization_failed;
 
@@ -90,10 +105,12 @@ int main(int argc, char **argv, char **envp)
     }
 
     (void)compositor_service_close(&service);
+    (void)string_destroy(&display_endpoint);
     (void)string_destroy(&endpoint);
     return PROCESS_EXIT_FAILURE;
 
 initialization_failed:
+    (void)string_destroy(&display_endpoint);
     (void)string_destroy(&endpoint);
     return PROCESS_EXIT_INITIALIZATION_FAILED;
 }

@@ -89,6 +89,15 @@ typedef struct CompositorSceneNode {
     u64 display_id;
 } CompositorSceneNode;
 
+typedef enum CompositorDisplayState {
+    COMPOSITOR_DISPLAY_DISABLED = 0,
+    COMPOSITOR_DISPLAY_CONNECTING = 1,
+    COMPOSITOR_DISPLAY_BINDING = 2,
+    COMPOSITOR_DISPLAY_LISTING = 3,
+    COMPOSITOR_DISPLAY_READY = 4,
+    COMPOSITOR_DISPLAY_SUSPENDED = 5
+} CompositorDisplayState;
+
 struct CompositorServiceHandle {
     MemoryBlock handle_block;
     EventLoopHandle loop;
@@ -101,6 +110,13 @@ struct CompositorServiceHandle {
     u64 next_binding_event_serial;
     u64 next_surface_id;
     u64 next_buffer_id;
+    IpcConnectionHandle display_connection;
+    EventSourceId display_source;
+    CompositorDisplayState display_state;
+    u8 presenter_token[COMPOSITOR_SERVICE_PRESENTER_TOKEN_SIZE];
+    GuiDisplayInfo display_info;
+    bool display_info_valid;
+    u64 next_display_request_id;
 };
 
 static void remove_client(CompositorServiceHandle service,
@@ -326,6 +342,239 @@ static bool token_equal(const u8 *a, const u8 *b, usize size)
     u8 difference = 0;
     for (index = 0; index < size; ++index) difference |= (u8)(a[index] ^ b[index]);
     return difference == 0;
+}
+
+static ErrorCode display_update_interest(CompositorServiceHandle service,
+                                         bool writable)
+{
+    return eventloop_update_fd(
+        service->loop, service->display_source,
+        EVENT_READABLE | EVENT_ERROR | EVENT_HANGUP |
+        (writable ? EVENT_WRITABLE : 0));
+}
+
+static ErrorCode display_queue(CompositorServiceHandle service,
+                               IpcMessageType type, u8 *data, usize size)
+{
+    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    bool pending;
+    ErrorCode result;
+
+    if (service->display_connection == NULL) return CORE_INVALID_STATE;
+    result = ipc_connection_send(service->display_connection, &message);
+    if (result != CORE_OK) return result;
+    result = ipc_connection_flush(service->display_connection, &pending);
+    if (result != CORE_OK) return result;
+    return display_update_interest(service, pending);
+}
+
+static u64 next_display_request_id(CompositorServiceHandle service)
+{
+    u64 value = service->next_display_request_id++;
+    if (value == 0) value = service->next_display_request_id++;
+    return value;
+}
+
+static ErrorCode display_send_bind(CompositorServiceHandle service)
+{
+    GuiPresenterBindRequest request;
+    u8 payload[64];
+    usize size;
+    usize index;
+    ErrorCode result;
+
+    request.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    request.prefix.request_id = next_display_request_id(service);
+    for (index = 0; index < COMPOSITOR_SERVICE_PRESENTER_TOKEN_SIZE; ++index) {
+        request.presenter_token[index] = service->presenter_token[index];
+    }
+    result = gui_encode_presenter_bind(&request,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    result = display_queue(service, GUI_DISPLAY_BIND_PRESENTER, payload, size);
+    if (result == CORE_OK) service->display_state = COMPOSITOR_DISPLAY_BINDING;
+    return result;
+}
+
+static ErrorCode display_send_list(CompositorServiceHandle service)
+{
+    GuiRequestPrefix prefix;
+    u8 payload[16];
+    usize size;
+    ErrorCode result;
+
+    prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    prefix.request_id = next_display_request_id(service);
+    result = gui_encode_versioned_request(prefix,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    result = display_queue(service, GUI_DISPLAY_LIST, payload, size);
+    if (result == CORE_OK) service->display_state = COMPOSITOR_DISPLAY_LISTING;
+    return result;
+}
+
+static void display_suspend(CompositorServiceHandle service)
+{
+    if (service->display_connection != NULL) {
+        (void)eventloop_remove_source(service->loop, service->display_source);
+        (void)ipc_connection_close(&service->display_connection);
+    }
+    service->display_source = 0;
+    service->display_state = COMPOSITOR_DISPLAY_SUSPENDED;
+    service->display_info_valid = false;
+}
+
+static ErrorCode display_handle_message(CompositorServiceHandle service,
+                                        IpcMessage *message)
+{
+    if (message->type == GUI_DISPLAY_BIND_PRESENTER_RESULT) {
+        GuiBasicResult result;
+        ErrorCode code = gui_decode_basic_result(message,
+            GUI_DISPLAY_BIND_PRESENTER_RESULT, &result);
+        if (code != CORE_OK) return code;
+        if (result.error != CORE_OK) return result.error;
+        return display_send_list(service);
+    }
+    if (message->type == GUI_DISPLAY_LIST_RESULT) {
+        GuiDisplayListHeader header;
+        usize first_display;
+        ErrorCode code = gui_decode_display_list_header(message, &header,
+                                                         &first_display);
+        if (code != CORE_OK) return code;
+        if (header.result.error != CORE_OK) return header.result.error;
+        service->display_info_valid = false;
+        if (header.display_count != 0) {
+            usize consumed;
+            Bytes source = { message->payload.data + first_display,
+                             message->payload.size - first_display };
+            code = gui_decode_display_info(source, &service->display_info,
+                                           &consumed);
+            if (code != CORE_OK) return code;
+            service->display_info_valid = true;
+        }
+        service->display_state = COMPOSITOR_DISPLAY_READY;
+        return CORE_OK;
+    }
+    if (message->type == GUI_DISPLAY_CHANGED ||
+        message->type == GUI_DISPLAY_ADDED) {
+        u64 serial;
+        GuiDisplayInfo info;
+        ErrorCode code = gui_decode_display_info_event(message, message->type,
+                                                        &serial, &info);
+        (void)serial;
+        if (code != CORE_OK) return code;
+        service->display_info = info;
+        service->display_info_valid = true;
+        return CORE_OK;
+    }
+    if (message->type == GUI_DISPLAY_REMOVED) {
+        service->display_info_valid = false;
+        return CORE_OK;
+    }
+    if (message->type == GUI_DISPLAY_BACKEND_LOST) {
+        service->display_info_valid = false;
+        service->display_state = COMPOSITOR_DISPLAY_SUSPENDED;
+        return CORE_OK;
+    }
+    return CORE_OK;
+}
+
+static ErrorCode service_display_event(CompositorServiceHandle service,
+                                       EventMask mask)
+{
+    if ((mask & (EVENT_ERROR | EVENT_HANGUP)) != 0) {
+        display_suspend(service);
+        return CORE_OK;
+    }
+
+    if ((mask & EVENT_WRITABLE) != 0) {
+        if (service->display_state == COMPOSITOR_DISPLAY_CONNECTING) {
+            IpcConnectionState state;
+            ErrorCode result = ipc_connection_finish_connect(
+                service->display_connection, &state);
+            if (result != CORE_OK) {
+                display_suspend(service);
+                return CORE_OK;
+            }
+            if (state == IPC_CONNECTION_OPEN) {
+                result = display_send_bind(service);
+                if (result != CORE_OK) {
+                    display_suspend(service);
+                    return CORE_OK;
+                }
+            }
+        } else {
+            bool pending;
+            ErrorCode result = ipc_connection_flush(service->display_connection,
+                                                     &pending);
+            if (result != CORE_OK) {
+                display_suspend(service);
+                return CORE_OK;
+            }
+            (void)display_update_interest(service, pending);
+        }
+    }
+
+    if ((mask & EVENT_READABLE) != 0 && service->display_connection != NULL) {
+        while (true) {
+            IpcReceiveStatus status;
+            IpcMessage message;
+            ErrorCode result = ipc_connection_receive(service->display_connection,
+                                                       &status, &message);
+            if (result != CORE_OK) {
+                display_suspend(service);
+                return CORE_OK;
+            }
+            if (status == IPC_RECEIVE_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_PEER_CLOSED) {
+                display_suspend(service);
+                break;
+            }
+            result = display_handle_message(service, &message);
+            (void)ipc_message_destroy(&message);
+            if (result != CORE_OK) {
+                display_suspend(service);
+                return CORE_OK;
+            }
+        }
+    }
+    return CORE_OK;
+}
+
+static ErrorCode display_begin_connect(CompositorServiceHandle service,
+                                       const String *endpoint)
+{
+    IpcConnectionHandle connection = NULL;
+    IpcConnectionState state;
+    i32 fd;
+    ErrorCode result = ipc_connection_begin_connect(endpoint, &connection);
+
+    if (result != CORE_OK) return result;
+    result = ipc_connection_get_fd(connection, &fd);
+    if (result != CORE_OK) goto fail;
+    result = eventloop_add_fd(service->loop, fd,
+        EVENT_READABLE | EVENT_WRITABLE | EVENT_ERROR | EVENT_HANGUP,
+        &service->display_source);
+    if (result != CORE_OK) goto fail;
+    service->display_connection = connection;
+    service->display_state = COMPOSITOR_DISPLAY_CONNECTING;
+    result = ipc_connection_finish_connect(connection, &state);
+    if (result != CORE_OK) {
+        display_suspend(service);
+        return result;
+    }
+    if (state == IPC_CONNECTION_OPEN) {
+        result = display_send_bind(service);
+        if (result != CORE_OK) {
+            display_suspend(service);
+            return result;
+        }
+    }
+    return CORE_OK;
+
+fail:
+    (void)ipc_connection_close(&connection);
+    return result;
 }
 
 static ErrorCode queue_payload(CompositorServiceHandle service,
@@ -1208,6 +1457,8 @@ ErrorCode compositor_service_create(
 
     config.endpoint = endpoint;
     config.controller_token = controller_token;
+    config.display_endpoint = NULL;
+    config.presenter_token = NULL;
     return compositor_service_create_config(&config, out_service);
 }
 
@@ -1222,7 +1473,9 @@ ErrorCode compositor_service_create_config(
     ErrorCode result;
 
     if (config == NULL || config->endpoint == NULL ||
-        config->controller_token == NULL || out_service == NULL) {
+        config->controller_token == NULL || out_service == NULL ||
+        ((config->display_endpoint == NULL) !=
+         (config->presenter_token == NULL))) {
         return CORE_INVALID_ARGUMENT;
     }
 
@@ -1234,6 +1487,11 @@ ErrorCode compositor_service_create_config(
     service->loop = NULL;
     service->server = NULL;
     service->server_source = 0;
+    service->display_connection = NULL;
+    service->display_source = 0;
+    service->display_state = COMPOSITOR_DISPLAY_DISABLED;
+    service->display_info_valid = false;
+    service->next_display_request_id = 1;
 
     for (index = 0; index < COMPOSITOR_SERVICE_CLIENT_MAX; ++index) {
         service->clients[index].connection = NULL;
@@ -1249,6 +1507,10 @@ ErrorCode compositor_service_create_config(
     for (index = 0; index < COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE; ++index) {
         service->controller_token[index] = config->controller_token[index];
     }
+    for (index = 0; index < COMPOSITOR_SERVICE_PRESENTER_TOKEN_SIZE; ++index) {
+        service->presenter_token[index] = config->presenter_token == NULL ? 0 :
+                                          config->presenter_token[index];
+    }
 
     result = eventloop_create(&service->loop);
     if (result != CORE_OK) goto fail_block;
@@ -1263,9 +1525,16 @@ ErrorCode compositor_service_create_config(
     }
     if (result != CORE_OK) goto fail_server;
 
+    if (config->display_endpoint != NULL) {
+        result = display_begin_connect(service, config->display_endpoint);
+        if (result != CORE_OK) goto fail_server_source;
+    }
+
     *out_service = service;
     return CORE_OK;
 
+fail_server_source:
+    (void)eventloop_remove_source(service->loop, service->server_source);
 fail_server:
     (void)ipc_server_close(&service->server);
 fail_loop:
@@ -1292,6 +1561,9 @@ ErrorCode compositor_service_poll(CompositorServiceHandle service,
     for (index = 0; index < count; ++index) {
         if (events[index].source_id == service->server_source) {
             result = accept_clients(service);
+        } else if (service->display_connection != NULL &&
+                   events[index].source_id == service->display_source) {
+            result = service_display_event(service, events[index].mask);
         } else {
             CompositorClient *client =
                 find_client(service, events[index].source_id);
@@ -1320,6 +1592,10 @@ ErrorCode compositor_service_close(CompositorServiceHandle *service)
         }
     }
 
+    if (handle->display_connection != NULL) {
+        (void)eventloop_remove_source(handle->loop, handle->display_source);
+        (void)ipc_connection_close(&handle->display_connection);
+    }
     (void)eventloop_remove_source(handle->loop, handle->server_source);
     if (ipc_server_close(&handle->server) != CORE_OK) result = CORE_IO_ERROR;
     if (eventloop_close(&handle->loop) != CORE_OK) result = CORE_IO_ERROR;

@@ -6,12 +6,15 @@
 #include <sys/time.h>
 
 #define COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE ((usize)32)
+#define COMPOSITOR_SERVICE_PRESENTER_TOKEN_SIZE ((usize)32)
 
 typedef struct CompositorServiceHandle *CompositorServiceHandle;
 
 typedef struct CompositorServiceConfig {
     const String *endpoint;
     const u8 *controller_token;
+    const String *display_endpoint;
+    const u8 *presenter_token;
 } CompositorServiceConfig;
 
 ErrorCode compositor_service_create(
