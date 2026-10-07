@@ -347,12 +347,159 @@ static void test_surface_pending_commit(void)
     EXPECT(149, string_destroy(&endpoint) == CORE_OK);
 }
 
+
+static void test_scene_controller_and_graph(void)
+{
+    String endpoint;
+    CompositorServiceHandle service;
+    IpcConnectionHandle app_client;
+    IpcConnectionHandle controller;
+    u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE] = { 9 };
+    u8 payload[128];
+    usize size;
+    IpcMessage message;
+    GuiRequestPrefix create = { GUI_PROTOCOL_VERSION, 40 };
+    GuiSurfaceCreateResult created;
+    GuiControllerBindRequest bind_controller;
+    GuiSceneBindRequest bind;
+    GuiSceneGeometryRequest geometry;
+    GuiSceneVisibilityRequest visibility;
+    GuiSceneStackRequest stack;
+    GuiSceneOutputRequest output;
+    GuiSceneWindowRequest remove;
+    GuiBasicResult result;
+    usize index;
+
+    EXPECT(150, string_from_c_str("/tmp/punos-compositorserv-scene-test",
+                                  &endpoint) == CORE_OK);
+    EXPECT(151, compositor_service_create(&endpoint, controller_token, &service) ==
+                CORE_OK);
+    EXPECT(152, connect_client(&endpoint, service, &app_client) == CORE_OK);
+    EXPECT(153, connect_client(&endpoint, service, &controller) == CORE_OK);
+
+    EXPECT(154, gui_encode_versioned_request(create,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(155, send_message(app_client, GUI_SURFACE_CREATE, payload, size) == CORE_OK);
+    EXPECT(156, receive_message(service, app_client, &message) == CORE_OK);
+    EXPECT(157, gui_decode_surface_create_result(&message, &created) == CORE_OK);
+    EXPECT(158, created.result.error == CORE_OK);
+    EXPECT(159, ipc_message_destroy(&message) == CORE_OK);
+
+    bind_controller.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    bind_controller.prefix.request_id = 41;
+    for (index = 0; index < GUI_CONTROLLER_TOKEN_SIZE; ++index) {
+        bind_controller.controller_token[index] = controller_token[index];
+    }
+    EXPECT(160, gui_encode_controller_bind(&bind_controller,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(161, send_message(controller, GUI_COMPOSITOR_BIND_CONTROLLER,
+                             payload, size) == CORE_OK);
+    EXPECT(162, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(163, gui_decode_basic_result(&message,
+        GUI_COMPOSITOR_BIND_CONTROLLER_RESULT, &result) == CORE_OK);
+    EXPECT(164, result.error == CORE_OK && result.request_id == 41);
+    EXPECT(165, ipc_message_destroy(&message) == CORE_OK);
+
+    bind.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    bind.prefix.request_id = 42;
+    bind.window_id = 1001;
+    bind.surface_id = created.surface_id;
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        bind.surface_bind_token[index] = created.surface_bind_token[index];
+    }
+    EXPECT(166, gui_encode_scene_bind(&bind,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(167, send_message(controller, GUI_SCENE_BIND_WINDOW,
+                             payload, size) == CORE_OK);
+    EXPECT(168, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(169, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(170, result.error == CORE_OK && result.request_id == 42);
+    EXPECT(171, ipc_message_destroy(&message) == CORE_OK);
+
+    geometry.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    geometry.prefix.request_id = 43;
+    geometry.window_id = 1001;
+    geometry.geometry = (GuiSceneRect){ 0, 0, 4, 4 };
+    geometry.clip_x = 0;
+    geometry.clip_y = 0;
+    geometry.clip_width = 0;
+    geometry.clip_height = 0;
+    EXPECT(172, gui_encode_scene_geometry(&geometry,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(173, send_message(controller, GUI_SCENE_SET_GEOMETRY,
+                             payload, size) == CORE_OK);
+    EXPECT(174, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(175, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(176, result.error == CORE_OK);
+    EXPECT(177, ipc_message_destroy(&message) == CORE_OK);
+
+    visibility.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    visibility.prefix.request_id = 44;
+    visibility.window_id = 1001;
+    visibility.visibility = GUI_SCENE_VISIBLE;
+    EXPECT(178, gui_encode_scene_visibility(&visibility,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(179, send_message(controller, GUI_SCENE_SET_VISIBILITY,
+                             payload, size) == CORE_OK);
+    EXPECT(180, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(181, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(182, result.error == CORE_OK);
+    EXPECT(183, ipc_message_destroy(&message) == CORE_OK);
+
+    stack.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    stack.prefix.request_id = 45;
+    stack.window_id = 1001;
+    stack.layer = GUI_SCENE_LAYER_APP;
+    stack.above_window_id = 0;
+    EXPECT(184, gui_encode_scene_stack(&stack,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(185, send_message(controller, GUI_SCENE_SET_STACK,
+                             payload, size) == CORE_OK);
+    EXPECT(186, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(187, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(188, result.error == CORE_OK);
+    EXPECT(189, ipc_message_destroy(&message) == CORE_OK);
+
+    output.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    output.prefix.request_id = 46;
+    output.window_id = 1001;
+    output.display_id = 1;
+    EXPECT(190, gui_encode_scene_output(&output,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(191, send_message(controller, GUI_SCENE_SET_OUTPUT,
+                             payload, size) == CORE_OK);
+    EXPECT(192, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(193, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(194, result.error == CORE_OK);
+    EXPECT(195, ipc_message_destroy(&message) == CORE_OK);
+
+    remove.prefix.protocol_version = GUI_PROTOCOL_VERSION;
+    remove.prefix.request_id = 47;
+    remove.window_id = 1001;
+    EXPECT(196, gui_encode_scene_window(&remove,
+        (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
+    EXPECT(197, send_message(controller, GUI_SCENE_REMOVE_WINDOW,
+                             payload, size) == CORE_OK);
+    EXPECT(198, receive_message(service, controller, &message) == CORE_OK);
+    EXPECT(199, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
+    EXPECT(150, result.error == CORE_OK);
+    EXPECT(151, ipc_message_destroy(&message) == CORE_OK);
+
+    EXPECT(152, ipc_connection_close(&app_client) == CORE_OK);
+    EXPECT(153, ipc_connection_close(&controller) == CORE_OK);
+    EXPECT(154, compositor_service_poll(service, 0) == CORE_OK);
+    EXPECT(155, compositor_service_poll(service, 0) == CORE_OK);
+    EXPECT(156, compositor_service_close(&service) == CORE_OK);
+    EXPECT(157, string_destroy(&endpoint) == CORE_OK);
+}
+
 int main(void)
 {
     test_accept_connection();
     test_surface_create_destroy();
     test_buffer_import_destroy();
     test_surface_pending_commit();
+    test_scene_controller_and_graph();
     check_passed();
     return 0;
 }

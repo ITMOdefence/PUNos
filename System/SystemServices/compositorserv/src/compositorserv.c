@@ -12,6 +12,7 @@
 #define COMPOSITOR_SERVICE_SURFACE_MAX ((usize)64)
 #define COMPOSITOR_SERVICE_BUFFER_MAX ((usize)64)
 #define COMPOSITOR_SERVICE_RESPONSE_MAX ((usize)64)
+#define COMPOSITOR_SERVICE_SCENE_MAX ((usize)128)
 
 typedef struct CompositorSurface {
     bool active;
@@ -71,6 +72,23 @@ typedef struct CompositorClient {
     CompositorBuffer buffers[COMPOSITOR_SERVICE_BUFFER_MAX];
 } CompositorClient;
 
+typedef struct CompositorSceneNode {
+    bool active;
+    u64 window_id;
+    u64 surface_id;
+    CompositorClient *surface_owner;
+    GuiSceneRect geometry;
+    bool geometry_set;
+    i32 clip_x;
+    i32 clip_y;
+    u32 clip_width;
+    u32 clip_height;
+    GuiSceneVisibility visibility;
+    GuiSceneLayer layer;
+    u64 above_window_id;
+    u64 display_id;
+} CompositorSceneNode;
+
 struct CompositorServiceHandle {
     MemoryBlock handle_block;
     EventLoopHandle loop;
@@ -78,6 +96,9 @@ struct CompositorServiceHandle {
     EventSourceId server_source;
     CompositorClient clients[COMPOSITOR_SERVICE_CLIENT_MAX];
     u8 controller_token[COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE];
+    CompositorClient *controller_client;
+    CompositorSceneNode scene[COMPOSITOR_SERVICE_SCENE_MAX];
+    u64 next_binding_event_serial;
     u64 next_surface_id;
     u64 next_buffer_id;
 };
@@ -220,6 +241,93 @@ static CompositorBuffer *find_free_buffer(CompositorClient *client)
     return NULL;
 }
 
+static void clear_scene_node(CompositorSceneNode *node)
+{
+    node->active = false;
+    node->window_id = 0;
+    node->surface_id = 0;
+    node->surface_owner = NULL;
+    node->geometry = (GuiSceneRect){ 0, 0, 0, 0 };
+    node->geometry_set = false;
+    node->clip_x = 0;
+    node->clip_y = 0;
+    node->clip_width = 0;
+    node->clip_height = 0;
+    node->visibility = GUI_SCENE_HIDDEN;
+    node->layer = GUI_SCENE_LAYER_APP;
+    node->above_window_id = 0;
+    node->display_id = 0;
+}
+
+static void clear_scene(CompositorServiceHandle service)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        clear_scene_node(&service->scene[index]);
+    }
+}
+
+static CompositorSceneNode *find_scene_window(CompositorServiceHandle service,
+                                               u64 window_id)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        if (service->scene[index].active &&
+            service->scene[index].window_id == window_id) {
+            return &service->scene[index];
+        }
+    }
+    return NULL;
+}
+
+static CompositorSceneNode *find_scene_surface(CompositorServiceHandle service,
+                                                u64 surface_id)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        if (service->scene[index].active &&
+            service->scene[index].surface_id == surface_id) {
+            return &service->scene[index];
+        }
+    }
+    return NULL;
+}
+
+static CompositorSceneNode *find_free_scene_node(CompositorServiceHandle service)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        if (!service->scene[index].active) return &service->scene[index];
+    }
+    return NULL;
+}
+
+static CompositorSurface *find_surface_global(CompositorServiceHandle service,
+                                               u64 surface_id,
+                                               CompositorClient **out_owner)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_CLIENT_MAX; ++index) {
+        CompositorClient *client = &service->clients[index];
+        CompositorSurface *surface;
+        if (client->connection == NULL) continue;
+        surface = find_surface(client, surface_id);
+        if (surface != NULL) {
+            if (out_owner != NULL) *out_owner = client;
+            return surface;
+        }
+    }
+    return NULL;
+}
+
+static bool token_equal(const u8 *a, const u8 *b, usize size)
+{
+    usize index;
+    u8 difference = 0;
+    for (index = 0; index < size; ++index) difference |= (u8)(a[index] ^ b[index]);
+    return difference == 0;
+}
+
 static ErrorCode queue_payload(CompositorServiceHandle service,
                                CompositorClient *client, IpcMessageType type,
                                u8 *data, usize size)
@@ -249,6 +357,47 @@ static ErrorCode send_basic(CompositorServiceHandle service,
 
     if (code != CORE_OK) return code;
     return queue_payload(service, client, type, payload, size);
+}
+
+static ErrorCode notify_binding_lost(CompositorServiceHandle service,
+                                     CompositorSceneNode *node,
+                                     GuiSceneBindingLostReason reason)
+{
+    GuiSceneBindingLostEvent event;
+    u8 payload[32];
+    usize size;
+    ErrorCode result;
+
+    if (service->controller_client == NULL || node == NULL || !node->active) {
+        return CORE_OK;
+    }
+    if (service->next_binding_event_serial == 0) return CORE_OVERFLOW;
+    event.serial = service->next_binding_event_serial++;
+    event.window_id = node->window_id;
+    event.surface_id = node->surface_id;
+    event.reason = reason;
+    result = gui_encode_scene_binding_lost(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    return queue_payload(service, service->controller_client,
+                         GUI_SCENE_BINDING_LOST, payload, size);
+}
+
+static ErrorCode remove_scene_surface(CompositorServiceHandle service,
+                                      u64 surface_id,
+                                      GuiSceneBindingLostReason reason)
+{
+    usize index;
+    ErrorCode first_error = CORE_OK;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        CompositorSceneNode *node = &service->scene[index];
+        if (node->active && node->surface_id == surface_id) {
+            ErrorCode result = notify_binding_lost(service, node, reason);
+            if (result != CORE_OK && first_error == CORE_OK) first_error = result;
+            clear_scene_node(node);
+        }
+    }
+    return first_error;
 }
 
 static ErrorCode handle_surface_create(CompositorServiceHandle service,
@@ -316,7 +465,10 @@ static ErrorCode handle_surface_destroy(CompositorServiceHandle service,
                           request.prefix.request_id, CORE_NOT_FOUND);
     }
 
+    result = remove_scene_surface(service, surface->surface_id,
+                                  GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED);
     clear_surface(surface);
+    if (result != CORE_OK) return result;
     return send_basic(service, client, GUI_SURFACE_DESTROY_RESULT,
                       request.prefix.request_id, CORE_OK);
 }
@@ -697,6 +849,192 @@ static ErrorCode handle_surface_commit(CompositorServiceHandle service,
                       request.prefix.request_id, CORE_OK);
 }
 
+static ErrorCode handle_controller_bind(CompositorServiceHandle service,
+                                        CompositorClient *client,
+                                        const IpcMessage *message)
+{
+    GuiControllerBindRequest request;
+    ErrorCode error;
+    ErrorCode result = gui_decode_controller_bind(message, &request);
+    if (result != CORE_OK) return result;
+
+    if (!token_equal(request.controller_token, service->controller_token,
+                     GUI_CONTROLLER_TOKEN_SIZE)) {
+        error = CORE_PERMISSION_DENIED;
+    } else if (service->controller_client != NULL &&
+               service->controller_client != client) {
+        error = CORE_ALREADY_EXISTS;
+    } else {
+        service->controller_client = client;
+        error = CORE_OK;
+    }
+    return send_basic(service, client, GUI_COMPOSITOR_BIND_CONTROLLER_RESULT,
+                      request.prefix.request_id, error);
+}
+
+static ErrorCode handle_scene_bind(CompositorServiceHandle service,
+                                   CompositorClient *client,
+                                   const IpcMessage *message)
+{
+    GuiSceneBindRequest request;
+    CompositorSurface *surface;
+    CompositorClient *owner = NULL;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_bind(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_PERMISSION_DENIED);
+    }
+    if (find_scene_window(service, request.window_id) != NULL) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_ALREADY_EXISTS);
+    }
+    if (find_scene_surface(service, request.surface_id) != NULL) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_ALREADY_EXISTS);
+    }
+    surface = find_surface_global(service, request.surface_id, &owner);
+    if (surface == NULL) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_NOT_FOUND);
+    }
+    if (!token_equal(surface->bind_token, request.surface_bind_token,
+                     GUI_SURFACE_BIND_TOKEN_SIZE)) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_PERMISSION_DENIED);
+    }
+    node = find_free_scene_node(service);
+    if (node == NULL) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_OUT_OF_MEMORY);
+    }
+    clear_scene_node(node);
+    node->active = true;
+    node->window_id = request.window_id;
+    node->surface_id = request.surface_id;
+    node->surface_owner = owner;
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static ErrorCode handle_scene_geometry(CompositorServiceHandle service,
+                                       CompositorClient *client,
+                                       const IpcMessage *message)
+{
+    GuiSceneGeometryRequest request;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_geometry(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_PERMISSION_DENIED);
+    }
+    node = find_scene_window(service, request.window_id);
+    if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
+        request.prefix.request_id, CORE_NOT_FOUND);
+    node->geometry = request.geometry;
+    node->geometry_set = true;
+    node->clip_x = request.clip_x;
+    node->clip_y = request.clip_y;
+    node->clip_width = request.clip_width;
+    node->clip_height = request.clip_height;
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static ErrorCode handle_scene_visibility(CompositorServiceHandle service,
+                                         CompositorClient *client,
+                                         const IpcMessage *message)
+{
+    GuiSceneVisibilityRequest request;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_visibility(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) return send_basic(service, client,
+        GUI_SCENE_RESULT, request.prefix.request_id, CORE_PERMISSION_DENIED);
+    node = find_scene_window(service, request.window_id);
+    if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
+        request.prefix.request_id, CORE_NOT_FOUND);
+    node->visibility = request.visibility;
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static ErrorCode handle_scene_stack(CompositorServiceHandle service,
+                                    CompositorClient *client,
+                                    const IpcMessage *message)
+{
+    GuiSceneStackRequest request;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_stack(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) return send_basic(service, client,
+        GUI_SCENE_RESULT, request.prefix.request_id, CORE_PERMISSION_DENIED);
+    node = find_scene_window(service, request.window_id);
+    if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
+        request.prefix.request_id, CORE_NOT_FOUND);
+    if (request.above_window_id != 0 &&
+        find_scene_window(service, request.above_window_id) == NULL) {
+        return send_basic(service, client, GUI_SCENE_RESULT,
+                          request.prefix.request_id, CORE_NOT_FOUND);
+    }
+    node->layer = request.layer;
+    node->above_window_id = request.above_window_id;
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static ErrorCode handle_scene_output(CompositorServiceHandle service,
+                                     CompositorClient *client,
+                                     const IpcMessage *message)
+{
+    GuiSceneOutputRequest request;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_output(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) return send_basic(service, client,
+        GUI_SCENE_RESULT, request.prefix.request_id, CORE_PERMISSION_DENIED);
+    node = find_scene_window(service, request.window_id);
+    if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
+        request.prefix.request_id, CORE_NOT_FOUND);
+    node->display_id = request.display_id;
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static ErrorCode handle_scene_remove(CompositorServiceHandle service,
+                                     CompositorClient *client,
+                                     const IpcMessage *message)
+{
+    GuiSceneWindowRequest request;
+    CompositorSceneNode *node;
+    ErrorCode result = gui_decode_scene_window(message, &request);
+    if (result != CORE_OK) return result;
+    if (service->controller_client != client) return send_basic(service, client,
+        GUI_SCENE_RESULT, request.prefix.request_id, CORE_PERMISSION_DENIED);
+    node = find_scene_window(service, request.window_id);
+    if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
+        request.prefix.request_id, CORE_NOT_FOUND);
+    clear_scene_node(node);
+    return send_basic(service, client, GUI_SCENE_RESULT,
+                      request.prefix.request_id, CORE_OK);
+}
+
+static void remove_scene_for_client(CompositorServiceHandle service,
+                                    CompositorClient *client)
+{
+    usize index;
+    for (index = 0; index < COMPOSITOR_SERVICE_SCENE_MAX; ++index) {
+        CompositorSceneNode *node = &service->scene[index];
+        if (node->active && node->surface_owner == client) {
+            (void)notify_binding_lost(service, node,
+                                      GUI_SCENE_BINDING_LOST_CLIENT_DISCONNECTED);
+            clear_scene_node(node);
+        }
+    }
+}
+
 static ErrorCode dispatch(CompositorServiceHandle service,
                           CompositorClient *client,
                           IpcMessage *message)
@@ -721,13 +1059,19 @@ static ErrorCode dispatch(CompositorServiceHandle service,
     case GUI_SURFACE_COMMIT:
         return handle_surface_commit(service, client, message);
     case GUI_COMPOSITOR_BIND_CONTROLLER:
+        return handle_controller_bind(service, client, message);
     case GUI_SCENE_BIND_WINDOW:
+        return handle_scene_bind(service, client, message);
     case GUI_SCENE_SET_GEOMETRY:
+        return handle_scene_geometry(service, client, message);
     case GUI_SCENE_SET_VISIBILITY:
+        return handle_scene_visibility(service, client, message);
     case GUI_SCENE_SET_STACK:
+        return handle_scene_stack(service, client, message);
     case GUI_SCENE_SET_OUTPUT:
+        return handle_scene_output(service, client, message);
     case GUI_SCENE_REMOVE_WINDOW:
-        return CORE_UNSUPPORTED;
+        return handle_scene_remove(service, client, message);
     default:
         return CORE_UNSUPPORTED;
     }
@@ -736,6 +1080,12 @@ static ErrorCode dispatch(CompositorServiceHandle service,
 static void remove_client(CompositorServiceHandle service,
                           CompositorClient *client)
 {
+    if (service->controller_client == client) {
+        service->controller_client = NULL;
+        clear_scene(service);
+    } else {
+        remove_scene_for_client(service, client);
+    }
     (void)eventloop_remove_source(service->loop, client->source);
     (void)ipc_connection_close(&client->connection);
     clear_client_surfaces(client);
@@ -883,6 +1233,9 @@ ErrorCode compositor_service_create_config(
         clear_client_surfaces(&service->clients[index]);
         clear_client_buffers(&service->clients[index]);
     }
+    service->controller_client = NULL;
+    clear_scene(service);
+    service->next_binding_event_serial = 1;
     service->next_surface_id = 1;
     service->next_buffer_id = 1;
     for (index = 0; index < COMPOSITOR_SERVICE_CONTROLLER_TOKEN_SIZE; ++index) {
