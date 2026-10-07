@@ -771,9 +771,9 @@ static ErrorCode handle_surface_commit(CompositorServiceHandle service,
     }
 
     if (error != CORE_OK) {
+        /* Subject errors are reported by commit, but valid pending state is
+         * retained so the client can correct it with later pending requests. */
         surface->pending_error = CORE_OK;
-        surface->pending_frame = false;
-        surface->pending_frame_request_id = 0;
         return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
                           request.prefix.request_id, error);
     }
@@ -782,7 +782,6 @@ static ErrorCode handle_surface_commit(CompositorServiceHandle service,
         new_buffer = find_buffer(client, surface->pending_buffer_id);
         if (new_buffer == NULL || new_buffer->state != COMPOSITOR_BUFFER_PENDING ||
             new_buffer->surface_id != surface->surface_id) {
-            surface->pending_error = CORE_INVALID_STATE;
             return send_basic(service, client, GUI_SURFACE_COMMIT_RESULT,
                               request.prefix.request_id, CORE_INVALID_STATE);
         }
@@ -956,6 +955,15 @@ static ErrorCode handle_scene_visibility(CompositorServiceHandle service,
     node = find_scene_window(service, request.window_id);
     if (node == NULL) return send_basic(service, client, GUI_SCENE_RESULT,
         request.prefix.request_id, CORE_NOT_FOUND);
+    if (request.visibility == GUI_SCENE_VISIBLE) {
+        CompositorSurface *surface = find_surface(node->surface_owner,
+                                                   node->surface_id);
+        if (!node->geometry_set || surface == NULL ||
+            !surface->current_buffer_set) {
+            return send_basic(service, client, GUI_SCENE_RESULT,
+                              request.prefix.request_id, CORE_INVALID_STATE);
+        }
+    }
     node->visibility = request.visibility;
     return send_basic(service, client, GUI_SCENE_RESULT,
                       request.prefix.request_id, CORE_OK);

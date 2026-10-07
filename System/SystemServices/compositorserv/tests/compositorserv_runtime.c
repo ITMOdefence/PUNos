@@ -444,7 +444,8 @@ static void test_scene_controller_and_graph(void)
                              payload, size) == CORE_OK);
     EXPECT(180, receive_message(service, controller, &message) == CORE_OK);
     EXPECT(181, gui_decode_basic_result(&message, GUI_SCENE_RESULT, &result) == CORE_OK);
-    EXPECT(182, result.error == CORE_OK);
+    /* VISIBLE is invalid until the bound surface has a current buffer. */
+    EXPECT(182, result.error == CORE_INVALID_STATE);
     EXPECT(183, ipc_message_destroy(&message) == CORE_OK);
 
     stack.prefix.protocol_version = GUI_PROTOCOL_VERSION;
