@@ -70,6 +70,7 @@ typedef struct CompositorBuffer {
 typedef struct CompositorClient {
     IpcConnectionHandle connection;
     EventSourceId source;
+    u64 next_event_serial;
     CompositorSurface surfaces[COMPOSITOR_SERVICE_SURFACE_MAX];
     CompositorBuffer buffers[COMPOSITOR_SERVICE_BUFFER_MAX];
 } CompositorClient;
@@ -95,6 +96,7 @@ typedef struct CompositorPresentRef {
     CompositorClient *owner;
     u64 surface_id;
     u64 buffer_id;
+    u64 commit_serial;
 } CompositorPresentRef;
 
 typedef struct CompositorPendingPresent {
@@ -139,6 +141,9 @@ struct CompositorServiceHandle {
 
 static void remove_client(CompositorServiceHandle service,
                           CompositorClient *client);
+static ErrorCode queue_payload(CompositorServiceHandle service,
+                               CompositorClient *client, IpcMessageType type,
+                               u8 *data, usize size);
 
 static CompositorClient *find_client(CompositorServiceHandle service,
                                      EventSourceId source)
@@ -585,6 +590,7 @@ static ErrorCode compose_output_frame(CompositorServiceHandle service,
         out_refs[layer_count].owner = node->surface_owner;
         out_refs[layer_count].surface_id = surface->surface_id;
         out_refs[layer_count].buffer_id = buffer->buffer_id;
+        out_refs[layer_count].commit_serial = surface->last_commit_serial;
         ++layer_count;
     }
 
@@ -661,6 +667,121 @@ static ErrorCode display_present_frame(CompositorServiceHandle service)
     return CORE_OK;
 }
 
+static bool buffer_is_current(CompositorClient *client, u64 buffer_id)
+{
+    usize index;
+
+    if (client == NULL || buffer_id == 0) return false;
+    for (index = 0; index < COMPOSITOR_SERVICE_SURFACE_MAX; ++index) {
+        CompositorSurface *surface = &client->surfaces[index];
+        if (surface->active && surface->current_buffer_set &&
+            surface->current_buffer_id == buffer_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static ErrorCode send_frame_done(CompositorServiceHandle service,
+                                 const CompositorPresentRef *ref,
+                                 u64 presented_at_ms)
+{
+    CompositorSurface *surface;
+    GuiSurfaceFrameDoneEvent event;
+    u8 payload[40];
+    usize size;
+    ErrorCode result;
+
+    if (ref == NULL || ref->owner == NULL ||
+        ref->owner->connection == NULL) {
+        return CORE_OK;
+    }
+    surface = find_surface(ref->owner, ref->surface_id);
+    if (surface == NULL || !surface->committed_frame ||
+        surface->committed_frame_serial > ref->commit_serial) {
+        return CORE_OK;
+    }
+
+    event.request_id = surface->committed_frame_request_id;
+    event.surface_id = surface->surface_id;
+    event.commit_serial = ref->commit_serial;
+    event.presented_at_ms = presented_at_ms;
+    result = gui_encode_surface_frame_done(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    result = queue_payload(service, ref->owner, GUI_SURFACE_FRAME_DONE,
+                           payload, size);
+    if (result != CORE_OK) return result;
+
+    surface->committed_frame = false;
+    surface->committed_frame_request_id = 0;
+    surface->committed_frame_serial = 0;
+    return CORE_OK;
+}
+
+static ErrorCode send_buffer_released(CompositorServiceHandle service,
+                                      CompositorClient *client,
+                                      CompositorBuffer *buffer)
+{
+    GuiBufferReleasedEvent event;
+    u8 payload[24];
+    usize size;
+    ErrorCode result;
+
+    if (client == NULL || buffer == NULL || !buffer->active ||
+        buffer->state != COMPOSITOR_BUFFER_IN_USE ||
+        buffer_is_current(client, buffer->buffer_id)) {
+        return CORE_OK;
+    }
+    if (client->connection == NULL) {
+        return CORE_OK;
+    }
+    if (client->next_event_serial == 0) return CORE_OVERFLOW;
+
+    event.serial = client->next_event_serial++;
+    event.buffer_id = buffer->buffer_id;
+    result = gui_encode_buffer_released(
+        &event, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result != CORE_OK) return result;
+    result = queue_payload(service, client, GUI_SURFACE_BUFFER_RELEASED,
+                           payload, size);
+    if (result != CORE_OK) return result;
+
+    buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
+    buffer->surface_id = 0;
+    if (buffer->destroy_pending) clear_buffer(buffer);
+    return CORE_OK;
+}
+
+static ErrorCode finish_presented_frame(CompositorServiceHandle service,
+                                        u64 presented_at_ms)
+{
+    usize index;
+    ErrorCode first_error = CORE_OK;
+
+    for (index = 0; index < service->pending_present.ref_count; ++index) {
+        ErrorCode result = send_frame_done(
+            service, &service->pending_present.refs[index], presented_at_ms);
+        if (result != CORE_OK && first_error == CORE_OK) first_error = result;
+    }
+
+    /* A retired source buffer is safe to return only after a newer output
+     * frame has been accepted as presented. Current buffers stay InUse because
+     * a later composition may still read them. */
+    for (index = 0; index < COMPOSITOR_SERVICE_CLIENT_MAX; ++index) {
+        CompositorClient *client = &service->clients[index];
+        usize buffer_index;
+        if (client->connection == NULL) continue;
+        for (buffer_index = 0; buffer_index < COMPOSITOR_SERVICE_BUFFER_MAX;
+             ++buffer_index) {
+            ErrorCode result = send_buffer_released(
+                service, client, &client->buffers[buffer_index]);
+            if (result != CORE_OK && first_error == CORE_OK) first_error = result;
+        }
+    }
+    return first_error;
+}
+
 static void display_suspend(CompositorServiceHandle service)
 {
     clear_pending_present(service);
@@ -694,14 +815,16 @@ static ErrorCode display_handle_message(CompositorServiceHandle service,
     }
     if (message->type == GUI_DISPLAY_PRESENTED) {
         GuiDisplayPresentedEvent event;
+        ErrorCode finish_result;
         ErrorCode code = gui_decode_display_presented(message, &event);
         if (code != CORE_OK) return code;
         if (!service->pending_present.active ||
             event.request_id != service->pending_present.request_id) {
             return CORE_NOT_FOUND;
         }
+        finish_result = finish_presented_frame(service, event.presented_at_ms);
         clear_pending_present(service);
-        return CORE_OK;
+        return finish_result;
     }
     if (message->type == GUI_DISPLAY_PRESENT_FAILED) {
         GuiDisplayPresentFailedEvent event;
@@ -1678,6 +1801,7 @@ static ErrorCode accept_clients(CompositorServiceHandle service)
 
             clear_client_surfaces(&service->clients[index]);
             clear_client_buffers(&service->clients[index]);
+            service->clients[index].next_event_serial = 1;
             service->clients[index].connection = connection;
             service->clients[index].source = source;
         }
@@ -1796,6 +1920,7 @@ ErrorCode compositor_service_create_config(
     for (index = 0; index < COMPOSITOR_SERVICE_CLIENT_MAX; ++index) {
         service->clients[index].connection = NULL;
         service->clients[index].source = 0;
+        service->clients[index].next_event_serial = 1;
         clear_client_surfaces(&service->clients[index]);
         clear_client_buffers(&service->clients[index]);
     }
