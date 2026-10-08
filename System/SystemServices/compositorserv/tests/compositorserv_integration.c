@@ -6,6 +6,7 @@
 #include <gui/protocol.h>
 #include <special/ipc.h>
 #include <sys/memory.h>
+#include <sys/time.h>
 
 static ErrorCode pump_pair(DisplayServiceHandle display,
                            CompositorServiceHandle compositor)
@@ -369,6 +370,17 @@ static void test_display_pipeline_and_events(void)
                 basic.error == CORE_OK);
     EXPECT(67, ipc_message_destroy(&message) == CORE_OK);
 
+    EXPECT(107, receive_message_pair(display, compositor, app, &message) == CORE_OK);
+    {
+        GuiSurfaceOutputEvent event;
+        EXPECT(108, message.type == GUI_SURFACE_OUTPUT_ENTER &&
+                    gui_decode_surface_output_event(&message, GUI_SURFACE_OUTPUT_ENTER,
+                                                    &event) == CORE_OK &&
+                    event.surface_id == created.surface_id &&
+                    event.display_id != 0);
+    }
+    EXPECT(109, ipc_message_destroy(&message) == CORE_OK);
+
     /* This can only succeed if compositor -> display.present + FD -> displayserv
      * completed and displayserv emitted display.presented. */
     EXPECT(68, wait_for_surface_events(display, compositor, app, 1022, 1,
@@ -399,6 +411,50 @@ static void test_display_pipeline_and_events(void)
 
     EXPECT(80, wait_for_surface_events(display, compositor, app, 1032, 2,
                                         first_buffer.buffer_id, true) == CORE_OK);
+
+    /* A displayserv restart must cause output_leave, reconnect, a fresh
+     * subscribe/list handshake, output_enter and a full redraw request. */
+    EXPECT(110, display_service_close(&display) == CORE_OK);
+    for (index = 0; index < 32; ++index) {
+        EXPECT(111, compositor_service_poll(compositor, 0) == CORE_OK);
+    }
+    EXPECT(112, receive_message_pair(NULL, compositor, app, &message) == CORE_OK);
+    {
+        GuiSurfaceOutputEvent event;
+        EXPECT(113, message.type == GUI_SURFACE_OUTPUT_LEAVE &&
+                    gui_decode_surface_output_event(&message, GUI_SURFACE_OUTPUT_LEAVE,
+                                                    &event) == CORE_OK &&
+                    event.surface_id == created.surface_id);
+    }
+    EXPECT(114, ipc_message_destroy(&message) == CORE_OK);
+
+    {
+        DurationMs remaining = 0;
+        EXPECT(115, time_sleep(300, &remaining) == CORE_OK);
+    }
+    EXPECT(116, display_service_create(&display_endpoint, presenter_token,
+                                        &display) == CORE_OK);
+    for (index = 0; index < 512; ++index) {
+        EXPECT(117, pump_pair(display, compositor) == CORE_OK);
+    }
+
+    EXPECT(118, receive_message_pair(display, compositor, app, &message) == CORE_OK);
+    {
+        GuiSurfaceOutputEvent event;
+        EXPECT(119, message.type == GUI_SURFACE_OUTPUT_ENTER &&
+                    gui_decode_surface_output_event(&message, GUI_SURFACE_OUTPUT_ENTER,
+                                                    &event) == CORE_OK &&
+                    event.surface_id == created.surface_id);
+    }
+    EXPECT(120, ipc_message_destroy(&message) == CORE_OK);
+    EXPECT(121, receive_message_pair(display, compositor, app, &message) == CORE_OK);
+    {
+        GuiSurfaceRedrawEvent event;
+        EXPECT(122, message.type == GUI_SURFACE_FULL_REDRAW &&
+                    gui_decode_surface_redraw(&message, &event) == CORE_OK &&
+                    event.surface_id == created.surface_id && event.reason == 3);
+    }
+    EXPECT(123, ipc_message_destroy(&message) == CORE_OK);
 
     EXPECT(81, ipc_connection_close(&app) == CORE_OK);
     EXPECT(82, ipc_connection_close(&controller) == CORE_OK);
