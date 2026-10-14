@@ -143,6 +143,15 @@ def test_logserv(directory,log_binary,fault_binary,endpoint):
             assert recv(connection)==(2,struct.pack('<I',0))
         finish(process);assert process.returncode==1
     finally:finish(process)
+    process=subprocess.Popen([str(fault_binary),'--log-path='+str(directory/'join.log')])
+    try:
+        wait(endpoint.exists,'join fault endpoint')
+        with connect(endpoint) as connection:
+            connection.sendall(frame(1,submit(b'fail.join')))
+            assert recv(connection)==(2,struct.pack('<I',0))
+        wait(lambda:any(x['component']=='fail.join' for x in records(directory/'join.log')),'join injection armed')
+        finish(process);assert process.returncode==1
+    finally:finish(process)
     # Writer is paused only in the instrumented test binary; IPC stays live.
     for byte_limit in (False,True):
         process=subprocess.Popen([str(fault_binary),'--log-path='+str(directory/('bytes.log' if byte_limit else 'count.log'))])
@@ -247,7 +256,7 @@ def main():
         log_binary=directory/'logserv';fault_binary=directory/'logserv-faults';app_binary=directory/'appserv';init_binary=directory/'initserv'
         compile_binary('logserv',log_binary,{'LOG_ENDPOINT':str(log_endpoint)})
         if args.service in ('all','logserv'):
-            compile_binary('logserv',fault_binary,{'LOG_ENDPOINT':str(log_endpoint)},extra=module_dir('logserv')/'tests/faults.c',wrap='log_store_open,log_store_append,log_store_flush,log_store_close')
+            compile_binary('logserv',fault_binary,{'LOG_ENDPOINT':str(log_endpoint)},extra=module_dir('logserv')/'tests/faults.c',wrap='log_store_open,log_store_append,log_store_flush,log_store_close,thread_join')
             test_logserv(directory,log_binary,fault_binary,log_endpoint)
         if args.service in ('all','initserv'):
             registry=directory/'registry.json';metadata=directory/'metadata.json'

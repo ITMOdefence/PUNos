@@ -4,7 +4,7 @@ include ../service.mk
 build/faults.o: tests/faults.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/logserv-faults: $(OBJECTS) build/faults.o | dependencies
-	$(LINK) $^ -Wl,--wrap=log_store_open -Wl,--wrap=log_store_append -Wl,--wrap=log_store_flush -Wl,--wrap=log_store_close $(LINK_LIBS) -o $@
+	$(LINK) $^ -Wl,--wrap=log_store_open -Wl,--wrap=log_store_append -Wl,--wrap=log_store_flush -Wl,--wrap=log_store_close -Wl,--wrap=thread_join $(LINK_LIBS) -o $@
 
 .PHONY: check runtime-test
 build/queue_test.o: tests/queue_test.c | build

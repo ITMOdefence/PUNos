@@ -155,7 +155,7 @@ cleanup:
     if (log_queue_stop(&q) != CORE_OK && result == PROCESS_EXIT_SUCCESS) result = PROCESS_EXIT_FAILURE;
     /* A failed join keeps the handle: leave borrowed path/loop alive until
      * process-wide exit rather than freeing resources a worker may still use. */
-    if (q.worker != NULL) return PROCESS_EXIT_FAILURE;
+    if (q.worker != NULL) exit(PROCESS_EXIT_FAILURE);
     if (loop != NULL) (void)eventloop_close(&loop);
     (void)string_destroy(&path);
     return result;
