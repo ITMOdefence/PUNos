@@ -85,6 +85,17 @@ int main(int argc, char **argv, char **envp)
     }
 
     console_text("PUNos init: filesystems ready\n");
+#ifdef PUNOS_SMOKE_BOOT
+    pid_t smoke = fork();
+    if (smoke == 0) {
+        char *const args[] = { (char *)"/punos/bin/initserv-smoke", 0 };
+        (void)execve(args[0], args, empty_env); exit(126);
+    }
+    i32 smoke_status = 0;
+    if (smoke < 0 || waitpid(smoke, &smoke_status, 0) != smoke || smoke_status != 0)
+        failed("smoke tests", EIO);
+#endif
+
     initserv_pid = fork();
     if (initserv_pid < 0) {
         failed("fork initserv", errno);
@@ -96,6 +107,17 @@ int main(int argc, char **argv, char **envp)
     }
 
     console_text("PUNos init: initserv started\n");
+#ifdef PUNOS_SMOKE_BOOT
+    pid_t probe = fork();
+    if (probe == 0) {
+        char *const args[] = { (char *)"/punos/bin/services-bootcheck", 0 };
+        (void)execve(args[0], args, empty_env); exit(126);
+    }
+    i32 probe_status = 0;
+    if (probe < 0 || waitpid(probe, &probe_status, 0) != probe || probe_status != 0)
+        failed("services probe", EIO);
+#endif
+
     for (;;) {
         i32 status = 0;
         pid_t child;

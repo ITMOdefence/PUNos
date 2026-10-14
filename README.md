@@ -22,13 +22,13 @@ upstream-ядра Linux** (6.12.111 LTS, x86_64) и запускаемая в QE
 | Boot | `/init` (PID 1) и воспроизводимый initramfs | Готово |
 | System Libs | `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
 | Special Libs | IPC, журналы, камера, устройства ввода, дисплей | IPC, журналы, камера и устройства ввода готовы; дисплей — спецификация |
-| System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | appserv реализован и включён в образ; остальные — спецификации |
+| System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | initserv, logserv и appserv реализованы и включены в образ; остальные — спецификации |
 | Application Layer | `appframework`, `uilib` | Спецификации |
 
-Сейчас на месте `initserv` стоит smoke-test заглушка: при загрузке она по
-очереди запускает self-test'ы Syscall Wrappers, System Libs, Special Libs и
-appserv и печатает результат каждого. Исполняемый appserv включён в образ,
-но его автозапуск отключён до появления настоящих initserv и logserv.
+Обычная загрузка запускает настоящий initserv, который открывает путь запуска
+logserv → appserv после подтверждения готовности журнала. Для CI предусмотрен
+отдельный `/init-smoke`: он выполняет self-test'ы, затем запускает тот же
+supervisor и проверяет доступность appserv по IPC.
 
 ## Быстрый старт
 
@@ -46,9 +46,9 @@ appserv и печатает результат каждого. Исполняе�
 При нелатинской локали запускайте сборку initramfs как
 `LC_ALL=C ./System/scripts/build-initramfs.sh`.
 
-Успешная загрузка заканчивается строками `PUNos initserv stub: <имя>
-self-test passed` для каждого теста. Проверить загрузку без ручного просмотра
-журнала можно командой `./System/scripts/check-qemu-boot.sh`.
+Обычная загрузка выводит `PUNos initserv: logserv ready` и `services started`.
+Команда `./System/scripts/check-qemu-boot.sh` выбирает проверочный `/init-smoke`,
+проверяет self-test'ы и реальный ответ appserv по IPC.
 
 Тесты на хосте, без QEMU:
 

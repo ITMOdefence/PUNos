@@ -1,9 +1,7 @@
-# System Services integration
+# System Services
 
-The appserv snapshot is built against the CRT, Syscall Wrappers, System Libs
-and ipclib in this PUNos checkout. Its upstream dependency snapshot and CI are
-not duplicated here. No network access or cross-repository token is required
-to build a system image.
+This tree contains appserv, logserv and initserv built on the same PUNos CRT,
+Syscall Wrappers, System Libs and Special Libs. No network access is needed:
 
 ```sh
 make -C System/SystemServices all
@@ -11,39 +9,27 @@ make -C System/SystemServices check
 ./System/scripts/build-initramfs.sh
 ```
 
-The image includes `/punos/bin/appserv` and `/punos/bin/appserv-selftest`.
-The existing initserv smoke-test stub runs the self-test at boot. It does not
-start the production service: genuine initserv and logserv are not implemented
-in this platform revision. In particular, there is no fake journal server in
-the production image. Host integration tests use a test logserv peer only.
+`platform_registry.json` is the sole build-time registry owned by initserv.
+It contains enabled/critical/restart policy and fixed ProcessLaunch data for
+services, and a separate native_apps allowlist. `applications.json` supplies
+appserv metadata and fixed application arguments/environment. Native apps are
+never launched by initserv. Both generators derive the identical SHA-256
+PlatformRegistryId from the whole canonical registry and reject native app
+ID/path mismatches. Files are not loaded at runtime.
 
-## Registry and catalogue
+The default registry enables real logserv and appserv. Boot installs them and
+the genuine initserv at `/punos/bin/`; normal `/init` starts the supervisor,
+which confirms logserv readiness before launching appserv. No fake logging peer
+is present in production. Desktop/appframework can use appserv's v1 endpoint
+when implemented; the default native app catalogue is empty.
 
-`platform_registry.json` is the platform-owned **build-time** registry input.
-The appserv service record describes its installed path and logserv dependency;
-`enabled: false` explicitly records that runtime activation is pending. The
-current smoke-test stub does not interpret service records. When genuine
-initserv is implemented, it must consume this same input, enforce readiness of
-logserv and honor service enablement before launching appserv.
+CI uses `/init-smoke`: it runs freestanding library/service self-tests in the
+explicit `initserv-smoke` executable, then starts the same real initserv and
+uses a test IPC probe to confirm appserv actually serves requests. Normal
+`/init` does not execute those test programs. Both paths mount the same filesystems.
+Tests inject failures only in separately linked binaries and cover real native
+threads, futexes, IPC, journal storage and supervised children.
 
-`applications.json` contains appserv's public metadata and fixed launch data.
-Both native application lists are empty by default. To add an application,
-register its exact ID/executable under `native_apps` in the platform registry,
-add the matching metadata record, and include its executable in the image.
-Every registered native application must terminate on SIGTERM. These files are
-not runtime manifests and are not read by appserv after startup.
-
-The shared header is generated at
-`appserv/build/generated/platform_registry.h`. It exports the common SHA-256
-`PLATFORM_REGISTRY_ID` and native launch specs for future initserv integration.
-Build-time generation checks exact ID/path correspondence. appserv also checks
-the embedded catalogue before creating `/run/punos/appserv.sock`.
-
-## Activation boundary
-
-Packaging and boot self-tests do not imply an active application service.
-Actual activation additionally requires genuine logserv at
-`/run/punos/logserv.sock`, initserv startup/ownership of appserv after logserv
-readiness, and Desktop/appframework clients using its v1 IPC. Enabling the
-record alone does not make the current boot stub start services. Keep the
-record disabled until those dependencies exist.
+The activation PR is based on the prior appserv integration branch until that
+PR is merged. Service source snapshots are also distributed as private
+ITMOdefence/initserv and ITMOdefence/logserv repositories through their own PRs.

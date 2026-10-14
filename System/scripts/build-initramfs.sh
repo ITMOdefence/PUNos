@@ -38,6 +38,8 @@ SELF_TESTS=(
     "SpecialLibs/inputlib/build/input_runtime:input-selftest"
     "SpecialLibs/camlib/build/camera_runtime:camera-selftest"
     "SystemServices/appserv/build/service_test:appserv-selftest"
+    "SystemServices/logserv/build/queue_test:logserv-selftest"
+    "SystemServices/initserv/build/policy_test:initserv-selftest"
 )
 
 verify_elf() {
@@ -59,7 +61,11 @@ verify_elf() {
 }
 
 verify_elf "${BOOT_DIR}/build/init"
-verify_elf "${BOOT_DIR}/build/initserv"
+verify_elf "${BOOT_DIR}/build/initserv-smoke"
+verify_elf "${BOOT_DIR}/build/init-smoke"
+verify_elf "${BOOT_DIR}/build/services-bootcheck"
+verify_elf "${SYSTEM_DIR}/SystemServices/initserv/build/initserv"
+verify_elf "${SYSTEM_DIR}/SystemServices/logserv/build/logserv"
 verify_elf "${SYSTEM_DIR}/SystemServices/appserv/build/appserv"
 for self_test in "${SELF_TESTS[@]}"; do
     verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
@@ -82,8 +88,11 @@ install -d -m 0755 \
 install -d -m 0555 "${ROOTFS_DIR}/proc" "${ROOTFS_DIR}/sys"
 install -d -m 01777 "${ROOTFS_DIR}/tmp"
 install -m 0755 "${BOOT_DIR}/build/init" "${ROOTFS_DIR}/init"
-install -m 0755 "${BOOT_DIR}/build/initserv" \
-    "${ROOTFS_DIR}/punos/bin/initserv"
+install -m 0755 "${BOOT_DIR}/build/initserv-smoke" "${ROOTFS_DIR}/punos/bin/initserv-smoke"
+install -m 0755 "${BOOT_DIR}/build/init-smoke" "${ROOTFS_DIR}/init-smoke"
+install -m 0755 "${BOOT_DIR}/build/services-bootcheck" "${ROOTFS_DIR}/punos/bin/services-bootcheck"
+install -m 0755 "${SYSTEM_DIR}/SystemServices/initserv/build/initserv" "${ROOTFS_DIR}/punos/bin/initserv"
+install -m 0755 "${SYSTEM_DIR}/SystemServices/logserv/build/logserv" "${ROOTFS_DIR}/punos/bin/logserv"
 install -m 0755 "${SYSTEM_DIR}/SystemServices/appserv/build/appserv" \
     "${ROOTFS_DIR}/punos/bin/appserv"
 for self_test in "${SELF_TESTS[@]}"; do

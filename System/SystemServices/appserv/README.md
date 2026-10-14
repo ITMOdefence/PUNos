@@ -13,8 +13,8 @@ make -C System/SystemServices check
 ```
 
 The platform-owned registry and metadata live one directory above this module.
-See `../README.md` for image packaging, registry ownership and the pending
-runtime activation boundary. The default catalogue contains no applications.
+See `../README.md` for image packaging, registry ownership and the production
+runtime activation. The default catalogue contains no applications.
 
 appserv is a static freestanding Linux x86_64 ELF. One event loop owns Unix
 socket clients, outgoing queues and child ProcessHandles. It supports v1 list,
@@ -26,7 +26,7 @@ Instance IDs are not PIDs and are never reused during one service run.
 Monitoring polls children every 1000 ms. Exited states remain available until
 service shutdown, and applications are never restarted automatically. SIGTERM
 shutdown sends SIGTERM to all live children before waiting for any. Production
-code never uses SIGKILL or child stop timeouts. Startup requires logserv and a
+code never uses SIGKILL or child stop timeouts. The production initserv starts logserv before this service. Startup requires logserv and a
 valid generated catalogue before exposing the endpoint. The pinned libprocess
 reports successful fork; an execve failure is subsequently observed as exit 127.
 
