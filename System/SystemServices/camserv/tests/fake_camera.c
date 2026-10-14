@@ -13,6 +13,7 @@ struct CameraHandle {
     u64 sequence;
     u32 max_bytes;
     bool outstanding;
+    bool burst_started;
 };
 static struct CameraHandle fake;
 static u8 frame_data[IPC_MESSAGE_MAX_SIZE];
@@ -87,7 +88,8 @@ ErrorCode camera_start(CameraHandle camera)
     fake_event_fd = camera->fd;
     struct itimerspec timer = { 0 };
     timer.it_value.tv_nsec = 500000000;
-    timer.it_interval.tv_nsec = camera->scenario == 7 ? 10000000 : 50000000;
+    timer.it_interval.tv_nsec = camera->scenario == 8 ? 0 :
+                                 camera->scenario == 7 ? 10000000 : 50000000;
     if (timerfd_settime(camera->fd, 0, &timer, NULL) != 0) return CORE_IO_ERROR;
     return CORE_OK;
 }
@@ -97,9 +99,27 @@ ErrorCode camera_dequeue_frame(CameraHandle camera, CameraReadStatus *status,
 {
     if (!camera || !status || !frame) return CORE_INVALID_ARGUMENT;
     u64 ticks;
-    if (read(camera->fd, &ticks, sizeof(ticks)) != sizeof(ticks)) {
+    if (camera->scenario == 8) {
+        if (!camera->burst_started) {
+            if (read(camera->fd, &ticks, sizeof(ticks)) != sizeof(ticks)) {
+                *status = CAMERA_READ_STATUS_NO_FRAME;
+                return CORE_OK;
+            }
+            camera->burst_started = true;
+        }
+    } else if (read(camera->fd, &ticks, sizeof(ticks)) != sizeof(ticks)) {
         *status = CAMERA_READ_STATUS_NO_FRAME;
         return CORE_OK;
+    }
+    if (camera->scenario == 8 && camera->sequence == 80) {
+#ifdef FAKE_BURST_END_NO_FRAME
+        *status = CAMERA_READ_STATUS_NO_FRAME;
+        return CORE_OK;
+#else
+        *status = CAMERA_READ_STATUS_DEVICE_LOST;
+        trace("lost\n");
+        return CORE_OK;
+#endif
     }
     if (camera->scenario == 5 && camera->sequence == 2) {
         *status = CAMERA_READ_STATUS_DEVICE_LOST;

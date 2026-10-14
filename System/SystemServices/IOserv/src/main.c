@@ -169,7 +169,10 @@ static ErrorCode serve_client(IoService *service, Client *client)
         IpcReceiveStatus status;
         IpcMessage message = { 0 };
         ErrorCode error = ipc_connection_receive(client->connection, &status, &message);
-        if (error != CORE_OK) return error;
+        if (error != CORE_OK) {
+            (void)service_logger_record(&service->logger, "IPC receive failed", error);
+            return error;
+        }
         if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_NOT_FOUND;
         if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) { client->buffered = false; break; }
         error = request(service, client, &message);
@@ -216,7 +219,7 @@ static ErrorCode open_device(IoService *service, const char *path_text)
 
 static bool read_device(IoService *service, Device *device)
 {
-    for (usize i = 0; i < 64 && !stopping; ++i) {
+    while (!stopping) {
         InputReadStatus status;
         InputFrame frame = { 0 };
         ErrorCode error = input_device_read_frame(device->handle, &status, &frame);

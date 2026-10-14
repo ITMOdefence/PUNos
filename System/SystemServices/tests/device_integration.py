@@ -23,7 +23,9 @@ LIBS = ['core', 'mem', 'str', 'file', 'process', 'time', 'thread', 'sync',
         'eventloop', 'v4l2', 'inputdevice']
 
 
-def build(name, output, endpoint, log_endpoint, trace, fail_loop=False, inject_mask=None):
+def build(name, output, endpoint, log_endpoint, trace, fail_loop=False,
+          inject_mask=None, fail_device_registration=False, fail_ipc_allocation=False,
+          burst_no_frame=False):
     module = HERE / name
     includes = [module / 'include', module / 'src',
                 SYSTEM / 'NativeRuntime/include',
@@ -37,6 +39,8 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False, inject_m
                f'-DLOG_ENDPOINT="{log_endpoint}"', f'-DTRACE_PATH="{trace}"']
     if inject_mask is not None:
         options.append(f'-DINJECTED_EVENT_MASK={inject_mask}')
+    if burst_no_frame:
+        options.append('-DFAKE_BURST_END_NO_FRAME')
     sources = [module / 'src/main.c', module / 'src/protocol.c',
                HERE / 'common/logger.c',
                module / f'tests/fake_{"camera" if name == "camserv" else "input"}.c']
@@ -44,6 +48,10 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False, inject_m
         sources.append(module / 'src/state.c')
     if fail_loop:
         sources.append(HERE / 'tests/fail_eventloop.c')
+    if fail_device_registration:
+        sources.append(HERE / 'tests/fail_device_registration.c')
+    if fail_ipc_allocation:
+        sources.append(HERE / 'tests/fail_ipc_allocation.c')
     if inject_mask is not None:
         sources.append(HERE / 'tests/inject_device_event.c')
     objects = []
@@ -61,6 +69,10 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False, inject_m
                *map(str, objects)]
     if fail_loop:
         command.append('-Wl,--wrap=eventloop_create')
+    if fail_device_registration:
+        command.append('-Wl,--wrap=eventloop_add_fd')
+    if fail_ipc_allocation:
+        command.append('-Wl,--wrap=memory_allocate')
     if inject_mask is not None:
         command += ['-Wl,--wrap=eventloop_add_fd', '-Wl,--wrap=eventloop_wait',
                     '-Wl,--wrap=eventloop_remove_source']
@@ -190,8 +202,15 @@ def test_camera(directory, log_endpoint, journal):
             second_frame = recv(second)
             assert second_frame[0] == 8 and struct.unpack_from('<Q', second_frame[1])[0] > 1
             with connect(endpoint) as malformed:
+                before = len([row for row in existing.records(journal)
+                              if row['component'] == 'camserv' and
+                              'IPC receive failed' in row['message']])
                 malformed.sendall(struct.pack('<II', 1048577, 3))
                 assert malformed.recv(1) == b''
+                wait(lambda: len([row for row in existing.records(journal)
+                                  if row['component'] == 'camserv' and
+                                  'IPC receive failed' in row['message']]) > before,
+                     'camera malformed IPC journal')
             with connect(endpoint) as truncated:
                 truncated.sendall(struct.pack('<II', 2, 3) + b'\x01')
                 truncated.shutdown(socket.SHUT_WR)
@@ -235,6 +254,18 @@ def test_camera(directory, log_endpoint, journal):
     trace.unlink()
     assert subprocess.run([str(fail_loop), *camera_args(0)], timeout=8).returncode == 3
     assert not trace.exists() and not endpoint.exists()
+    fail_registration = build('camserv', directory / 'camserv-registration-fail', endpoint,
+                              log_endpoint, trace, fail_device_registration=True)
+    before = len([row for row in existing.records(journal)
+                  if row['component'] == 'camserv' and
+                  row['message'] == 'camera endpoint failed error=8'])
+    assert subprocess.run([str(fail_registration), *camera_args(0)], timeout=8).returncode == 3
+    assert trace.read_text().splitlines() == ['open', 'configure', 'start', 'stop', 'close']
+    assert not endpoint.exists()
+    wait(lambda: len([row for row in existing.records(journal)
+                      if row['component'] == 'camserv' and
+                      row['message'] == 'camera endpoint failed error=8']) > before,
+         'camera late registration failure journal')
     failure_messages = [row['message'] for row in existing.records(journal)
                         if row['component'] == 'camserv']
     for event in ('camera open failed', 'camera configuration failed',
@@ -297,6 +328,44 @@ def test_camera(directory, log_endpoint, journal):
         assert marks.count('device_event_injected') == 1, (label, marks)
         assert marks.count('device_source_removed') == 1, (label, marks)
     print('T-06 camera HANGUP and ERROR device dispatch passed')
+    for mask, label in ((16, 'HANGUP'), (8, 'ERROR')):
+        trace.unlink()
+        injected = build('camserv', directory / f'camserv-burst-{label.lower()}',
+                         endpoint, log_endpoint, trace, inject_mask=mask)
+        process = run_service(injected, endpoint, camera_args(8))
+        with connect(endpoint) as connection:
+            cam_subscribe(connection)
+            for sequence in range(1, 81):
+                kind, payload = recv(connection)
+                assert kind == 8 and struct.unpack_from('<Q', payload)[0] == sequence
+            assert recv(connection) == (9, struct.pack('<I', 8))
+        assert process.wait(timeout=5) == 1
+        marks = trace.read_text().splitlines()
+        assert marks.count('release') == 80
+        assert marks.count('device_event_injected') == 1
+        assert marks.count('device_source_removed') == 1
+    print('T-06 camera 80 queued frames and DeviceLost under HANGUP/ERROR passed')
+    trace.unlink()
+    no_frame = build('camserv', directory / 'camserv-burst-no-frame', endpoint,
+                     log_endpoint, trace, burst_no_frame=True)
+    process = run_service(no_frame, endpoint, camera_args(8))
+    try:
+        with connect(endpoint) as connection:
+            cam_subscribe(connection)
+            for sequence in range(1, 81):
+                kind, payload = recv(connection)
+                assert kind == 8 and struct.unpack_from('<Q', payload)[0] == sequence
+            connection.settimeout(.2)
+            try:
+                recv(connection)
+                raise AssertionError('camera frame after NoFrame')
+            except socket.timeout:
+                pass
+            assert process.poll() is None
+    finally:
+        finish(process)
+    assert trace.read_text().count('release\n') == 80
+    print('T-06 camera 80 queued frames before NoFrame passed')
     entries = existing.records(journal)
     assert any(row['component'] == 'camserv' and 'started format=Mjpeg width=320' in row['message'] for row in entries)
     assert any(row['component'] == 'camserv' and 'camera device lost' in row['message'] for row in entries)
@@ -322,6 +391,30 @@ def test_camera(directory, log_endpoint, journal):
         finish(process)
     assert process.returncode == 0
     print('T-07 camera slow client isolated; fast client continued')
+
+    alloc_binary = build('camserv', directory / 'camserv-alloc-fail', endpoint,
+                         log_endpoint, trace, fail_ipc_allocation=True)
+    process = run_service(alloc_binary, endpoint, camera_args(0))
+    baseline = fd_count(process)
+    before = len([row for row in existing.records(journal)
+                  if row['component'] == 'camserv' and
+                  row['message'] == 'IPC receive failed error=4'])
+    try:
+        with connect(endpoint) as failed:
+            failed.sendall(frame(1, b'abcdef'))
+            wait_eof(failed, 'camera allocation failure')
+        wait(lambda: fd_count(process) == baseline, 'camera allocation cleanup')
+        with connect(endpoint) as good:
+            good.sendall(frame(1))
+            assert recv(good)[0] == 2
+    finally:
+        finish(process)
+    assert process.returncode == 0
+    wait(lambda: len([row for row in existing.records(journal)
+                      if row['component'] == 'camserv' and
+                      row['message'] == 'IPC receive failed error=4']) > before,
+         'camera IPC allocation error journal')
+    print('T-13 camera IPC allocation failure releases client resources')
 
 
 def io_subscribe(connection, mask, expected_devices=1):
@@ -361,6 +454,10 @@ def test_input(directory, log_endpoint, journal):
             assert recv(keyboard) == (4, b'\0' * 4)
             keyboard.sendall(frame(3))
             assert recv(keyboard) == (4, struct.pack('<I', 3))
+            keyboard.sendall(frame(1, struct.pack('<HI', 1, 0)))
+            assert recv(keyboard) == (2, struct.pack('<I', 1))
+            keyboard.sendall(frame(3, b'\0'))
+            assert recv(keyboard) == (4, struct.pack('<I', 1))
             keyboard.sendall(frame(99))
             assert recv(keyboard) == (8, struct.pack('<I', 1))
             keyboard.sendall(frame(5))
@@ -375,10 +472,23 @@ def test_input(directory, log_endpoint, journal):
             assert recv(keyboard) == (2, b'\0' * 4)
             added = [recv(keyboard) for _ in range(2)]
             assert {struct.unpack_from('<I', item[1], 16)[0] for item in added} == {1, 4}
-            assert recv(pointer)[0] == 5 and recv(touch)[0] == 5
+            assert recv(pointer)[0] == 5
+            kind, touch_payload = recv(touch)
+            assert kind == 5
+            assert touch_payload[18:] == (struct.pack('<BHi', 3, 0x35, 1234567) +
+                                          struct.pack('<BHi', 3, 0x36, -765432) +
+                                          struct.pack('<BHi', 6, 0x7abc, 135791113) +
+                                          struct.pack('<BHi', 4, 0, 0))
             with connect(endpoint) as malformed:
+                before = len([row for row in existing.records(journal)
+                              if row['component'] == 'IOserv' and
+                              'IPC receive failed' in row['message']])
                 malformed.sendall(struct.pack('<II', 1048577, 1))
                 assert malformed.recv(1) == b''
+                wait(lambda: len([row for row in existing.records(journal)
+                                  if row['component'] == 'IOserv' and
+                                  'IPC receive failed' in row['message']]) > before,
+                     'input malformed IPC journal')
             with connect(endpoint) as truncated:
                 truncated.sendall(struct.pack('<II', 6, 1) + b'\x01\0\x01')
                 truncated.shutdown(socket.SHUT_WR)
@@ -502,10 +612,58 @@ def test_input(directory, log_endpoint, journal):
         finally:
             finish(process)
     print('T-11 input HANGUP and ERROR device dispatch passed')
+    for mask, label in ((16, 'HANGUP'), (8, 'ERROR')):
+        trace.unlink()
+        injected = build('IOserv', directory / f'IOserv-burst-{label.lower()}',
+                         endpoint, log_endpoint, trace, inject_mask=mask)
+        process = run_service(injected, endpoint,
+                              ['--device=/dev/input/event7', '--device=/dev/input/event1'])
+        try:
+            with connect(endpoint) as keyboard, connect(endpoint) as pointer:
+                device = io_subscribe(keyboard, 1)[0][1]
+                io_subscribe(pointer, 2)
+                for sequence in range(1, 81):
+                    kind, payload = recv(keyboard)
+                    assert kind == 5 and struct.unpack_from('<Q', payload, 8)[0] == sequence
+                assert recv(keyboard) == (7, device)
+                assert recv(pointer)[0] == 5 and process.poll() is None
+                wait(lambda: trace.read_text().count('device_source_removed\n') == 1,
+                     f'input burst {label} source removal')
+        finally:
+            finish(process)
+        marks = trace.read_text().splitlines()
+        assert marks.count('destroy') >= 80
+        assert marks.count('open') == marks.count('close') == 2
+        assert marks.count('device_event_injected') == 1
+    print('T-11 input 80 buffered frames and DeviceLost under HANGUP/ERROR passed')
+    trace.unlink()
+    no_frame = build('IOserv', directory / 'IOserv-burst-no-frame', endpoint,
+                     log_endpoint, trace, burst_no_frame=True)
+    process = run_service(no_frame, endpoint, ['--device=/dev/input/event7'])
+    try:
+        with connect(endpoint) as connection:
+            io_subscribe(connection, 1)
+            for sequence in range(1, 81):
+                kind, payload = recv(connection)
+                assert kind == 5 and struct.unpack_from('<Q', payload, 8)[0] == sequence
+            connection.settimeout(.2)
+            try:
+                recv(connection)
+                raise AssertionError('input frame after NoFrame')
+            except socket.timeout:
+                pass
+            assert process.poll() is None
+    finally:
+        finish(process)
+    assert trace.read_text().count('destroy\n') == 80
+    print('T-11 input 80 buffered frames before NoFrame passed')
     entries = existing.records(journal)
     assert any(row['component'] == 'IOserv' and 'input device open failed' in row['message'] for row in entries)
     assert any(row['component'] == 'IOserv' and 'input synchronization lost' in row['message'] for row in entries)
-    assert not any(row['component'] == 'IOserv' and ('291' in row['message'] or '-3' in row['message']) for row in entries)
+    private_values = ('291', '-3', '1234567', '-765432', '135791113', '31420')
+    assert not any(row['component'] == 'IOserv' and
+                   any(value in row['message'] for value in private_values)
+                   for row in entries)
     print('T-15 input journal contains technical events without raw input passed')
 
     trace.unlink()
@@ -534,6 +692,30 @@ def test_input(directory, log_endpoint, journal):
         finish(process)
     assert process.returncode == 0
     print('T-12 input slow client isolated and fresh subscription passed')
+
+    alloc_binary = build('IOserv', directory / 'IOserv-alloc-fail', endpoint,
+                         log_endpoint, trace, fail_ipc_allocation=True)
+    process = run_service(alloc_binary, endpoint, ['--device=/dev/input/event0'])
+    baseline = fd_count(process)
+    before = len([row for row in existing.records(journal)
+                  if row['component'] == 'IOserv' and
+                  row['message'] == 'IPC receive failed error=4'])
+    try:
+        with connect(endpoint) as failed:
+            failed.sendall(frame(1, struct.pack('<HI', 1, 1)))
+            wait_eof(failed, 'input allocation failure')
+        wait(lambda: fd_count(process) == baseline, 'input allocation cleanup')
+        with connect(endpoint) as good:
+            io_subscribe(good, 1)
+            assert recv(good)[0] == 5
+    finally:
+        finish(process)
+    assert process.returncode == 0
+    wait(lambda: len([row for row in existing.records(journal)
+                      if row['component'] == 'IOserv' and
+                      row['message'] == 'IPC receive failed error=4']) > before,
+         'input IPC allocation error journal')
+    print('T-13 input IPC allocation failure releases client resources')
 
 
 def test_supervisor(directory, log_binary, log_endpoint):

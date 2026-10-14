@@ -38,10 +38,10 @@ ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *
     *handle = (struct InputDeviceHandle){ .scenario = scenario };
     handle->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (handle->fd < 0) return CORE_IO_ERROR;
-    if (scenario == 4) fake_event_fd = handle->fd;
+    if (scenario == 4 || scenario == 7) fake_event_fd = handle->fd;
     struct itimerspec timer = { 0 };
     timer.it_value.tv_nsec = 500000000;
-    timer.it_interval.tv_nsec = 50000000;
+    timer.it_interval.tv_nsec = scenario == 7 ? 0 : 50000000;
     if (timerfd_settime(handle->fd, 0, &timer, NULL) != 0) {
         (void)close(handle->fd); return CORE_IO_ERROR;
     }
@@ -71,13 +71,24 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *sta
                                   InputFrame *frame)
 {
     if (!device || !status || !frame) return CORE_INVALID_ARGUMENT;
+    if (device->scenario == 7 && device->frames == 80) {
+#ifdef FAKE_BURST_END_NO_FRAME
+        *status = INPUT_READ_STATUS_NO_FRAME;
+        return CORE_OK;
+#else
+        *status = INPUT_READ_STATUS_DEVICE_LOST;
+        trace("lost\n");
+        return CORE_OK;
+#endif
+    }
     if (device->pending == 0) {
         u64 ticks;
         if (read(device->fd, &ticks, sizeof(ticks)) != sizeof(ticks)) {
             *status = INPUT_READ_STATUS_NO_FRAME;
             return CORE_OK;
         }
-        device->pending = device->scenario == 6 ? 128 : 1;
+        device->pending = device->scenario == 6 ? 128 :
+                          device->scenario == 7 ? 80 : 1;
     }
     --device->pending;
     if (device->scenario == 4 && device->frames == 2) {
@@ -95,9 +106,15 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *sta
         events[0] = (InputEvent){ device->scenario == 1 ? INPUT_EVENT_KIND_RELATIVE_AXIS :
                                    device->scenario == 2 ? INPUT_EVENT_KIND_ABSOLUTE_AXIS :
                                    INPUT_EVENT_KIND_KEY,
-                                   0x123, -3 };
+                                   device->scenario == 2 ? 0x35 : 0x123,
+                                   device->scenario == 2 ? 1234567 : -3 };
         events[1] = (InputEvent){ INPUT_EVENT_KIND_SYNC_REPORT, 0, 0 };
-        frame->count = device->scenario == 6 ? INPUT_FRAME_MAX_EVENTS : 2;
+        frame->count = device->scenario == 6 ? INPUT_FRAME_MAX_EVENTS :
+                       device->scenario == 2 ? 4 : 2;
+        if (device->scenario == 2) {
+            events[1] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x36, -765432 };
+            events[2] = (InputEvent){ INPUT_EVENT_KIND_RAW, 0x7abc, 135791113 };
+        }
         if (device->scenario == 6)
             for (usize i = 1; i < INPUT_FRAME_MAX_EVENTS - 1; ++i)
                 events[i] = (InputEvent){ INPUT_EVENT_KIND_KEY, (u16)i, 1 };
