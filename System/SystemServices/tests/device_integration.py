@@ -155,8 +155,14 @@ def test_camera(directory, log_endpoint, journal):
     trace = directory / 'camera.trace'
     binary = build('camserv', directory / 'camserv-test', endpoint, log_endpoint, trace)
     assert subprocess.run([str(binary)], timeout=5).returncode == 2
+    wrong_path_args = camera_args(0)
+    wrong_path_args[0] = '--device=/dev/Video0'
+    assert subprocess.run([str(binary), *wrong_path_args], timeout=8).returncode == 3
+    assert not endpoint.exists()
     process = run_service(binary, endpoint, camera_args(0))
     idle_fds = fd_count(process)
+    wait(lambda: Path(str(trace) + '.path').exists(), 'camera open path trace')
+    assert Path(str(trace) + '.path').read_text() == '/dev/video0'
     try:
         with connect(endpoint) as first, connect(endpoint) as second:
             first.sendall(frame(1))
@@ -581,6 +587,28 @@ def test_supervisor(directory, log_binary, log_endpoint):
                 kind, payload = recv(restarted)
                 assert kind == 8 and struct.unpack_from('<Q', payload)[0] == 1
             assert recv(input_client)[0] == 5
+            old_io = existing.find_child(process, io_binary)
+            assert old_io is not None
+            os.kill(old_io, signal.SIGTERM)
+            wait_eof(input_client, 'supervised input client')
+            wait(lambda: existing.find_child(process, io_binary) not in (None, old_io),
+                 'IOserv restart', 10)
+            assert not Path(f'/proc/{old_io}').exists()
+            wait(lambda: any(row['component'] == 'initserv' and
+                             'restarted service_id=IOserv' in row['message']
+                             for row in existing.records(journal)), 'IOserv restart log', 8)
+            wait(io_endpoint.exists, 'restarted IOserv endpoint', 5)
+            with connect(io_endpoint) as new_input:
+                new_input.settimeout(.2)
+                try:
+                    recv(new_input)
+                    raise AssertionError('restarted IOserv restored an old subscription')
+                except socket.timeout:
+                    pass
+                new_input.settimeout(5)
+                io_subscribe(new_input, 1)
+                kind, payload = recv(new_input)
+                assert kind == 5 and struct.unpack_from('<Q', payload, 8)[0] == 1
         live = existing.child_pids(process)
         finish(process)
         assert process.returncode == 0
@@ -588,7 +616,7 @@ def test_supervisor(directory, log_binary, log_endpoint):
         assert all(not Path(f'/proc/{pid}').exists() for pid in live)
     finally:
         finish(process)
-    print('T-14 initserv start, camera restart, SIGTERM and child reaping passed')
+    print('T-14 initserv start, camera and IOserv restart, SIGTERM and child reaping passed')
 
 
 def main():

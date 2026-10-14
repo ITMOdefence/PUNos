@@ -27,14 +27,29 @@ static void trace(const char *text)
     (void)close(fd);
 }
 
+static void trace_path(const String *path)
+{
+    i32 fd = open(TRACE_PATH ".path", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return;
+    (void)write(fd, path->data, path->length);
+    (void)close(fd);
+}
+
 ErrorCode camera_open(const CameraConfig *config, CameraHandle *out_camera)
 {
     if (!config || !config->path || !out_camera) return CORE_INVALID_ARGUMENT;
     const String *path = config->path;
     if (path->length != 11 || !path->data ||
         path->data[10] < '0' || path->data[10] > '9') return CORE_INVALID_PATH;
-    trace("open\n");
     u32 scenario = (u32)(path->data[10] - '0');
+    const char *expected_paths[] = {
+        "/dev/video0", "/dev/video1", "/dev/video2", "/dev/video3", "/dev/video4",
+        "/dev/video5", "/dev/video6", "/dev/video7", "/dev/video8", "/dev/video9"
+    };
+    for (usize i = 0; i < path->length; ++i)
+        if (path->data[i] != expected_paths[scenario][i]) return CORE_INVALID_PATH;
+    trace_path(path);
+    trace("open\n");
     if (scenario == 1) return CORE_NOT_FOUND;
     fake = (struct CameraHandle){ .scenario = scenario, .fd = -1 };
     *out_camera = &fake;
