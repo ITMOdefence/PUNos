@@ -21,6 +21,26 @@
       "critical": true,
       "restart": "restart",
       "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "IOserv",
+      "executable": "/punos/bin/IOserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": false,
+      "critical": false,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "camserv",
+      "executable": "/punos/bin/camserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": false,
+      "critical": false,
+      "restart": "restart",
+      "terminates_on_sigterm": true
     }
   ],
   "native_apps": []

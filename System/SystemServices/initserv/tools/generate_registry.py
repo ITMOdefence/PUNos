@@ -20,6 +20,8 @@ def generate(registry, metadata):
     if not isinstance(services, list) or not services or len(services) > 64:
         raise ValueError('registry requires 1..64 ServiceSpecs')
     fields = {'service_id','executable','arguments','environment','enabled','critical','restart','terminates_on_sigterm'}
+    def digits(value):
+        return bool(value) and value.isascii() and value.isdecimal()
     seen = set()
     order = {'logserv':0,'appserv':1,'IOserv':2,'locationserv':3,'camserv':4}
     validated = []
@@ -40,6 +42,30 @@ def generate(registry, metadata):
                 adapter.text(value,field)
                 if field=='environment' and ('=' not in value or value.startswith('=')):
                     raise ValueError('environment requires NAME=value')
+        if name == 'IOserv':
+            if not service['executable'].endswith('/IOserv'):
+                raise ValueError('IOserv executable name must be IOserv')
+            if service['enabled'] and (not service['arguments'] or any(
+                not value.startswith('--device=/dev/input/event') or
+                not digits(value[len('--device=/dev/input/event'):])
+                for value in service['arguments'])):
+                raise ValueError('enabled IOserv requires explicit --device=/dev/input/eventN')
+        if name == 'camserv':
+            if not service['executable'].endswith('/camserv'):
+                raise ValueError('camserv executable name must be camserv')
+            if service['enabled']:
+                args = service['arguments']
+                parts = [value.split('=', 1) for value in args]
+                values = {part[0]: part[1] for part in parts if len(part) == 2}
+                if len(args) != 5 or len(values) != 5 or set(values) != {
+                    '--device','--format','--width','--height','--fps'} or \
+                    not values['--device'].startswith('/dev/video') or \
+                    not digits(values['--device'][len('/dev/video'):]) or \
+                    values['--format'] not in ('Yuyv','Mjpeg','Nv12') or any(
+                        not digits(values[key]) or int(values[key]) <= 0 or
+                        int(values[key]) > 0xffffffff
+                        for key in ('--width','--height','--fps')):
+                    raise ValueError('enabled camserv requires explicit device, format, width, height and fps')
         validated.append(service)
     validated.sort(key=lambda item: order.get(item['service_id'],5))
     log = validated[0]

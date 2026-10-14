@@ -53,7 +53,7 @@ jobs:
       - name: Special Lib regression mutation checks
         run: python3 System/SpecialLibs/testing/check_mutations.py
 
-      - name: System Services and appserv integration
+      - name: System Services and device integration
         run: make -C System/SystemServices check
 
       # Races in thread and signal code do not show up on every run.
@@ -106,11 +106,29 @@ jobs:
           echo "${first}"
           echo "${second}"
           test "${first}" = "${second}"
+          gzip -dc System/images/punos-initramfs.cpio.gz | cpio -t \
+            | tee System/images/production-files.txt
+          ! grep -E 'selftest|init-smoke|bootcheck|camserv|IOserv' \
+            System/images/production-files.txt
+
+      - name: Check explicit device registry image
+        run: python3 System/SystemServices/tests/check_device_image.py
 
       - uses: actions/upload-artifact@v4
         with:
           name: initramfs
           path: System/images/punos-initramfs.cpio.gz
+          if-no-files-found: error
+
+      - name: Build smoke image
+        run: |
+          PUNOS_IMAGE_MODE=smoke ./System/scripts/build-initramfs.sh
+          mv System/images/punos-initramfs.cpio.gz System/images/punos-smoke.cpio.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: initramfs-smoke
+          path: System/images/punos-smoke.cpio.gz
           if-no-files-found: error
 
   kernel:
@@ -172,8 +190,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: initramfs
+          name: initramfs-smoke
           path: System/images
+
+      - name: Select smoke archive
+        run: mv System/images/punos-smoke.cpio.gz System/images/punos-initramfs.cpio.gz
 
       - name: Boot and check self-tests
         run: ./System/scripts/check-qemu-boot.sh

@@ -112,6 +112,34 @@ CameraHandle и завершает процесс. initserv запускает �
 
 ### Операции
 
+Числовой wire-контракт v1 согласован для этой реализации. Все целые поля
+payload кодируются little-endian; `ErrorCode` кодируется как `u32`.
+
+| message_type | Направление | Payload |
+| --- | --- | --- |
+| 1, camera.get_info | Клиент → сервис | Пустой |
+| 2, camera.get_info_result | Сервис → клиент | `u32 error`, `u8 state`, 20 байт config |
+| 3, camera.subscribe | Клиент → сервис | `u16 protocol_version` |
+| 4, camera.subscribe_result | Сервис → клиент | `u32 error` |
+| 5, camera.unsubscribe | Клиент → сервис | Пустой |
+| 6, camera.unsubscribe_result | Сервис → клиент | `u32 error` |
+| 7, camera.ready | Сервис → клиент | 20 байт config |
+| 8, camera.frame | Сервис → клиент | `u64 sequence`, `u64 monotonic_timestamp_ns`, `u32 data_size`, байты кадра |
+| 9, camera.device_lost | Сервис → клиент | `u32 reason` |
+| 10, camera.error | Сервис → клиент | `u32 error`; ответ на неизвестный либо серверный тип от клиента |
+
+Wire-config состоит из пяти `u32` в порядке `format`, `width`, `height`,
+`frames_per_second`, `max_frame_bytes` (20 байт). Wire-значения формата:
+`1=Yuyv`, `2=Mjpeg`, `3=Nv12`; значения C ABI библиотеки в payload не
+копируются. `state=1` означает Streaming, `state=0` — Unavailable. Когда
+Streaming недоступен, 20 байт config нулевые. Endpoint публикуется только
+после запуска потока, поэтому обычный успешный `get_info` возвращает
+`state=1`. Неподдерживаемая версия подписки даёт `CORE_UNSUPPORTED`, неверный
+размер — `CORE_INVALID_ARGUMENT`. При `DeviceLost` событие передаёт
+`CORE_IO_ERROR`, поскольку camlib не выдаёт отдельную причину. Повреждённый
+IPC-кадр закрывает соединение на уровне ipclib; неизвестный тип получает
+`camera.error` с `CORE_INVALID_ARGUMENT`.
+
 | Операция | Запрос | Успешный ответ | Назначение |
 | --- | --- | --- | --- |
 | camera.get_info | CameraGetInfoRequest | CameraGetInfoResult | Возвращает состояние и фактическую конфигурацию камеры |
@@ -188,7 +216,7 @@ camserv пишет в logserv запуск и применённую конфи�
 
 | ErrorCode | Когда возвращается клиенту |
 | --- | --- |
-| CORE_INVALID_ARGUMENT | Payload имеет неверный размер или недопустимую версию протокола |
+| CORE_INVALID_ARGUMENT | Payload имеет неверный размер или неизвестный тип сообщения |
 | CORE_INVALID_STATE | Повторная подписка или отписка без подписки |
 | CORE_UNSUPPORTED | Неподдерживаемая версия, формат или конфигурация превышает лимит IPC |
 | CORE_OUT_OF_MEMORY | Нельзя создать подписку или поставить событие в очередь |

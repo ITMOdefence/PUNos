@@ -1,6 +1,6 @@
 # System Services
 
-This tree contains appserv, logserv and initserv built on the same PUNos CRT,
+This tree contains appserv, logserv, initserv, camserv and IOserv built on the same PUNos CRT,
 Syscall Wrappers, System Libs and Special Libs. No network access is needed:
 
 ```sh
@@ -17,7 +17,14 @@ never launched by initserv. Both generators derive the identical SHA-256
 PlatformRegistryId from the whole canonical registry and reject native app
 ID/path mismatches. Files are not loaded at runtime.
 
-The default registry enables real logserv and appserv. Boot installs them and
+The default registry enables real logserv and appserv. The device services have
+disabled entries with no guessed hardware paths or camera parameters. An
+explicit platform registry can enable them with `/dev/videoN` and
+`/dev/input/eventN` arguments. `PUNOS_REGISTRY=/absolute/path.json`
+`System/scripts/build-initramfs.sh` compiles that registry and installs only
+enabled device services. The default image is production mode and excludes
+all self-tests. `PUNOS_IMAGE_MODE=smoke` adds the existing boot tests for QEMU.
+Boot installs logserv and appserv and
 the genuine initserv at `/punos/bin/`; normal `/init` starts the supervisor,
 which confirms logserv readiness before launching appserv. No fake logging peer
 is present in production. Desktop/appframework can use appserv's v1 endpoint
