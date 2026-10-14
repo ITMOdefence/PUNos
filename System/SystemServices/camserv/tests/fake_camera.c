@@ -16,6 +16,7 @@ struct CameraHandle {
 };
 static struct CameraHandle fake;
 static u8 frame_data[IPC_MESSAGE_MAX_SIZE];
+i32 fake_event_fd = -1;
 
 static void trace(const char *text)
 {
@@ -68,6 +69,7 @@ ErrorCode camera_start(CameraHandle camera)
     if (camera->scenario == 4) return CORE_IO_ERROR;
     camera->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (camera->fd < 0) return CORE_IO_ERROR;
+    fake_event_fd = camera->fd;
     struct itimerspec timer = { 0 };
     timer.it_value.tv_nsec = 500000000;
     timer.it_interval.tv_nsec = camera->scenario == 7 ? 10000000 : 50000000;

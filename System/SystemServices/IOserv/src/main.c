@@ -8,6 +8,7 @@
 #include <punos/syscall/syscall.h>
 #include "../../common/logger.h"
 #include "../../common/wire.h"
+#include "state.h"
 
 #ifndef IO_ENDPOINT
 #define IO_ENDPOINT "/run/punos/ioserv.sock"
@@ -30,10 +31,7 @@ typedef struct Device {
     EventSourceId source;
     u64 id;
     u64 sequence;
-    u8 pressed[1024];
-    i32 absolute[64];
-    bool touches[32];
-    u32 touch_slot;
+    IoDeviceState state;
 } Device;
 
 typedef struct IoService {
@@ -216,29 +214,6 @@ static ErrorCode open_device(IoService *service, const char *path_text)
     return CORE_OK;
 }
 
-static void update_state(Device *device, const InputFrame *frame)
-{
-    if (frame->count == 1 && frame->events[0].kind == INPUT_EVENT_KIND_SYNC_LOST) {
-        for (usize i = 0; i < sizeof(device->pressed); ++i) device->pressed[i] = 0;
-        for (usize i = 0; i < 64; ++i) device->absolute[i] = 0;
-        for (usize i = 0; i < 32; ++i) device->touches[i] = false;
-        device->touch_slot = 0;
-        return;
-    }
-    for (usize i = 0; i < frame->count; ++i) {
-        const InputEvent *event = &frame->events[i];
-        if (event->kind == INPUT_EVENT_KIND_KEY && event->code < sizeof(device->pressed))
-            device->pressed[event->code] = event->value != 0;
-        else if (event->kind == INPUT_EVENT_KIND_ABSOLUTE_AXIS && event->code < 64) {
-            device->absolute[event->code] = event->value;
-            if (event->code == 0x2f && event->value >= 0 && event->value < 32)
-                device->touch_slot = (u32)event->value;
-            if (event->code == 0x39)
-                device->touches[device->touch_slot] = event->value >= 0;
-        }
-    }
-}
-
 static bool read_device(IoService *service, Device *device)
 {
     for (usize i = 0; i < 64 && !stopping; ++i) {
@@ -258,7 +233,7 @@ static bool read_device(IoService *service, Device *device)
             return true;
         }
         bool sync_lost = frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST;
-        update_state(device, &frame);
+        io_state_apply(&device->state, &frame);
         if (sync_lost) (void)service_logger_record(&service->logger, "input synchronization lost", CORE_OK);
         u8 bytes[IO_FRAME_HEADER_SIZE + IO_EVENT_SIZE * INPUT_FRAME_MAX_EVENTS];
         usize size;

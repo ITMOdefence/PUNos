@@ -12,6 +12,11 @@ build/protocol_test.o: tests/protocol_test.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(ROOT)/System/SystemLibs/testing -c $< -o $@
 build/protocol_test: build/protocol_test.o build/protocol.o | dependencies
 	$(LINK) $^ $(LINK_LIBS) -o $@
+build/state_test.o: tests/state_test.c src/state.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(ROOT)/System/SystemLibs/testing -c $< -o $@
+build/state_test: build/state_test.o build/state.o | dependencies
+	$(LINK) $^ $(LINK_LIBS) -o $@
 .PHONY: check
-check: all build/protocol_test
+check: all build/protocol_test build/state_test
 	build/protocol_test
+	build/state_test

@@ -14,6 +14,7 @@ struct InputDeviceHandle {
 };
 static struct InputDeviceHandle handles[10];
 static InputEvent events[INPUT_FRAME_MAX_EVENTS];
+i32 fake_event_fd = -1;
 
 static void trace(const char *text)
 {
@@ -37,6 +38,7 @@ ErrorCode input_device_open(const InputDeviceConfig *config, InputDeviceHandle *
     *handle = (struct InputDeviceHandle){ .scenario = scenario };
     handle->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (handle->fd < 0) return CORE_IO_ERROR;
+    if (scenario == 4) fake_event_fd = handle->fd;
     struct itimerspec timer = { 0 };
     timer.it_value.tv_nsec = 500000000;
     timer.it_interval.tv_nsec = 50000000;

@@ -23,7 +23,7 @@ LIBS = ['core', 'mem', 'str', 'file', 'process', 'time', 'thread', 'sync',
         'eventloop', 'v4l2', 'inputdevice']
 
 
-def build(name, output, endpoint, log_endpoint, trace, fail_loop=False):
+def build(name, output, endpoint, log_endpoint, trace, fail_loop=False, inject_mask=None):
     module = HERE / name
     includes = [module / 'include', module / 'src',
                 SYSTEM / 'NativeRuntime/include',
@@ -35,11 +35,17 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False):
     options = [*FLAGS, *('-I' + str(path) for path in includes),
                f'-D{"CAM_ENDPOINT" if name == "camserv" else "IO_ENDPOINT"}="{endpoint}"',
                f'-DLOG_ENDPOINT="{log_endpoint}"', f'-DTRACE_PATH="{trace}"']
+    if inject_mask is not None:
+        options.append(f'-DINJECTED_EVENT_MASK={inject_mask}')
     sources = [module / 'src/main.c', module / 'src/protocol.c',
                HERE / 'common/logger.c',
                module / f'tests/fake_{"camera" if name == "camserv" else "input"}.c']
+    if name == 'IOserv':
+        sources.append(module / 'src/state.c')
     if fail_loop:
         sources.append(HERE / 'tests/fail_eventloop.c')
+    if inject_mask is not None:
+        sources.append(HERE / 'tests/inject_device_event.c')
     objects = []
     for index, source in enumerate(sources):
         object_path = output.parent / f'{output.name}.{index}.o'
@@ -55,6 +61,9 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False):
                *map(str, objects)]
     if fail_loop:
         command.append('-Wl,--wrap=eventloop_create')
+    if inject_mask is not None:
+        command += ['-Wl,--wrap=eventloop_add_fd', '-Wl,--wrap=eventloop_wait',
+                    '-Wl,--wrap=eventloop_remove_source']
     subprocess.run([*command, '-Wl,--start-group', *map(str, archives),
                     '-Wl,--end-group', '-o', str(output)], check=True)
     return output
@@ -96,6 +105,21 @@ def connect(path):
     return connection
 
 
+def fd_count(process):
+    return len(list(Path(f'/proc/{process.pid}/fd').iterdir()))
+
+
+def wait_eof(connection, label, limit=32 * 1024 * 1024):
+    connection.settimeout(5)
+    total = 0
+    while total <= limit:
+        part = connection.recv(min(65536, limit + 1 - total))
+        if not part:
+            return
+        total += len(part)
+    raise AssertionError(f'{label}: no EOF after {total} buffered bytes')
+
+
 def finish(process):
     if process.poll() is None:
         process.send_signal(signal.SIGTERM)
@@ -132,6 +156,7 @@ def test_camera(directory, log_endpoint, journal):
     binary = build('camserv', directory / 'camserv-test', endpoint, log_endpoint, trace)
     assert subprocess.run([str(binary)], timeout=5).returncode == 2
     process = run_service(binary, endpoint, camera_args(0))
+    idle_fds = fd_count(process)
     try:
         with connect(endpoint) as first, connect(endpoint) as second:
             first.sendall(frame(1))
@@ -163,7 +188,19 @@ def test_camera(directory, log_endpoint, journal):
                 assert malformed.recv(1) == b''
             with connect(endpoint) as truncated:
                 truncated.sendall(struct.pack('<II', 2, 3) + b'\x01')
+                truncated.shutdown(socket.SHUT_WR)
+                assert truncated.recv(1) == b''
             assert recv(second)[0] == 8
+        wait(lambda: fd_count(process) == idle_fds, 'camera disconnected subscriptions')
+        with connect(endpoint) as fresh:
+            fresh.settimeout(.2)
+            try:
+                recv(fresh)
+                raise AssertionError('new camera connection inherited subscription')
+            except socket.timeout:
+                pass
+            cam_subscribe(fresh)
+            assert recv(fresh)[0] == 8
     finally:
         finish(process)
     assert process.returncode == 0 and not endpoint.exists()
@@ -241,6 +278,19 @@ def test_camera(directory, log_endpoint, journal):
     assert trace.read_text().count('release\n') == 2
     assert trace.read_text().count('close\n') == 1
     print('T-06 camera NoFrame, DeviceLost and frame release passed')
+    for mask, label in ((16, 'HANGUP'), (8, 'ERROR')):
+        trace.unlink()
+        injected = build('camserv', directory / f'camserv-{label.lower()}', endpoint,
+                         log_endpoint, trace, inject_mask=mask)
+        process = run_service(injected, endpoint, camera_args(5))
+        with connect(endpoint) as connection:
+            cam_subscribe(connection)
+            assert [recv(connection)[0] for _ in range(3)] == [8, 8, 9]
+        assert process.wait(timeout=5) == 1
+        marks = trace.read_text().splitlines()
+        assert marks.count('device_event_injected') == 1, (label, marks)
+        assert marks.count('device_source_removed') == 1, (label, marks)
+    print('T-06 camera HANGUP and ERROR device dispatch passed')
     entries = existing.records(journal)
     assert any(row['component'] == 'camserv' and 'started format=Mjpeg width=320' in row['message'] for row in entries)
     assert any(row['component'] == 'camserv' and 'camera device lost' in row['message'] for row in entries)
@@ -261,6 +311,7 @@ def test_camera(directory, log_endpoint, journal):
                               'slow or failed client' in row['message']]) > before,
                  'camera slow client close')
             assert recv(fast)[0] == 8
+            wait_eof(slow, 'camera slow client')
     finally:
         finish(process)
     assert process.returncode == 0
@@ -282,11 +333,20 @@ def test_input(directory, log_endpoint, journal):
     assert subprocess.run([str(binary)], timeout=5).returncode == 2
     paths = ['--device=/dev/input/event' + str(i) for i in (0, 1, 2, 3)]
     process = run_service(binary, endpoint, paths)
+    wait(lambda: trace.exists() and trace.read_text().count('open\n') == 4,
+         'initial input device opens')
+    idle_fds = fd_count(process)
     try:
+        with connect(endpoint) as wire_client:
+            wire_client.sendall(bytes.fromhex('06 00 00 00 01 00 00 00 01 00 05 00 00 00'))
+            assert exact(wire_client, 12) == bytes.fromhex(
+                '04 00 00 00 02 00 00 00 00 00 00 00')
+            assert [recv(wire_client)[0] for _ in range(2)] == [6, 6]
         with connect(endpoint) as keyboard, connect(endpoint) as pointer, connect(endpoint) as touch:
             devices = [io_subscribe(keyboard, 1), io_subscribe(pointer, 2), io_subscribe(touch, 4)]
             classes = [struct.unpack_from('<I', group[0][1], 16)[0] for group in devices]
             assert classes == [1, 2, 4]
+            ids = [struct.unpack_from('<Q', group[0][1])[0] for group in devices]
             keyboard.sendall(frame(1, struct.pack('<HI', 1, 1)))
             assert recv(keyboard) == (2, struct.pack('<I', 3))
             kind, data = recv(keyboard)
@@ -313,7 +373,27 @@ def test_input(directory, log_endpoint, journal):
             with connect(endpoint) as malformed:
                 malformed.sendall(struct.pack('<II', 1048577, 1))
                 assert malformed.recv(1) == b''
+            with connect(endpoint) as truncated:
+                truncated.sendall(struct.pack('<II', 6, 1) + b'\x01\0\x01')
+                truncated.shutdown(socket.SHUT_WR)
+                assert truncated.recv(1) == b''
             assert recv(pointer)[0] == 5
+        for mask in range(1, 8):
+            expected = {device_id for bit, device_id in ((1, ids[0]),
+                                                        (2, ids[1]),
+                                                        (4, ids[2])) if mask & bit}
+            with connect(endpoint) as filtered:
+                added = io_subscribe(filtered, mask, len(expected))
+                assert {struct.unpack_from('<Q', item[1])[0] for item in added} == expected
+                delivered = set()
+                for _ in range(12):
+                    kind, payload = recv(filtered)
+                    assert kind == 5
+                    device_id = struct.unpack_from('<Q', payload)[0]
+                    assert device_id in expected, (mask, device_id)
+                    delivered.add(device_id)
+                assert delivered == expected, (mask, delivered)
+        wait(lambda: fd_count(process) == idle_fds, 'input disconnected subscriptions')
     finally:
         finish(process)
     assert process.returncode == 0 and not endpoint.exists()
@@ -351,20 +431,71 @@ def test_input(directory, log_endpoint, journal):
 
     trace.unlink()
     process = run_service(binary, endpoint,
+                          ['--device=/dev/input/event5', '--device=/dev/input/event1'])
+    try:
+        with connect(endpoint) as connection:
+            added = io_subscribe(connection, 3, 2)
+            by_class = {struct.unpack_from('<I', item[1], 16)[0]:
+                        struct.unpack_from('<Q', item[1])[0] for item in added}
+            keyboard_id, pointer_id = by_class[1], by_class[2]
+            keyboard_frames, pointer_frames = [], []
+            for _ in range(24):
+                kind, payload = recv(connection)
+                assert kind == 5
+                device_id, sequence = struct.unpack_from('<QQ', payload)
+                if device_id == keyboard_id:
+                    keyboard_frames.append((sequence, payload[18:]))
+                else:
+                    assert device_id == pointer_id
+                    pointer_frames.append(sequence)
+                if (len(keyboard_frames) >= 3 and pointer_frames and
+                        pointer_frames[-1] >= 3):
+                    break
+            assert [sequence for sequence, _ in keyboard_frames[:3]] == [1, 2, 3]
+            assert keyboard_frames[1][1] == struct.pack('<BHi', 5, 0, 0)
+            assert pointer_frames[0] == 1 and pointer_frames[-1] >= 3
+    finally:
+        finish(process)
+    print('T-10 SyncLost emits no synthetic frame and another device continues')
+
+    trace.unlink()
+    process = run_service(binary, endpoint,
                           ['--device=/dev/input/event4', '--device=/dev/input/event1'])
     try:
         with connect(endpoint) as keyboard, connect(endpoint) as pointer:
             device = io_subscribe(keyboard, 1)[0][1]
             io_subscribe(pointer, 2)
+            before_loss_fds = fd_count(process)
             assert [recv(keyboard)[0] for _ in range(2)] == [5, 5]
             removed = recv(keyboard)
             assert removed == (7, device)
+            wait(lambda: trace.read_text().count('close\n') == 1,
+                 'lost input handle closed before service shutdown')
+            assert fd_count(process) == before_loss_fds - 1
             assert recv(pointer)[0] == 5
     finally:
         finish(process)
     assert trace.read_text().count('close\n') == 2
     assert trace.read_text().count('open\n') == 2
     print('T-11 one input DeviceLost leaves another device active passed')
+    for mask, label in ((16, 'HANGUP'), (8, 'ERROR')):
+        trace.unlink()
+        injected = build('IOserv', directory / f'IOserv-{label.lower()}', endpoint,
+                         log_endpoint, trace, inject_mask=mask)
+        process = run_service(injected, endpoint,
+                              ['--device=/dev/input/event4', '--device=/dev/input/event1'])
+        try:
+            with connect(endpoint) as keyboard, connect(endpoint) as pointer:
+                device = io_subscribe(keyboard, 1)[0][1]
+                io_subscribe(pointer, 2)
+                assert [recv(keyboard)[0] for _ in range(3)] == [5, 5, 7]
+                assert trace.read_text().count('device_event_injected\n') == 1
+                wait(lambda: trace.read_text().count('device_source_removed\n') == 1,
+                     f'input {label} source removal')
+                assert recv(pointer)[0] == 5 and process.poll() is None
+        finally:
+            finish(process)
+    print('T-11 input HANGUP and ERROR device dispatch passed')
     entries = existing.records(journal)
     assert any(row['component'] == 'IOserv' and 'input device open failed' in row['message'] for row in entries)
     assert any(row['component'] == 'IOserv' and 'input synchronization lost' in row['message'] for row in entries)
@@ -389,6 +520,7 @@ def test_input(directory, log_endpoint, journal):
             else:
                 raise AssertionError('IOserv did not disconnect slow client')
             assert recv(fast)[0] == 5
+            wait_eof(slow, 'input slow client')
             with connect(endpoint) as fresh:
                 io_subscribe(fresh, 1)
                 assert recv(fresh)[0] == 5
@@ -438,6 +570,13 @@ def test_supervisor(directory, log_binary, log_endpoint):
                              for row in existing.records(journal)), 'camserv restart', 8)
             wait(cam_endpoint.exists, 'restarted camserv endpoint', 5)
             with connect(cam_endpoint) as restarted:
+                restarted.settimeout(.2)
+                try:
+                    recv(restarted)
+                    raise AssertionError('restarted camera restored an old subscription')
+                except socket.timeout:
+                    pass
+                restarted.settimeout(5)
                 cam_subscribe(restarted)
                 kind, payload = recv(restarted)
                 assert kind == 8 and struct.unpack_from('<Q', payload)[0] == 1

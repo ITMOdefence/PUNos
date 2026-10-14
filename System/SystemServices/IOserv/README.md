@@ -9,7 +9,7 @@ IOserv --device=/dev/input/eventN [--device=/dev/input/eventN ...]
 ```
 
 The default platform registry disables the service until a platform supplies
-real arguments. `make check` runs an independent wire test and process tests
-against fake input devices linked only into the test executable. The production
-ELF links the real inputlib. The intended GUI client is windowserv in its
+real arguments. `make check` runs independent wire and per-device state tests,
+plus process tests against fake input devices linked only into test executables.
+The production ELF links the real inputlib. The intended GUI client is windowserv in its
 separate branch; no GUI client code is included here.
