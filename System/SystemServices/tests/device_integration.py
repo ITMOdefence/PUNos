@@ -475,7 +475,9 @@ def test_input(directory, log_endpoint, journal):
             assert recv(pointer)[0] == 5
             kind, touch_payload = recv(touch)
             assert kind == 5
-            assert touch_payload[18:] == (struct.pack('<BHi', 3, 0x35, 1234567) +
+            assert touch_payload[18:] == (struct.pack('<BHi', 3, 0x2f, 32) +
+                                          struct.pack('<BHi', 3, 0x39, 42) +
+                                          struct.pack('<BHi', 3, 0x35, 1234567) +
                                           struct.pack('<BHi', 3, 0x36, -765432) +
                                           struct.pack('<BHi', 6, 0x7abc, 135791113) +
                                           struct.pack('<BHi', 4, 0, 0))

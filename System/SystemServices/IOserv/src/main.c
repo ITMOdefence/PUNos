@@ -69,6 +69,7 @@ static void close_device(IoService *service, Device **link)
 {
     Device *device = *link;
     if (device->source) (void)eventloop_remove_source(service->loop, device->source);
+    (void)io_state_clear(&device->state);
     (void)input_device_close(&device->handle);
     *link = device->next;
     MemoryBlock block = device->block;
@@ -236,7 +237,12 @@ static bool read_device(IoService *service, Device *device)
             return true;
         }
         bool sync_lost = frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST;
-        io_state_apply(&device->state, &frame);
+        error = io_state_apply(&device->state, &frame);
+        if (error != CORE_OK) {
+            (void)service_logger_record(&service->logger, "input state failed", error);
+            (void)input_frame_destroy(&frame);
+            return true;
+        }
         if (sync_lost) (void)service_logger_record(&service->logger, "input synchronization lost", CORE_OK);
         u8 bytes[IO_FRAME_HEADER_SIZE + IO_EVENT_SIZE * INPUT_FRAME_MAX_EVENTS];
         usize size;

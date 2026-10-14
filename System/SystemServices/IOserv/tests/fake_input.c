@@ -102,19 +102,20 @@ ErrorCode input_device_read_frame(InputDeviceHandle device, InputReadStatus *sta
         events[0] = (InputEvent){ INPUT_EVENT_KIND_SYNC_LOST, 0, 0 };
         frame->count = 1;
         trace("sync_lost\n");
+    } else if (device->scenario == 2) {
+        events[0] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x2f, 32 };
+        events[1] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x39, 42 };
+        events[2] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x35, 1234567 };
+        events[3] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x36, -765432 };
+        events[4] = (InputEvent){ INPUT_EVENT_KIND_RAW, 0x7abc, 135791113 };
+        events[5] = (InputEvent){ INPUT_EVENT_KIND_SYNC_REPORT, 0, 0 };
+        frame->count = 6;
     } else {
         events[0] = (InputEvent){ device->scenario == 1 ? INPUT_EVENT_KIND_RELATIVE_AXIS :
-                                   device->scenario == 2 ? INPUT_EVENT_KIND_ABSOLUTE_AXIS :
                                    INPUT_EVENT_KIND_KEY,
-                                   device->scenario == 2 ? 0x35 : 0x123,
-                                   device->scenario == 2 ? 1234567 : -3 };
+                                   0x123, -3 };
         events[1] = (InputEvent){ INPUT_EVENT_KIND_SYNC_REPORT, 0, 0 };
-        frame->count = device->scenario == 6 ? INPUT_FRAME_MAX_EVENTS :
-                       device->scenario == 2 ? 4 : 2;
-        if (device->scenario == 2) {
-            events[1] = (InputEvent){ INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x36, -765432 };
-            events[2] = (InputEvent){ INPUT_EVENT_KIND_RAW, 0x7abc, 135791113 };
-        }
+        frame->count = device->scenario == 6 ? INPUT_FRAME_MAX_EVENTS : 2;
         if (device->scenario == 6)
             for (usize i = 1; i < INPUT_FRAME_MAX_EVENTS - 1; ++i)
                 events[i] = (InputEvent){ INPUT_EVENT_KIND_KEY, (u16)i, 1 };
