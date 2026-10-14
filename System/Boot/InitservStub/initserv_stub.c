@@ -2,7 +2,7 @@
 
 /*
  * Smoke-test stand-in for /punos/bin/initserv. It runs every self-test packaged
- * in the initramfs, reports each result on the console and then stays alive.
+ * in the initramfs, reports each result on the console and returns a result.
  */
 
 struct SelfTest {
@@ -12,6 +12,8 @@ struct SelfTest {
 };
 
 static const struct SelfTest self_tests[] = {
+    { "/punos/bin/logserv-selftest", "PUNos initserv stub: logserv self-test passed\n", "PUNos initserv stub: logserv self-test failed\n" },
+    { "/punos/bin/initserv-selftest", "PUNos initserv stub: initserv self-test passed\n", "PUNos initserv stub: initserv self-test failed\n" },
     { "/punos/bin/syscall-selftest",
       "PUNos initserv stub: syscall self-test passed\n",
       "PUNos initserv stub: syscall self-test failed\n" },
@@ -99,7 +101,7 @@ static i32 run_self_test(const char *path)
 
 int main(int argc, char **argv, char **envp)
 {
-    static const struct timespec delay = { .tv_sec = 60, .tv_nsec = 0 };
+    i32 failed = 0;
     size_t index;
 
     (void)argc;
@@ -111,9 +113,8 @@ int main(int argc, char **argv, char **envp)
             print(self_tests[index].passed);
         } else {
             print(self_tests[index].failed);
+            failed = 1;
         }
     }
-    for (;;) {
-        (void)nanosleep(&delay, 0);
-    }
+    return failed;
 }

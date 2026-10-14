@@ -1,10 +1,26 @@
 {
   "services": [
     {
+      "service_id": "logserv",
+      "executable": "/punos/bin/logserv",
+      "arguments": [
+        "--log-path=/var/log/punos/system.log"
+      ],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
       "service_id": "appserv",
       "executable": "/punos/bin/appserv",
-      "enabled": false,
-      "requires": ["logserv"]
+      "arguments": [],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
     }
   ],
   "native_apps": []
