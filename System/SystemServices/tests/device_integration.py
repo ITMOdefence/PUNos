@@ -152,6 +152,10 @@ def test_camera(directory, log_endpoint, journal):
             assert recv(first) == (4, struct.pack('<I', 12))
             first.sendall(frame(99))
             assert recv(first) == (10, struct.pack('<I', 1))
+            first.sendall(frame(8))
+            assert recv(first) == (10, struct.pack('<I', 1))
+            first.sendall(frame(1, b'\0'))
+            assert recv(first) == (2, struct.pack('<I', 1) + b'\0' * 21)
             second_frame = recv(second)
             assert second_frame[0] == 8 and struct.unpack_from('<Q', second_frame[1])[0] > 1
             with connect(endpoint) as malformed:
@@ -292,6 +296,8 @@ def test_input(directory, log_endpoint, journal):
             keyboard.sendall(frame(3))
             assert recv(keyboard) == (4, struct.pack('<I', 3))
             keyboard.sendall(frame(99))
+            assert recv(keyboard) == (8, struct.pack('<I', 1))
+            keyboard.sendall(frame(5))
             assert recv(keyboard) == (8, struct.pack('<I', 1))
             keyboard.sendall(frame(1, b'\x01\0\x01'))
             assert recv(keyboard) == (2, struct.pack('<I', 1))

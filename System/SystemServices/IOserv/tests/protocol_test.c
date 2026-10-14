@@ -49,8 +49,33 @@ int main(int argc, char **argv, char **envp)
                               3, &frame, &size) == CORE_OK &&
               size == sizeof(frame_expected) && bytes_equal(bytes, frame_expected, size));
     EXPECT(9, io_encode_frame(bytes, 30, 1, 1, &frame, &size) == CORE_INVALID_ARGUMENT);
+    InputEvent kinds[] = {
+        { INPUT_EVENT_KIND_KEY, 0x0101, -1 },
+        { INPUT_EVENT_KIND_RELATIVE_AXIS, 0x0202, -2 },
+        { INPUT_EVENT_KIND_ABSOLUTE_AXIS, 0x0303, -3 },
+        { INPUT_EVENT_KIND_SYNC_REPORT, 0x0404, -4 },
+        { INPUT_EVENT_KIND_SYNC_LOST, 0x0505, -5 },
+        { INPUT_EVENT_KIND_RAW, 0x0606, -6 }
+    };
+    const u8 kinds_expected[] = {
+        6,0,
+        1,1,1,0xff,0xff,0xff,0xff,
+        2,2,2,0xfe,0xff,0xff,0xff,
+        3,3,3,0xfd,0xff,0xff,0xff,
+        4,4,4,0xfc,0xff,0xff,0xff,
+        5,5,5,0xfb,0xff,0xff,0xff,
+        6,6,6,0xfa,0xff,0xff,0xff
+    };
+    frame.events = kinds;
+    frame.count = 6;
+    EXPECT(10, io_encode_frame(bytes, sizeof(bytes), 1, 1, &frame, &size) == CORE_OK &&
+               size == IO_FRAME_HEADER_SIZE + 6 * IO_EVENT_SIZE &&
+               bytes_equal(bytes + 16, kinds_expected, sizeof(kinds_expected)));
+    kinds[5].kind = (InputEventKind)6;
+    EXPECT(11, io_encode_frame(bytes, sizeof(bytes), 1, 1, &frame, &size) ==
+               CORE_INVALID_ARGUMENT);
     frame.count = 257;
-    EXPECT(10, io_encode_frame(bytes, sizeof(bytes), 1, 1, &frame, &size) == CORE_INVALID_ARGUMENT);
+    EXPECT(12, io_encode_frame(bytes, sizeof(bytes), 1, 1, &frame, &size) == CORE_INVALID_ARGUMENT);
     check_passed();
     return 0;
 }
