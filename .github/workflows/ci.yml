@@ -53,6 +53,9 @@ jobs:
       - name: Special Lib regression mutation checks
         run: python3 System/SpecialLibs/testing/check_mutations.py
 
+      - name: System Services and appserv integration
+        run: make -C System/SystemServices check
+
       # Races in thread and signal code do not show up on every run.
       - name: Repeat thread, sync and signal tests
         run: |
@@ -90,7 +93,7 @@ jobs:
       - name: Install toolchain
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential cpio
+          apt-get install -y --no-install-recommends build-essential cpio python3
 
       - uses: actions/checkout@v4
 

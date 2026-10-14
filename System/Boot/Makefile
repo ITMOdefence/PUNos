@@ -22,6 +22,7 @@ SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
                          $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 SPECIAL_LIBS_DIR := ../SpecialLibs
+SYSTEM_SERVICES_DIR := ../SystemServices
 # Runtime tests of Special Libs, packaged as /punos/bin/<name>-selftest.
 SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
                          $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
@@ -35,11 +36,14 @@ BUILD_DIR := build
 INIT_OBJECT := $(BUILD_DIR)/init.o
 STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
-STUB := $(BUILD_DIR)/initserv
+STUB := $(BUILD_DIR)/initserv-smoke
 
-.PHONY: all clean native-runtime $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
+.PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
 
-all: $(INIT) $(STUB) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
+all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) system-services
+
+system-services:
+	$(MAKE) -C $(SYSTEM_SERVICES_DIR) all runtime-test
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -75,3 +79,11 @@ $(STUB): $(STUB_OBJECT) $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+$(BUILD_DIR)/init_smoke.o: Init/init.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DPUNOS_SMOKE_BOOT -c $< -o $@
+$(BUILD_DIR)/init-smoke: $(BUILD_DIR)/init_smoke.o $(CRT0) $(CRT_LIBRARY) $(SYSCALL_LIBRARY)
+	$(CC) -nostdlib -no-pie -Wl,-e,_start $(CRT0) $(BUILD_DIR)/init_smoke.o $(CRT_LIBRARY) $(SYSCALL_LIBRARY) -o $@
+$(BUILD_DIR)/services-bootcheck: ServicesProbe/probe.c system-services
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(foreach lib,core mem str time thread eventloop,-I../SystemLibs/lib$(lib)/include) -I../SpecialLibs/ipclib/include -c $< -o $(BUILD_DIR)/services_probe.o
+	$(CC) -nostdlib -no-pie -Wl,-e,_start $(CRT0) $(BUILD_DIR)/services_probe.o -Wl,--start-group $(foreach lib,core mem str time thread eventloop,../SystemLibs/lib$(lib)/build/libpunos_$(lib).a) ../SpecialLibs/ipclib/build/libpunos_special_ipc.a $(CRT_LIBRARY) $(SYSCALL_LIBRARY) -Wl,--end-group -o $@

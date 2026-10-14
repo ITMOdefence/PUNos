@@ -18,9 +18,9 @@
    initramfs.
 5. Запустить ядро и первый userspace PUNos в QEMU.
 
-Настоящий initserv и остальные System Services пока не реализованы. В образ
-включается явно обозначенный initserv smoke-test stub, подтверждающий работу
-границы `/init` → `fork()` → `execve()`.
+Initserv, logserv и appserv реализованы. Обычный `/init` запускает настоящий
+supervisor, а `check-qemu-boot.sh` выбирает отдельный `/init-smoke` для self-test'ов
+и затем проверяет реальную цепочку initserv → logserv → appserv.
 
 ## Быстрый запуск
 
@@ -228,7 +228,9 @@ LC_ALL=C ./System/scripts/build-initramfs.sh
 ./System/scripts/run-qemu-initramfs.sh
 ```
 
-Успешная загрузка содержит следующие сообщения:
+Обычная загрузка выводит готовность logserv и запуск сервисов. Полный
+проверочный путь можно запустить как `INIT_PATH=/init-smoke
+./System/scripts/run-qemu-initramfs.sh`; он дополнительно содержит сообщения:
 
 ```text
 PUNos init: userspace started
@@ -265,6 +267,8 @@ PUNos initserv stub: ipc self-test passed
 PUNos initserv stub: log self-test passed
 PUNos initserv stub: input self-test passed
 PUNos initserv stub: camera self-test passed
+appserv runtime test passed
+PUNos initserv stub: appserv self-test passed
 ```
 
 Stub по очереди запускает self-test'ы из `/punos/bin/*-selftest` и сообщает
@@ -287,10 +291,9 @@ Stub по очереди запускает self-test'ы из `/punos/bin/*-self
 `900`) сценарий завершается с кодом `1`, в остальных случаях — с кодом `0`,
 после чего останавливает QEMU.
 
-Smoke-test stub занимает путь `/punos/bin/initserv` только для проверки
-загрузочной цепочки. Команда, разрабатывающая настоящий initserv, заменяет этот
-исполняемый файл на этапе интеграции своего слоя; остальным командам изменять
-stub для запуска текущего образа не требуется.
+Путь `/punos/bin/initserv` занимает настоящий supervisor. Self-test runner
+находится в `/punos/bin/initserv-smoke` и вызывается только проверочным
+`/init-smoke`. После тестов проверочный путь запускает тот же настоящий initserv.
 
 ## Проверка NativeRuntime перед интеграцией
 
@@ -344,6 +347,28 @@ make -C System/SpecialLibs check
 initramfs и выполняются при загрузке в QEMU (см. раздел 4). Соглашения по
 структуре описаны в `System/SpecialLibs/README.md`.
 
+## Интеграция appserv
+
+appserv собирается вместе с Boot и включается в initramfs как
+`/punos/bin/appserv`. Его freestanding self-test включается как
+`/punos/bin/appserv-selftest` и запускается smoke-test stub при загрузке.
+Проверить все тесты сервиса на Linux-хосте можно отдельно:
+
+```bash
+make -C System/SystemServices check
+```
+
+Сборочный реестр и каталог принадлежат PUNos и находятся в
+`System/SystemServices/platform_registry.json` и `applications.json`.
+appserv генерирует из них статический каталог и общий PlatformRegistryId,
+используя библиотеки текущего checkout; сетевых загрузок при сборке нет.
+
+Автозапуск logserv и appserv включён в общем реестре. Настоящий initserv
+подтверждает подключение к logserv перед запуском остальных включённых
+сервисов. Только проверочный `/init-smoke` запускает self-test runner перед
+настоящим supervisor; обычный `/init` не выполняет тестовые программы.
+См. `System/SystemServices/README.md`.
+
 ## Непрерывная интеграция
 
 Workflow `.github/workflows/ci.yml` запускается на каждый push, pull request
@@ -352,7 +377,7 @@ Workflow `.github/workflows/ci.yml` запускается на каждый pus
 
 | Job | Что проверяет |
 | --- | --- |
-| Host tests | `check` для SyscallWrappers, CRT, всех System Libs и всех Special Libs; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд, как и тесты Special Libs, работающие с сокетами и файлами |
+| Host tests | `check` для SyscallWrappers, CRT, System Libs, Special Libs и appserv; тесты потоков, синхронизации и сигналов дополнительно прогоняются 30 раз подряд, как и тесты Special Libs, работающие с сокетами и файлами |
 | Reproducible initramfs | Две сборки `build-initramfs.sh` дают одинаковый SHA-256 |
 | Kernel | `prepare-kernel.sh` и `build-kernel.sh`; `bzImage` кэшируется по содержимому `System/kernel/` и пересобирается только при его изменении |
 | QEMU boot | `check-qemu-boot.sh` на собранных ядре и initramfs; журнал загрузки сохраняется как artifact |
@@ -381,7 +406,8 @@ test -s System/linux-build/arch/x86/boot/bzImage
 
 Для проверки userspace дополнительно соберите initramfs и убедитесь, что QEMU
 выводит контрольные сообщения из предыдущего раздела. Это подтверждает
-текущий boot-срез, но не готовность настоящего initserv или System Services.
+реальную цепочку initserv → logserv → appserv, включая ответ appserv по IPC.
+Это не подтверждает готовность будущих Desktop/appframework или приложений.
 
 Для проверки воспроизводимости initramfs выполните две сборки и сравните
 контрольные суммы:
@@ -403,10 +429,10 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 ```
 
 Первая команда должна завершиться с кодом `0`; во второй должны присутствовать
-`init`, `punos/bin/initserv` и self-test'ы `punos/bin/*-selftest`
+`init`, `init-smoke`, `punos/bin/initserv`, `punos/bin/logserv`, `punos/bin/appserv` и self-test'ы `punos/bin/*-selftest`
 (`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
 `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
-`libv4l2`, `ipc`, `log`, `input`, `camera`) с владельцем `root:root` и правами
+`libv4l2`, `ipc`, `log`, `input`, `camera`, `appserv`, `logserv`, `initserv`) с владельцем `root:root` и правами
 `0755`.
 
 ## Рабочая структура
@@ -426,9 +452,10 @@ System/
 │   ├── run-qemu.sh
 │   ├── run-qemu-initramfs.sh
 │   └── check-qemu-boot.sh
-├── Boot/                     # исходники /init и smoke-test initserv
+├── Boot/                     # /init, /init-smoke, self-test runner и IPC probe
 ├── NativeRuntime/            # CRT и Syscall Wrappers
 ├── SystemLibs/               # System Libs (libcore, libmath, libmem, libstr, libfile, libtime, libprocess, libthread, libsync, libeventloop, libinputdevice, libv4l2)
+├── SystemServices/           # appserv и общий сборочный реестр приложений
 ├── images/                   # генерируется, Git игнорирует
 ├── download/                 # генерируется, Git игнорирует
 ├── linux-6.12.111/           # генерируется, Git игнорирует
@@ -538,7 +565,7 @@ mv System/linux-6.12.111 System/linux-6.12.111.incomplete
 ## Граница ответственности этого окружения
 
 Этот репозиторный срез предоставляет зафиксированное ядро, Syscall Wrappers,
-CRT, реализованные System Libs, `/init`, сборку initramfs и запуск в QEMU. Реализация настоящего initserv,
-PlatformRegistry и последующих System Services принадлежит соответствующим
-командам. Smoke-test stub существует только как проверяемая точка передачи
-управления следующему слою.
+CRT, реализованные System Libs и Special Libs, `/init`, сборку initramfs и
+настоящие initserv, logserv и appserv. Полноценные Desktop/appframework и прочие
+системные сервисы остаются задачами следующих слоёв. Отдельный smoke-путь
+проверяет self-test'ы и реальную готовность appserv, не заменяя supervisor.
