@@ -53,6 +53,30 @@ int main(int argc, char **argv, char **envp)
     EXPECT(11, cam_request_error(&request, &type) == CORE_INVALID_ARGUMENT);
     request.type = 99;
     EXPECT(12, cam_request_error(&request, &type) == CORE_INVALID_ARGUMENT && type == CAM_ERROR);
+
+    const u8 yuyv_expected[20] = {
+        1,0,0,0, 0x34,0x12,0,0, 0x78,0x56,0,0,
+        30,0,0,0, 0,0,0x10,0
+    };
+    config.format = CAMERA_PIXEL_FORMAT_YUYV;
+    cam_encode_config(bytes, &config);
+    EXPECT(13, bytes_equal(bytes, yuyv_expected, sizeof(yuyv_expected)));
+    cam_encode_info(bytes, CORE_OK, &config);
+    EXPECT(14, bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 &&
+               bytes[3] == 0 && bytes[4] == 1 &&
+               bytes_equal(bytes + 5, yuyv_expected, sizeof(yuyv_expected)));
+
+    const u8 nv12_expected[20] = {
+        3,0,0,0, 0x34,0x12,0,0, 0x78,0x56,0,0,
+        30,0,0,0, 0,0,0x10,0
+    };
+    config.format = CAMERA_PIXEL_FORMAT_NV12;
+    cam_encode_config(bytes, &config);
+    EXPECT(15, bytes_equal(bytes, nv12_expected, sizeof(nv12_expected)));
+    cam_encode_info(bytes, CORE_OK, &config);
+    EXPECT(16, bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 &&
+               bytes[3] == 0 && bytes[4] == 1 &&
+               bytes_equal(bytes + 5, nv12_expected, sizeof(nv12_expected)));
     check_passed();
     return 0;
 }
