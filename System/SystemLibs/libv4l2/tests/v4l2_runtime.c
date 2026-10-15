@@ -121,6 +121,8 @@ static void test_missing_device_and_arguments(void)
         requested.height = V4L2_MIN_HEIGHT;
         requested.frames_per_second = V4L2_MIN_FRAMES_PER_SECOND;
         requested.max_frame_bytes = 0;
+        requested.frame_rate_numerator = 0;
+        requested.frame_rate_denominator = 0;
         EXPECT(10, v4l2_configure_capture(NULL, &requested, &actual) == CORE_INVALID_ARGUMENT);
         /* max_frame_bytes must be 0 in a request (contract 11), device NULL
          * still short-circuits first, so this specifically needs no device. */
@@ -160,7 +162,13 @@ static void test_real_device(void)
     EXPECT(17, v4l2_get_fd(device, &fd) == CORE_OK && fd >= 0);
     EXPECT(18, v4l2_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
 
-    EXPECT(19, v4l2_get_capture_configurations(device, &configurations) == CORE_OK);
+    ErrorCode enumeration = v4l2_get_capture_configurations(device, &configurations);
+    EXPECT(19, enumeration == CORE_OK || enumeration == CORE_UNSUPPORTED);
+    if (enumeration == CORE_UNSUPPORTED) {
+        EXPECT(122, v4l2_close(&device) == CORE_OK);
+        destroy(&path);
+        return;
+    }
 
     if (configurations.count == 0) {
         EXPECT(20, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
@@ -177,7 +185,14 @@ static void test_real_device(void)
         EXPECT(22, requested.max_frame_bytes > 0);
         requested.max_frame_bytes = 0; /* a request must have max_frame_bytes == 0 */
 
-        EXPECT(23, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+        ErrorCode configured = v4l2_configure_capture(device, &requested, &actual);
+        EXPECT(23, configured == CORE_OK || configured == CORE_UNSUPPORTED);
+        if (configured == CORE_UNSUPPORTED) {
+            EXPECT(123, v4l2_stream_config_list_destroy(&configurations) == CORE_OK);
+            EXPECT(124, v4l2_close(&device) == CORE_OK);
+            destroy(&path);
+            return;
+        }
         EXPECT(24, actual.max_frame_bytes > 0);
         EXPECT(25, v4l2_configure_capture(device, &invalid_request, &actual) ==
                        CORE_INVALID_ARGUMENT); /* invalid_request.max_frame_bytes != 0 */
@@ -239,6 +254,10 @@ void fake_v4l2_set_device_gone(bool gone);
 void fake_v4l2_set_not_v4l2(bool value);
 void fake_v4l2_set_cannot_stream(bool value);
 void fake_v4l2_arm_frame(bool ready);
+void fake_v4l2_fail_queue(i32 index);
+void fake_v4l2_set_fractional_rate(bool value);
+u32 fake_v4l2_requested_interval_numerator(void);
+u32 fake_v4l2_requested_interval_denominator(void);
 u32 fake_v4l2_streamon_calls(void);
 
 static String fake_node_path(void)
@@ -312,6 +331,8 @@ static void test_device_lost_with_outstanding_buffers(void)
     requested.height = 480;
     requested.frames_per_second = 30;
     requested.max_frame_bytes = 0;
+    requested.frame_rate_numerator = 0;
+    requested.frame_rate_denominator = 0;
 
     EXPECT(52, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
     EXPECT(53, v4l2_start_capture(device) == CORE_OK);
@@ -360,6 +381,64 @@ static void test_device_lost_with_outstanding_buffers(void)
     destroy(&path);
 }
 
+static void test_abort_after_queue_failure(void)
+{
+    String path = fake_node_path();
+    V4l2DeviceConfig config = { &path };
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested = { 0, 640, 480, 30, 0, 0, 0 }, actual;
+    V4l2DequeueStatus status;
+    V4l2Buffer buffer;
+    fake_v4l2_reset();
+    EXPECT(110, v4l2_abort(NULL) == CORE_INVALID_ARGUMENT);
+    EXPECT(111, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(112, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(113, v4l2_start_capture(device) == CORE_OK);
+    fake_v4l2_arm_frame(true);
+    EXPECT(114, v4l2_dequeue_buffer(device, &status, &buffer) == CORE_OK &&
+                status == V4L2_DEQUEUE_STATUS_BUFFER_READY);
+    fake_v4l2_fail_queue((i32)buffer.index);
+    EXPECT(115, v4l2_queue_buffer(device, &buffer) == CORE_IO_ERROR);
+    EXPECT(116, v4l2_close(&device) == CORE_INVALID_STATE && device != NULL);
+    EXPECT(117, v4l2_abort(&device) == CORE_OK && device == NULL);
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
+static void test_fractional_rate_is_not_truncated(void)
+{
+    String path = fake_node_path();
+    V4l2DeviceConfig config = { &path };
+    V4l2DeviceHandle device = NULL;
+    V4l2StreamConfig requested, actual;
+    V4l2StreamConfigList list;
+    fake_v4l2_reset();
+    fake_v4l2_set_fractional_rate(true);
+    EXPECT(118, v4l2_open(&config, &device) == CORE_OK);
+    EXPECT(119, v4l2_get_capture_configurations(device, &list) == CORE_OK &&
+                list.count == 1);
+    EXPECT(120, list.items[0].frame_rate_numerator == 30000 &&
+                list.items[0].frame_rate_denominator == 1001 &&
+                list.items[0].frames_per_second == 0);
+    requested = list.items[0];
+    requested.max_frame_bytes = 0;
+    requested.frame_rate_denominator = 0;
+    EXPECT(129, v4l2_configure_capture(device, &requested, &actual) == CORE_INVALID_ARGUMENT);
+    requested.frame_rate_denominator = 1001;
+    requested.frames_per_second = 29;
+    EXPECT(130, v4l2_configure_capture(device, &requested, &actual) == CORE_INVALID_ARGUMENT);
+    requested.frames_per_second = 0;
+    EXPECT(121, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
+    EXPECT(125, fake_v4l2_requested_interval_numerator() == 1001 &&
+                fake_v4l2_requested_interval_denominator() == 30000);
+    EXPECT(126, actual.frame_rate_numerator == 30000 &&
+                actual.frame_rate_denominator == 1001 && actual.frames_per_second == 0);
+    EXPECT(127, v4l2_stream_config_list_destroy(&list) == CORE_OK);
+    EXPECT(128, v4l2_close(&device) == CORE_OK && device == NULL);
+    fake_v4l2_reset();
+    destroy(&path);
+}
+
 /* A start has to be refused when there are no buffers, and accepted once
  * v4l2_configure_capture() has mapped some. */
 static void test_start_requires_configuration(void)
@@ -381,6 +460,8 @@ static void test_start_requires_configuration(void)
     requested.height = 480;
     requested.frames_per_second = 30;
     requested.max_frame_bytes = 0;
+    requested.frame_rate_numerator = 0;
+    requested.frame_rate_denominator = 0;
     EXPECT(72, v4l2_configure_capture(device, &requested, &actual) == CORE_OK);
     EXPECT(73, actual.max_frame_bytes > 0);
     EXPECT(74, v4l2_start_capture(device) == CORE_OK);
@@ -411,7 +492,7 @@ static void test_driver_buffer_bounds_and_saved_error(void)
     String path = fake_node_path();
     V4l2DeviceConfig config = { &path };
     V4l2DeviceHandle device = NULL;
-    V4l2StreamConfig requested = { 0, 640, 480, 30, 0 }, actual;
+    V4l2StreamConfig requested = { 0, 640, 480, 30, 0, 0, 0 }, actual;
     V4l2DequeueStatus status;
     V4l2Buffer buffer;
     fake_v4l2_reset();
@@ -432,7 +513,6 @@ static void test_driver_buffer_bounds_and_saved_error(void)
 }
 
 void fake_v4l2_fail_streamoff(bool value);
-void fake_v4l2_fail_queue(i32 index);
 void fake_v4l2_buffer_count(u32 count);
 
 static void test_capture_failure_lifecycle(void)
@@ -440,7 +520,7 @@ static void test_capture_failure_lifecycle(void)
     String path = fake_node_path();
     V4l2DeviceConfig config = { &path };
     V4l2DeviceHandle device = NULL;
-    V4l2StreamConfig requested = { 0, 640, 480, 30, 0 }, actual;
+    V4l2StreamConfig requested = { 0, 640, 480, 30, 0, 0, 0 }, actual;
     V4l2DequeueStatus status;
     V4l2Buffer buffer, stale;
     fake_v4l2_reset();
@@ -486,6 +566,8 @@ int main(int argc, char **argv, char **envp)
     test_real_device();
     test_querycap_validation();
     test_device_lost_with_outstanding_buffers();
+    test_abort_after_queue_failure();
+    test_fractional_rate_is_not_truncated();
     test_start_requires_configuration();
     test_driver_buffer_bounds_and_saved_error();
     test_capture_failure_lifecycle();

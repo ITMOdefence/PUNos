@@ -51,7 +51,8 @@
    `v4l2_dequeue_buffer()`: он определён при `CORE_OK`, а `out_buffer`
    определён только при статусе `BufferReady`.
 5. `V4l2DeviceHandle` является непрозрачным указателем. Созданный handle
-   должен быть закрыт ровно один раз через `v4l2_close()`.
+   закрывается через `v4l2_close()` либо, при невозвращаемом буфере,
+   аварийно через `v4l2_abort()`.
 6. Библиотека владеет файловым дескриптором устройства. Дескриптор,
    возвращённый `v4l2_get_fd()`, является невладеющим; вызывающий код не
    закрывает его.
@@ -63,9 +64,13 @@
    статусом `BufferReady` должен быть возвращён драйверу ровно один раз.
 9. Пока существует хотя бы один не возвращённый `V4l2Buffer`, операции
    `v4l2_stop_capture()`, `v4l2_configure_capture()` и `v4l2_close()`
-   возвращают `CORE_INVALID_STATE`.
+   возвращают `CORE_INVALID_STATE`. Если `v4l2_queue_buffer()` завершился
+   ошибкой и вернуть буфер невозможно, `v4l2_abort()` закрывает FD до
+   удаления MMAP, делает все выданные буферы недействительными и освобождает
+   handle даже при ошибке очистки.
 10. При `DeviceLost` все ранее выданные `V4l2Buffer` становятся
-    недействительными. В этом состоянии допускается только `v4l2_close()`.
+    недействительными. В этом состоянии допускаются `v4l2_close()` и
+    аварийный `v4l2_abort()`.
 11. `V4l2StreamConfig` задаёт точную запрошенную конфигурацию. Поле
     `max_frame_bytes` в запросе равно `0`; в конфигурации, фактически
     применённой драйвером, оно равно размеру одного MMAP-буфера (`sizeimage`).
@@ -76,6 +81,12 @@
     положительный `max_frame_bytes`, полученный для этой комбинации через
     V4L2 `sizeimage`; если его нельзя определить без запуска capture, операция
     также возвращает `CORE_UNSUPPORTED`.
+    Точная частота хранится как дробь
+    `frame_rate_numerator/frame_rate_denominator`. Для `30000/1001` эти поля
+    содержат именно `30000` и `1001`; совместимое целочисленное поле
+    `frames_per_second` равно `0`, а не округлённому значению. В запросе можно
+    указать дробь либо оставить оба новых поля нулевыми и задать целый FPS.
+    Фактически применённая частота также возвращается точной дробью.
 13. Библиотека не интерпретирует пиксели, не декодирует сжатые форматы и не
     использует IPC, event loop, permissions или UI.
 14. `V4l2Buffer.timestamp` получается через `time_monotonic_now()` непосредственно
@@ -97,7 +108,7 @@
 | `V4l2DeviceHandle` | Непрозрачный указатель: `struct V4l2DeviceHandle *` | `NULL` или открытое устройство | Контекст V4L2 video capture-устройства |
 | `V4l2DeviceConfig` | Структура: `const String *path` | Непустой путь `/dev/video*` без `NUL` | Конфигурация открытия устройства |
 | `V4l2PixelFormat` | `u32` | FourCC, сообщаемый драйвером V4L2 | Формат пикселей без интерпретации библиотекой |
-| `V4l2StreamConfig` | Структура: `V4l2PixelFormat pixel_format`, `u32 width`, `u32 height`, `u32 frames_per_second`, `u32 max_frame_bytes` | Формат, размер и FPS поддерживаются устройством; `0` только в запросе, положительный размер только в фактической конфигурации | Запрошенные или применённые параметры потока и верхняя граница `bytesused` |
+| `V4l2StreamConfig` | Структура: `V4l2PixelFormat pixel_format`, `u32 width`, `u32 height`, `u32 frames_per_second`, `u32 max_frame_bytes`, `u32 frame_rate_numerator`, `u32 frame_rate_denominator` | Дробь FPS точна; `frames_per_second=0` для дробной частоты; `max_frame_bytes=0` только в запросе | Запрошенные или применённые параметры потока и верхняя граница `bytesused` |
 | `V4l2StreamConfigList` | Структура: `V4l2StreamConfig *items`, `usize count` | Владеющий массив длиной от `0` | Дискретные конфигурации capture-потока |
 | `V4l2Buffer` | Структура: `u32 index`, `Bytes data`, `MonotonicTime timestamp`, `u64 sequence` | Буфер, выданный текущим `V4l2DeviceHandle` | Невладеющее представление готового MMAP-буфера |
 | `V4l2DequeueStatus` | Перечисление | `BufferReady`, `NoBuffer`, `DeviceLost` | Результат неблокирующей попытки получить буфер |
@@ -125,3 +136,4 @@
 | `v4l2_queue_buffer(device, buffer)` | `V4l2DeviceHandle device`, `V4l2Buffer *buffer` | `ErrorCode` | Возвращает ранее извлечённый MMAP-буфер драйверу и делает структуру недействительной |
 | `v4l2_stop_capture(device)` | `V4l2DeviceHandle device` | `ErrorCode` | Останавливает streaming и освобождает MMAP-буферы |
 | `v4l2_close(device)` | `V4l2DeviceHandle *device` | `ErrorCode` | Закрывает устройство, освобождает внутренние ресурсы и записывает `NULL` |
+| `v4l2_abort(device)` | `V4l2DeviceHandle *device` | `ErrorCode` | Аварийно закрывает устройство при невозвращаемом буфере; все виды на кадры становятся недействительными |

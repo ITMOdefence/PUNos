@@ -23,6 +23,9 @@
  * looking for a "best" resolution, frame rate or format: the values that were
  * really applied, including a positive max_frame_bytes, come back through
  * out_actual_config.
+ * Fractional V4L2 rates cannot fit this v1 integer-FPS API. Enumeration skips
+ * them and returns CORE_UNSUPPORTED if no representable modes remain;
+ * applying a fractional rate returns CORE_UNSUPPORTED. Rates are not rounded.
  *
  * Conventions for every operation that can fail:
  *   - it returns ErrorCode, and CORE_OK is the only success value;
@@ -37,8 +40,8 @@
  *
  *   Open        get_fd, get_configurations, configure, close
  *   Configured  get_fd, get_configurations, configure, start, close
- *   Streaming   get_fd, dequeue_frame, frame_release, stop
- *   DeviceLost  close
+ *   Streaming   get_fd, dequeue_frame, frame_release, stop, abort
+ *   DeviceLost  close, abort
  *
  * Buffer ownership: a CameraFrame does not own its bytes. frame.data points
  * into a buffer the driver owns and stays valid only until
@@ -47,6 +50,8 @@
  * is still out, camera_stop(), camera_configure() and camera_close() return
  * CORE_INVALID_STATE. On the way to DeviceLost every outstanding frame
  * becomes meaningless and camera_close() is allowed without releasing them.
+ * If frame_release fails with a frame outstanding, camera_abort() closes the
+ * fd before unmapping and invalidates every outstanding frame.
  *
  * Threading: one handle belongs to the thread that opened it. Concurrent
  * operations on one handle are not allowed; camserv serialises them with
@@ -298,5 +303,10 @@ ErrorCode camera_stop(CameraHandle camera);
  * handle is still released).
  */
 ErrorCode camera_close(CameraHandle *camera);
+
+/* Emergency shutdown after frame_release fails: closes the device before
+ * unmapping, invalidates all outstanding frames and consumes the handle.
+ * The caller must not access any previously issued frame afterwards. */
+ErrorCode camera_abort(CameraHandle *camera);
 
 #endif

@@ -366,7 +366,7 @@ ErrorCode v4l2_get_fd(V4l2DeviceHandle device, i32 *out_fd)
     return CORE_OK;
 }
 
-ErrorCode v4l2_close(V4l2DeviceHandle *device)
+static ErrorCode close_device(V4l2DeviceHandle *device, bool aborting)
 {
     struct V4l2DeviceHandle *handle;
     ErrorCode result = CORE_OK;
@@ -376,7 +376,7 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
         return CORE_INVALID_ARGUMENT;
     }
     handle = *device;
-    if (handle->outstanding_count != 0) {
+    if (!aborting && handle->outstanding_count != 0) {
         return CORE_INVALID_STATE;
     }
 
@@ -394,6 +394,16 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
     (void)memory_free(&handle_block);
     *device = NULL;
     return result;
+}
+
+ErrorCode v4l2_close(V4l2DeviceHandle *device)
+{
+    return close_device(device, false);
+}
+
+ErrorCode v4l2_abort(V4l2DeviceHandle *device)
+{
+    return close_device(device, true);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -543,11 +553,10 @@ ErrorCode v4l2_get_capture_configurations(V4l2DeviceHandle device,
                 config.pixel_format = fmtdesc.pixelformat;
                 config.width = width;
                 config.height = height;
-                config.frames_per_second = denominator / numerator;
-                if (config.frames_per_second == 0) {
-                    result = CORE_UNSUPPORTED;
-                    goto fail;
-                }
+                config.frame_rate_numerator = denominator;
+                config.frame_rate_denominator = numerator;
+                config.frames_per_second = denominator % numerator == 0 ?
+                                           denominator / numerator : 0;
                 result = try_frame_bytes(device->fd, fmtdesc.pixelformat, width, height,
                                          &config.max_frame_bytes);
                 if (result != CORE_OK) {
@@ -615,9 +624,16 @@ ErrorCode v4l2_stream_config_list_destroy(V4l2StreamConfigList *configurations)
 
 static bool stream_config_is_valid_request(const V4l2StreamConfig *config)
 {
-    return config->width >= V4L2_MIN_WIDTH && config->height >= V4L2_MIN_HEIGHT &&
-           config->frames_per_second >= V4L2_MIN_FRAMES_PER_SECOND &&
-           config->max_frame_bytes == 0;
+    if (config->width < V4L2_MIN_WIDTH || config->height < V4L2_MIN_HEIGHT ||
+        config->max_frame_bytes != 0) return false;
+    if (config->frame_rate_numerator == 0 && config->frame_rate_denominator == 0)
+        return config->frames_per_second >= V4L2_MIN_FRAMES_PER_SECOND;
+    if (config->frame_rate_numerator == 0 || config->frame_rate_denominator == 0)
+        return false;
+    u32 numerator = config->frame_rate_numerator;
+    u32 denominator = config->frame_rate_denominator;
+    return config->frames_per_second ==
+           (numerator % denominator == 0 ? numerator / denominator : 0);
 }
 
 ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig *requested_config,
@@ -655,8 +671,12 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
 
     zero_struct(&streamparm, sizeof(streamparm));
     streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    streamparm.parm.capture.timeperframe_numerator = 1;
-    streamparm.parm.capture.timeperframe_denominator = requested_config->frames_per_second;
+    streamparm.parm.capture.timeperframe_numerator =
+        requested_config->frame_rate_denominator == 0 ? 1 :
+        requested_config->frame_rate_denominator;
+    streamparm.parm.capture.timeperframe_denominator =
+        requested_config->frame_rate_numerator == 0 ?
+        requested_config->frames_per_second : requested_config->frame_rate_numerator;
     if (ioctl_ptr(device->fd, VIDIOC_S_PARM, &streamparm) != 0) {
         return last_error();
     }
@@ -713,19 +733,28 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
 
     /* Read back the frame rate the driver actually applied: VIDIOC_S_PARM
      * may adjust a rate the hardware cannot produce exactly. */
-    if (ioctl_ptr(device->fd, VIDIOC_G_PARM, &streamparm) == 0 &&
-        streamparm.parm.capture.timeperframe_numerator != 0) {
-        out_actual_config->frames_per_second = streamparm.parm.capture.timeperframe_denominator /
-                                               streamparm.parm.capture.timeperframe_numerator;
-    } else {
-        out_actual_config->frames_per_second = requested_config->frames_per_second;
+    if (ioctl_ptr(device->fd, VIDIOC_G_PARM, &streamparm) != 0) {
+        result = last_error();
+        goto fail_buffers;
     }
+    if (streamparm.parm.capture.timeperframe_numerator == 0 ||
+        streamparm.parm.capture.timeperframe_denominator == 0) {
+        result = CORE_UNSUPPORTED;
+        goto fail_buffers;
+    }
+    out_actual_config->frame_rate_numerator =
+        streamparm.parm.capture.timeperframe_denominator;
+    out_actual_config->frame_rate_denominator =
+        streamparm.parm.capture.timeperframe_numerator;
+    out_actual_config->frames_per_second =
+        out_actual_config->frame_rate_numerator % out_actual_config->frame_rate_denominator == 0 ?
+        out_actual_config->frame_rate_numerator / out_actual_config->frame_rate_denominator : 0;
     out_actual_config->pixel_format = format.fmt.pix.pixelformat;
     out_actual_config->width = format.fmt.pix.width;
     out_actual_config->height = format.fmt.pix.height;
     out_actual_config->max_frame_bytes = format.fmt.pix.sizeimage;
     if (out_actual_config->width == 0 || out_actual_config->height == 0 ||
-        out_actual_config->frames_per_second == 0 || out_actual_config->max_frame_bytes == 0) {
+        out_actual_config->max_frame_bytes == 0) {
         result = CORE_UNSUPPORTED;
         goto fail_buffers;
     }

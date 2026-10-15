@@ -166,6 +166,9 @@ static bool not_v4l2;         /* ioctl() answers ENOTTY: not a V4L2 device */
 static bool cannot_stream;    /* QUERYCAP without VIDEO_CAPTURE|STREAMING */
 static bool one_frame_ready;  /* DQBUF hands out a buffer */
 static bool close_fails;
+static bool fractional_rate;
+static u32 requested_interval_numerator;
+static u32 requested_interval_denominator;
 static u32 dq_sequence;
 static u32 streamon_calls;
 static u32 next_buffer_index;
@@ -206,6 +209,9 @@ void fake_v4l2_reset(void)
     cannot_stream = false;
     one_frame_ready = false;
     close_fails = false;
+    fractional_rate = false;
+    requested_interval_numerator = 0;
+    requested_interval_denominator = 0;
     dq_sequence = 1;
     streamon_calls = 0;
     next_buffer_index = 0;
@@ -228,6 +234,9 @@ void fake_v4l2_set_not_v4l2(bool value) { not_v4l2 = value; }
 void fake_v4l2_set_cannot_stream(bool value) { cannot_stream = value; }
 void fake_v4l2_arm_frame(bool ready) { one_frame_ready = ready; }
 void fake_v4l2_set_close_fails(bool value) { close_fails = value; }
+void fake_v4l2_set_fractional_rate(bool value) { fractional_rate = value; }
+u32 fake_v4l2_requested_interval_numerator(void) { return requested_interval_numerator; }
+u32 fake_v4l2_requested_interval_denominator(void) { return requested_interval_denominator; }
 u32 fake_v4l2_streamon_calls(void) { return streamon_calls; }
 
 /* --- the wrappers libv4l2 uses ------------------------------------------- */
@@ -379,8 +388,8 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
             return -1;
         }
         ival->type = 1; /* discrete */
-        ival->interval[0] = 1;   /* numerator   */
-        ival->interval[1] = 30;  /* denominator -> 30 fps */
+        ival->interval[0] = fractional_rate ? 1001 : 1;
+        ival->interval[1] = fractional_rate ? 30000 : 30;
         return 0;
     }
 
@@ -395,16 +404,18 @@ i32 ioctl(i32 fd, u64 request, unsigned long argument)
     case REQ_S_PARM: {
         struct FakeStreamParm *parm = (struct FakeStreamParm *)argument;
 
-        parm->parm.capture.timeperframe_numerator = 1;
-        parm->parm.capture.timeperframe_denominator = 30;
+        requested_interval_numerator = parm->parm.capture.timeperframe_numerator;
+        requested_interval_denominator = parm->parm.capture.timeperframe_denominator;
+        parm->parm.capture.timeperframe_numerator = fractional_rate ? 1001 : 1;
+        parm->parm.capture.timeperframe_denominator = fractional_rate ? 30000 : 30;
         return 0;
     }
 
     case REQ_G_PARM: {
         struct FakeStreamParm *parm = (struct FakeStreamParm *)argument;
 
-        parm->parm.capture.timeperframe_numerator = 1;
-        parm->parm.capture.timeperframe_denominator = 30;
+        parm->parm.capture.timeperframe_numerator = fractional_rate ? 1001 : 1;
+        parm->parm.capture.timeperframe_denominator = fractional_rate ? 30000 : 30;
         return 0;
     }
 

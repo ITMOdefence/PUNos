@@ -8,6 +8,12 @@ BOOT_DIR="${SYSTEM_DIR}/Boot"
 ROOTFS_DIR="${SYSTEM_DIR}/rootfs"
 IMAGES_DIR="${SYSTEM_DIR}/images"
 ARCHIVE_PATH="${IMAGES_DIR}/punos-initramfs.cpio.gz"
+REGISTRY="${PUNOS_REGISTRY:-${SYSTEM_DIR}/SystemServices/platform_registry.json}"
+IMAGE_MODE="${PUNOS_IMAGE_MODE:-production}"
+if [[ "${IMAGE_MODE}" != production && "${IMAGE_MODE}" != smoke ]]; then
+    echo "PUNOS_IMAGE_MODE must be production or smoke" >&2
+    exit 1
+fi
 
 for command_name in cpio find grep gzip install make nm python3 readelf sort touch; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -16,7 +22,19 @@ for command_name in cpio find grep gzip install make nm python3 readelf sort tou
     fi
 done
 
-make --directory "${BOOT_DIR}" all
+make --directory "${BOOT_DIR}" REGISTRY="${REGISTRY}" all
+
+ACTIVE_DEVICE_SERVICES="$(python3 - "${REGISTRY}" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    registry = json.load(source)
+for item in registry['services']:
+    if item['service_id'] in ('IOserv', 'camserv') and item['enabled']:
+        if item['executable'] != '/punos/bin/' + item['service_id']:
+            raise SystemExit('enabled device service requires /punos/bin executable')
+        print(item['service_id'])
+PY
+)"
 
 # Self-tests run by the initserv smoke-test stub: "<built file>:<name in /punos/bin>".
 SELF_TESTS=(
@@ -61,15 +79,20 @@ verify_elf() {
 }
 
 verify_elf "${BOOT_DIR}/build/init"
-verify_elf "${BOOT_DIR}/build/initserv-smoke"
-verify_elf "${BOOT_DIR}/build/init-smoke"
-verify_elf "${BOOT_DIR}/build/services-bootcheck"
 verify_elf "${SYSTEM_DIR}/SystemServices/initserv/build/initserv"
 verify_elf "${SYSTEM_DIR}/SystemServices/logserv/build/logserv"
 verify_elf "${SYSTEM_DIR}/SystemServices/appserv/build/appserv"
-for self_test in "${SELF_TESTS[@]}"; do
-    verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
+for service in ${ACTIVE_DEVICE_SERVICES}; do
+    verify_elf "${SYSTEM_DIR}/SystemServices/${service}/build/${service}"
 done
+if [[ "${IMAGE_MODE}" == smoke ]]; then
+    verify_elf "${BOOT_DIR}/build/initserv-smoke"
+    verify_elf "${BOOT_DIR}/build/init-smoke"
+    verify_elf "${BOOT_DIR}/build/services-bootcheck"
+    for self_test in "${SELF_TESTS[@]}"; do
+        verify_elf "${SYSTEM_DIR}/${self_test%%:*}"
+    done
+fi
 
 mkdir -p "${ROOTFS_DIR}" "${IMAGES_DIR}"
 find "${ROOTFS_DIR}" -mindepth 1 -delete
@@ -88,17 +111,23 @@ install -d -m 0755 \
 install -d -m 0555 "${ROOTFS_DIR}/proc" "${ROOTFS_DIR}/sys"
 install -d -m 01777 "${ROOTFS_DIR}/tmp"
 install -m 0755 "${BOOT_DIR}/build/init" "${ROOTFS_DIR}/init"
-install -m 0755 "${BOOT_DIR}/build/initserv-smoke" "${ROOTFS_DIR}/punos/bin/initserv-smoke"
-install -m 0755 "${BOOT_DIR}/build/init-smoke" "${ROOTFS_DIR}/init-smoke"
-install -m 0755 "${BOOT_DIR}/build/services-bootcheck" "${ROOTFS_DIR}/punos/bin/services-bootcheck"
 install -m 0755 "${SYSTEM_DIR}/SystemServices/initserv/build/initserv" "${ROOTFS_DIR}/punos/bin/initserv"
 install -m 0755 "${SYSTEM_DIR}/SystemServices/logserv/build/logserv" "${ROOTFS_DIR}/punos/bin/logserv"
 install -m 0755 "${SYSTEM_DIR}/SystemServices/appserv/build/appserv" \
     "${ROOTFS_DIR}/punos/bin/appserv"
-for self_test in "${SELF_TESTS[@]}"; do
-    install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
-        "${ROOTFS_DIR}/punos/bin/${self_test##*:}"
+for service in ${ACTIVE_DEVICE_SERVICES}; do
+    install -m 0755 "${SYSTEM_DIR}/SystemServices/${service}/build/${service}" \
+        "${ROOTFS_DIR}/punos/bin/${service}"
 done
+if [[ "${IMAGE_MODE}" == smoke ]]; then
+    install -m 0755 "${BOOT_DIR}/build/initserv-smoke" "${ROOTFS_DIR}/punos/bin/initserv-smoke"
+    install -m 0755 "${BOOT_DIR}/build/init-smoke" "${ROOTFS_DIR}/init-smoke"
+    install -m 0755 "${BOOT_DIR}/build/services-bootcheck" "${ROOTFS_DIR}/punos/bin/services-bootcheck"
+    for self_test in "${SELF_TESTS[@]}"; do
+        install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
+            "${ROOTFS_DIR}/punos/bin/${self_test##*:}"
+    done
+fi
 
 # Normalize mtimes and archive order. cpio records uid/gid as root explicitly.
 find "${ROOTFS_DIR}" -exec touch --no-dereference --date=@0 {} +

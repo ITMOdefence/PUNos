@@ -21,6 +21,7 @@
 
 /* Endpoint shared by the connect-outcome test, built once in main(). */
 static String test_endpoint;
+void fake_socket_fail_listen(void);
 
 static String make_str(const char *text)
 {
@@ -74,6 +75,16 @@ static void test_server_endpoint_too_long(void)
 
     EXPECT(11, ipc_server_create(&endpoint, &server) == CORE_INVALID_PATH);
 
+    destroy_str(&endpoint);
+}
+
+static void test_listen_failure_unlinks_endpoint(void)
+{
+    String endpoint = make_str(TEST_ENDPOINT);
+    IpcServerHandle server = NULL;
+    fake_socket_fail_listen();
+    EXPECT(160, ipc_server_create(&endpoint, &server) == CORE_IO_ERROR && server == NULL);
+    EXPECT(161, open(TEST_ENDPOINT, O_RDONLY, 0) < 0 && errno == ENOENT);
     destroy_str(&endpoint);
 }
 
@@ -532,6 +543,7 @@ int main(int argc, char **argv, char **envp)
 
     test_server_create_close();
     test_server_endpoint_too_long();
+    test_listen_failure_unlinks_endpoint();
     test_connection_close();
     test_connection_state_transitions();
     test_send_receive();

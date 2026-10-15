@@ -5,11 +5,8 @@
  * libeventloop (sys/eventloop) - waiting for events from file descriptors,
  * timers and other threads in one loop.
  *
- * Specification: DevDoc/SystemLibs/libeventloop.md. Its own "Library name"
- * section says `sys/event`, but the header path listed in
- * DevDoc/SystemLibs/_LibsList.md - the authoritative source for header
- * names per System/SystemLibs/README.md - is <sys/eventloop.h>, which this
- * file uses.
+ * Specification: DevDoc/SystemLibs/libeventloop.md. Public header:
+ * <sys/eventloop.h>.
  *
  * Built on epoll_create1(), epoll_ctl(), epoll_wait(), eventfd(),
  * timerfd_create(), timerfd_settime(), read(), write() and close(). The

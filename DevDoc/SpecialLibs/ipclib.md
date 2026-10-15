@@ -130,6 +130,9 @@
 | `ipc_message_destroy(message)` | `IpcMessage *message` | `ErrorCode` | Освобождает payload сообщения через `libmem` и делает структуру недействительной |
 | `ipc_connection_close(connection)` | `IpcConnectionHandle *connection` | `ErrorCode` | Закрывает соединение, освобождает внутренние буферы и записывает `NULL` |
 
+Если `bind()` выполнен, а `listen()` завершился ошибкой, операция удаляет
+созданный socket path и закрывает FD до возврата ошибки.
+
 ## Ошибки
 
 | `ErrorCode` | Когда возвращается |

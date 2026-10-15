@@ -128,6 +128,7 @@ ErrorCode ipc_server_create(const String *endpoint, IpcServerHandle *out_server)
 
     if (listen(server->fd, 8) < 0) {
         i32 err = errno;
+        (void)ipc_unlink_endpoint((const char *)name_block.data);
         close(server->fd);
         memory_free(&name_block);
         memory_free(&server_block);

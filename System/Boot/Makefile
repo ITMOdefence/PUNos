@@ -23,6 +23,7 @@ SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 SPECIAL_LIBS_DIR := ../SpecialLibs
 SYSTEM_SERVICES_DIR := ../SystemServices
+REGISTRY ?= $(abspath $(SYSTEM_SERVICES_DIR)/platform_registry.json)
 # Runtime tests of Special Libs, packaged as /punos/bin/<name>-selftest.
 SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
                          $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
@@ -43,7 +44,7 @@ STUB := $(BUILD_DIR)/initserv-smoke
 all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) system-services
 
 system-services:
-	$(MAKE) -C $(SYSTEM_SERVICES_DIR) all runtime-test
+	$(MAKE) -C $(SYSTEM_SERVICES_DIR) REGISTRY=$(REGISTRY) all runtime-test
 
 $(BUILD_DIR):
 	mkdir -p $@

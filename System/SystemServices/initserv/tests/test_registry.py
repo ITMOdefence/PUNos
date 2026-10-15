@@ -32,4 +32,23 @@ class RegistryTests(unittest.TestCase):
         adapter=module.load_adapter()
         entries=source.split('static const ServiceSpec services[] = {')[1]
         self.assertLess(entries.index(adapter.c_string('logserv')),entries.index(adapter.c_string('appserv')))
+    def test_enabled_device_arguments(self):
+        camera=copy.deepcopy(self.registry['services'][0])
+        camera.update(service_id='camserv',executable='/punos/bin/camserv',arguments=[],
+                      enabled=False,critical=False)
+        input_service=copy.deepcopy(camera)
+        input_service.update(service_id='IOserv',executable='/punos/bin/IOserv')
+        self.registry['services'] += [camera,input_service]
+        module.generate(self.registry,self.metadata)
+        camera.update(enabled=True,arguments=['--device=/dev/video0','--format=Mjpeg',
+                     '--width=320','--height=240','--fps=30'])
+        input_service.update(enabled=True,arguments=['--device=/dev/input/event0'])
+        module.generate(self.registry,self.metadata)
+        for value in ('--device=/dev/input/eventx','--device=/dev/input/event١'):
+            input_service['arguments']=[value]
+            with self.assertRaises(ValueError): module.generate(self.registry,self.metadata)
+        input_service['arguments']=['--device=/dev/input/event0']
+        for value in ('--width=0','--width=4294967296','--width=١'):
+            camera['arguments'][2]=value
+            with self.assertRaises(ValueError): module.generate(self.registry,self.metadata)
 if __name__=='__main__':unittest.main()
