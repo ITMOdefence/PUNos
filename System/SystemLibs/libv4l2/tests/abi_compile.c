@@ -31,6 +31,10 @@ _Static_assert(__builtin_offsetof(V4l2StreamConfig, frames_per_second) == 12,
                "V4l2StreamConfig.frames_per_second offset");
 _Static_assert(__builtin_offsetof(V4l2StreamConfig, max_frame_bytes) == 16,
                "V4l2StreamConfig.max_frame_bytes offset");
+_Static_assert(__builtin_offsetof(V4l2StreamConfig, frame_rate_numerator) == 20,
+               "V4l2StreamConfig.frame_rate_numerator offset");
+_Static_assert(__builtin_offsetof(V4l2StreamConfig, frame_rate_denominator) == 24,
+               "V4l2StreamConfig.frame_rate_denominator offset");
 
 /* V4l2Buffer layout: index, data (Bytes, 8-byte aligned), timestamp, sequence. */
 _Static_assert(__builtin_offsetof(V4l2Buffer, index) == 0, "V4l2Buffer.index offset");

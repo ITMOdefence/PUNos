@@ -140,6 +140,11 @@ ErrorCode camera_dequeue_frame(CameraHandle camera, CameraReadStatus *status,
 ErrorCode camera_frame_release(CameraHandle camera, CameraFrame *frame)
 {
     if (!camera || !frame || !camera->outstanding) return CORE_INVALID_STATE;
+#ifdef FAKE_RELEASE_FAILURE
+    (void)frame;
+    trace("release_failed\n");
+    return CORE_IO_ERROR;
+#endif
     if (camera->scenario != 7) trace("release\n");
     camera->outstanding = false;
     frame->data.data = NULL;
@@ -159,6 +164,16 @@ ErrorCode camera_close(CameraHandle *camera)
     if (!camera || !*camera) return CORE_INVALID_ARGUMENT;
     trace("close\n");
     if ((*camera)->fd >= 0) (void)close((*camera)->fd);
+    *camera = NULL;
+    return CORE_OK;
+}
+
+ErrorCode camera_abort(CameraHandle *camera)
+{
+    if (!camera || !*camera) return CORE_INVALID_ARGUMENT;
+    trace("abort\n");
+    if ((*camera)->fd >= 0) (void)close((*camera)->fd);
+    (*camera)->outstanding = false;
     *camera = NULL;
     return CORE_OK;
 }

@@ -57,8 +57,14 @@ static usize next_config_count = 1;
 static bool unsupported_configs;
 static bool close_rejected;
 static bool stop_failed;
+static bool queue_failed;
+static bool fractional_rate;
+static bool mixed_rates;
 
 void fake_v4l2_fail_stop(void) { stop_failed = true; }
+void fake_v4l2_fail_queue(void) { queue_failed = true; }
+void fake_v4l2_fractional_rate(bool value) { fractional_rate = value; }
+void fake_v4l2_mixed_rates(bool value) { mixed_rates = value; }
 
 void fake_v4l2_configurations(usize count, bool unsupported)
 {
@@ -193,11 +199,14 @@ ErrorCode v4l2_get_capture_configurations(V4l2DeviceHandle device,
 
     V4l2StreamConfig *item = (V4l2StreamConfig *)block.data;
     for (usize i = 0; i < next_config_count; ++i) {
-        item[i].pixel_format = (!unsupported_configs && i == 0) ? FAKE_FOURCC_YUYV : 0;
+        item[i].pixel_format = (!unsupported_configs && (i == 0 || (mixed_rates && i == 1)))
+                                   ? FAKE_FOURCC_YUYV : 0;
         item[i].width = 640;
         item[i].height = 480;
-        item[i].frames_per_second = 30;
+        item[i].frames_per_second = (fractional_rate || mixed_rates) && i == 0 ? 0 : 30;
         item[i].max_frame_bytes = (u32)FAKE_FRAME_BYTES;
+        item[i].frame_rate_numerator = (fractional_rate || mixed_rates) && i == 0 ? 30000 : 30;
+        item[i].frame_rate_denominator = (fractional_rate || mixed_rates) && i == 0 ? 1001 : 1;
     }
 
     out_configurations->items = item;
@@ -256,8 +265,11 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle handle, const V4l2StreamConfig
     out_actual_config->pixel_format = requested_config->pixel_format;
     out_actual_config->width = requested_config->width;
     out_actual_config->height = requested_config->height;
-    out_actual_config->frames_per_second = requested_config->frames_per_second;
+    out_actual_config->frames_per_second = fractional_rate ? 0 :
+                                           requested_config->frames_per_second;
     out_actual_config->max_frame_bytes = (u32)FAKE_FRAME_BYTES;
+    out_actual_config->frame_rate_numerator = fractional_rate ? 30000 : 30;
+    out_actual_config->frame_rate_denominator = fractional_rate ? 1001 : 1;
     return CORE_OK;
 }
 
@@ -319,6 +331,11 @@ ErrorCode v4l2_queue_buffer(V4l2DeviceHandle handle, V4l2Buffer *buffer)
         return CORE_INVALID_ARGUMENT;
     }
     struct FakeV4l2Device *device = (struct FakeV4l2Device *)handle;
+
+    if (queue_failed) {
+        queue_failed = false;
+        return CORE_IO_ERROR;
+    }
 
     if (buffer->index >= device->buffer_count) {
         return CORE_INVALID_ARGUMENT;
@@ -390,4 +407,13 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
     if (the_device == target) { the_device = NULL; }
     *device = NULL;
     return CORE_OK;
+}
+
+ErrorCode v4l2_abort(V4l2DeviceHandle *device)
+{
+    if (device == NULL || *device == NULL) return CORE_INVALID_ARGUMENT;
+    struct FakeV4l2Device *target = (struct FakeV4l2Device *)*device;
+    target->outstanding_count = 0;
+    close_rejected = false;
+    return v4l2_close(device);
 }

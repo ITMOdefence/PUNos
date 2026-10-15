@@ -25,7 +25,7 @@ LIBS = ['core', 'mem', 'str', 'file', 'process', 'time', 'thread', 'sync',
 
 def build(name, output, endpoint, log_endpoint, trace, fail_loop=False,
           inject_mask=None, fail_device_registration=False, fail_ipc_allocation=False,
-          burst_no_frame=False):
+          burst_no_frame=False, fail_release=False):
     module = HERE / name
     includes = [module / 'include', module / 'src',
                 SYSTEM / 'NativeRuntime/include',
@@ -41,6 +41,8 @@ def build(name, output, endpoint, log_endpoint, trace, fail_loop=False,
         options.append(f'-DINJECTED_EVENT_MASK={inject_mask}')
     if burst_no_frame:
         options.append('-DFAKE_BURST_END_NO_FRAME')
+    if fail_release:
+        options.append('-DFAKE_RELEASE_FAILURE')
     sources = [module / 'src/main.c', module / 'src/protocol.c',
                HERE / 'common/logger.c',
                module / f'tests/fake_{"camera" if name == "camserv" else "input"}.c']
@@ -186,7 +188,7 @@ def test_camera(directory, log_endpoint, journal):
             assert recv(first) == (4, struct.pack('<I', 3))
             a, b = recv(first), recv(second)
             assert a == b and a[0] == 8
-            assert a[1] == struct.pack('<QQI', 1, 1001, 4) + b'\xa1\x00\xff\x5a'
+            assert a[1] == struct.pack('<QQI', 1, 1001000000, 4) + b'\xa1\x00\xff\x5a'
             first.sendall(frame(5))
             assert recv(first) == (6, b'\0' * 4)
             first.sendall(frame(5))
@@ -273,6 +275,15 @@ def test_camera(directory, log_endpoint, journal):
         assert any(event in message for message in failure_messages), event
     print('T-03 camera initialization failures and resource ownership passed')
 
+    release_binary = build('camserv', directory / 'camserv-release-fail', endpoint,
+                           log_endpoint, trace, fail_release=True)
+    trace.unlink()
+    process = run_service(release_binary, endpoint, camera_args(0))
+    assert process.wait(timeout=8) == 1 and not endpoint.exists()
+    assert trace.read_text().splitlines() == [
+        'open', 'configure', 'start', 'release_failed', 'abort']
+    print('Camera release failure aborts and consumes camera handle')
+
     trace.unlink(missing_ok=True)
     process = run_service(binary, endpoint, camera_args(6))
     try:
@@ -296,7 +307,7 @@ def test_camera(directory, log_endpoint, journal):
             assert recv(connection)[0] == 7
             kind, payload = recv(connection)
             assert kind == 8 and len(payload) == 1048576
-            assert payload[:20] == struct.pack('<QQI', 1, 1001, 1048556)
+            assert payload[:20] == struct.pack('<QQI', 1, 1001000000, 1048556)
     finally:
         finish(process)
     print('T-04 camera size boundary and oversized frame passed')

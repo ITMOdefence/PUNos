@@ -379,8 +379,13 @@ cleanup:
     while (service.clients) close_client(&service, &service.clients);
     if (service.camera_source) (void)eventloop_remove_source(service.loop, service.camera_source);
     if (service.camera) {
-        if (service.streaming && !service.lost) (void)camera_stop(service.camera);
-        (void)camera_close(&service.camera);
+        if (service.failed) {
+            (void)camera_abort(&service.camera);
+        } else {
+            if (service.streaming && !service.lost) (void)camera_stop(service.camera);
+            if (camera_close(&service.camera) == CORE_INVALID_STATE)
+                (void)camera_abort(&service.camera);
+        }
     }
     if (service.server) (void)ipc_server_close(&service.server);
     if (service.logger.connected) {

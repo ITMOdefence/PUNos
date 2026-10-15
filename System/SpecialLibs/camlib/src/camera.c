@@ -165,7 +165,8 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
     usize count = 0;
     for (usize index = 0; index < v4l2_list.count; ++index) {
         CameraPixelFormat format;
-        if (camera_format_from_fourcc(v4l2_list.items[index].pixel_format, &format)) {
+        if (camera_format_from_fourcc(v4l2_list.items[index].pixel_format, &format) &&
+            v4l2_list.items[index].frames_per_second != 0) {
             count += 1;
         }
     }
@@ -193,9 +194,9 @@ ErrorCode camera_get_configurations(CameraHandle camera, CameraConfigurationList
     for (usize index = 0; index < v4l2_list.count; ++index) {
         CameraPixelFormat format;
 
-        /* Formats outside the supported set are skipped, not an error: a
-         * device may well offer more than this version handles. */
-        if (!camera_format_from_fourcc(v4l2_list.items[index].pixel_format, &format)) {
+        /* Skip formats and rates that this integer-FPS API cannot represent. */
+        if (!camera_format_from_fourcc(v4l2_list.items[index].pixel_format, &format) ||
+            v4l2_list.items[index].frames_per_second == 0) {
             continue;
         }
 
@@ -277,6 +278,8 @@ ErrorCode camera_configure(CameraHandle camera, const CameraStreamConfig *reques
     requested.height = requested_config->height;
     requested.frames_per_second = requested_config->frames_per_second;
     requested.max_frame_bytes = 0;
+    requested.frame_rate_numerator = 0;
+    requested.frame_rate_denominator = 0;
 
     V4l2StreamConfig actual;
     ErrorCode result = v4l2_configure_capture(camera->v4l2_device, &requested, &actual);
@@ -288,7 +291,8 @@ ErrorCode camera_configure(CameraHandle camera, const CameraStreamConfig *reques
     }
 
     CameraPixelFormat format;
-    if (!camera_format_from_fourcc(actual.pixel_format, &format)) {
+    if (!camera_format_from_fourcc(actual.pixel_format, &format) ||
+        actual.frames_per_second == 0) {
         camera->state = CAMERA_STATE_OPEN;
         camera->configured_frames = 0;
         return CORE_UNSUPPORTED;
@@ -496,6 +500,18 @@ ErrorCode camera_close(CameraHandle *camera)
     block.size = sizeof(struct CameraHandle);
     (void)memory_free(&block);
 
+    *camera = NULL;
+    return result;
+}
+
+ErrorCode camera_abort(CameraHandle *camera)
+{
+    if (camera == NULL || *camera == NULL) return CORE_INVALID_ARGUMENT;
+    CameraHandle target = *camera;
+    ErrorCode result = target->v4l2_device == NULL ? CORE_OK :
+                       v4l2_abort(&target->v4l2_device);
+    MemoryBlock block = { (u8 *)target, sizeof(struct CameraHandle) };
+    (void)memory_free(&block);
     *camera = NULL;
     return result;
 }

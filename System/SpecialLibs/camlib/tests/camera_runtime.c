@@ -599,6 +599,9 @@ static void test_filtered_configuration_allocation(void)
 }
 
 void fake_v4l2_fail_stop(void);
+void fake_v4l2_fail_queue(void);
+void fake_v4l2_fractional_rate(bool value);
+void fake_v4l2_mixed_rates(bool value);
 
 static void test_stop_failure_invalidates_capture(void)
 {
@@ -615,6 +618,61 @@ static void test_stop_failure_invalidates_capture(void)
     EXPECT(167, camera_start(camera) == CORE_INVALID_STATE);
     EXPECT(168, camera_configure(camera, &requested, &actual) == CORE_INVALID_STATE);
     EXPECT(169, camera_close(&camera) == CORE_OK && camera == NULL);
+}
+
+static void test_release_failure_emergency_cleanup(void)
+{
+    usize before = fake_memory_live();
+    CameraHandle camera = open_fake_camera();
+    CameraStreamConfig requested, actual;
+    CameraFrame frame;
+    CameraReadStatus status;
+    fill_request(&requested);
+    EXPECT(170, camera_configure(camera, &requested, &actual) == CORE_OK);
+    EXPECT(171, camera_start(camera) == CORE_OK);
+    fake_v4l2_arm_frame(true, 0);
+    EXPECT(172, camera_dequeue_frame(camera, &status, &frame) == CORE_OK &&
+                status == CAMERA_READ_STATUS_FRAME_READY);
+    fake_v4l2_fail_queue();
+    EXPECT(173, camera_frame_release(camera, &frame) == CORE_IO_ERROR);
+    EXPECT(174, camera_stop(camera) == CORE_INVALID_STATE);
+    EXPECT(175, camera_close(&camera) == CORE_INVALID_STATE && camera != NULL);
+    EXPECT(176, camera_abort(&camera) == CORE_OK && camera == NULL);
+    EXPECT(177, fake_memory_live() == before && fake_memory_mismatches() == 0);
+}
+
+static void test_fractional_rate_is_explicitly_unsupported(void)
+{
+    usize before = fake_memory_live();
+    CameraHandle camera = open_fake_camera();
+    CameraConfigurationList list;
+    CameraStreamConfig requested, actual;
+    fake_v4l2_fractional_rate(true);
+    EXPECT(178, camera_get_configurations(camera, &list) == CORE_UNSUPPORTED);
+    fill_request(&requested);
+    EXPECT(179, camera_configure(camera, &requested, &actual) == CORE_UNSUPPORTED);
+    EXPECT(180, camera_close(&camera) == CORE_OK && camera == NULL);
+    fake_v4l2_fractional_rate(false);
+    EXPECT(181, fake_memory_live() == before && fake_memory_mismatches() == 0);
+}
+
+static void test_mixed_rates_keep_integer_configuration(void)
+{
+    usize before = fake_memory_live();
+    CameraHandle camera = open_fake_camera();
+    CameraConfigurationList list;
+    fake_v4l2_configurations(2, false);
+    fake_v4l2_mixed_rates(true);
+    EXPECT(182, camera_get_configurations(camera, &list) == CORE_OK);
+    EXPECT(183, list.count == 1 && list.items != NULL);
+    EXPECT(184, list.items[0].format == CAMERA_PIXEL_FORMAT_YUYV &&
+                list.items[0].frames_per_second == 30 &&
+                list.items[0].width == 640 && list.items[0].height == 480);
+    EXPECT(185, camera_configuration_list_destroy(&list) == CORE_OK);
+    EXPECT(186, camera_close(&camera) == CORE_OK && camera == NULL);
+    fake_v4l2_mixed_rates(false);
+    fake_v4l2_configurations(1, false);
+    EXPECT(187, fake_memory_live() == before && fake_memory_mismatches() == 0);
 }
 
 int main(int argc, char **argv, char **envp)
@@ -642,6 +700,9 @@ int main(int argc, char **argv, char **envp)
     test_state_table_and_close_retry();
     test_filtered_configuration_allocation();
     test_stop_failure_invalidates_capture();
+    test_release_failure_emergency_cleanup();
+    test_fractional_rate_is_explicitly_unsupported();
+    test_mixed_rates_keep_integer_configuration();
 
     check_passed();
     return 0;

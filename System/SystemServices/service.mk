@@ -22,7 +22,9 @@ build:
 	mkdir -p $@
 build/%.o: src/%.c $(wildcard include/*.h include/*/*.h src/*.h) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-build/$(SERVICE): $(OBJECTS) | dependencies
+# Dependencies may rebuild an archive; always relink to consume their current
+# contents, including changes made in a lower library without service edits.
+build/$(SERVICE): $(OBJECTS) dependencies
 	$(LINK) $(OBJECTS) $(LINK_LIBS) -o $@
 	@test -z "$$(nm -u $@)"
 	@if readelf -l $@ | grep -q INTERP; then exit 1; fi

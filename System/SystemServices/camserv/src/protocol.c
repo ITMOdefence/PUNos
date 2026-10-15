@@ -48,8 +48,10 @@ ErrorCode cam_encode_frame(u8 *out, usize capacity, const CameraFrame *frame,
         frame->data.size > IPC_MESSAGE_MAX_SIZE - CAM_FRAME_HEADER_SIZE ||
         capacity < CAM_FRAME_HEADER_SIZE + frame->data.size ||
         (frame->data.size && frame->data.data == NULL)) return CORE_INVALID_ARGUMENT;
+    /* MonotonicTime is measured in milliseconds; the IPC field is ns. */
+    if (frame->timestamp > ((u64)-1) / 1000000u) return CORE_OVERFLOW;
     wire_write(out, 8, frame->sequence);
-    wire_write(out + 8, 8, frame->timestamp);
+    wire_write(out + 8, 8, frame->timestamp * 1000000u);
     wire_write(out + 16, 4, frame->data.size);
     for (usize i = 0; i < frame->data.size; ++i) out[CAM_FRAME_HEADER_SIZE + i] = frame->data.data[i];
     *out_size = CAM_FRAME_HEADER_SIZE + frame->data.size;

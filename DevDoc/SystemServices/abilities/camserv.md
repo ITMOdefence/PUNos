@@ -128,6 +128,11 @@ payload кодируются little-endian; `ErrorCode` кодируется к�
 | 9, camera.device_lost | Сервис → клиент | `u32 reason` |
 | 10, camera.error | Сервис → клиент | `u32 error`; ответ на неизвестный либо серверный тип от клиента |
 
+`monotonic_timestamp_ns` получается из `CameraFrame.timestamp` в миллисекундах
+умножением на 1 000 000. Это единица wire-поля, а не наносекундная точность
+исходных часов. Если значение не помещается в `u64` после умножения, кадр
+не кодируется.
+
 Wire-config состоит из пяти `u32` в порядке `format`, `width`, `height`,
 `frames_per_second`, `max_frame_bytes` (20 байт). Wire-значения формата:
 `1=Yuyv`, `2=Mjpeg`, `3=Nv12`; значения C ABI библиотеки в payload не
@@ -139,6 +144,9 @@ Streaming недоступен, 20 байт config нулевые. Endpoint пу
 `CORE_IO_ERROR`, поскольку camlib не выдаёт отдельную причину. Повреждённый
 IPC-кадр закрывает соединение на уровне ipclib; неизвестный тип получает
 `camera.error` с `CORE_INVALID_ARGUMENT`.
+
+Нецелый FPS из V4L2 не представим в этом wire-контракте v1: `camlib`
+возвращает `CORE_UNSUPPORTED` и endpoint не публикуется.
 
 | Операция | Запрос | Успешный ответ | Назначение |
 | --- | --- | --- | --- |

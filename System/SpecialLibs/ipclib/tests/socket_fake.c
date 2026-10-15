@@ -28,8 +28,22 @@
 static i32 pending_so_error;
 static usize send_limit;
 static bool send_would_block;
+static bool listen_failure;
 
 ssize_t __real_send(i32 fd, const void *buffer, usize size, i32 flags);
+i32 __real_listen(i32 fd, i32 backlog);
+
+void fake_socket_fail_listen(void) { listen_failure = true; }
+
+i32 __wrap_listen(i32 fd, i32 backlog)
+{
+    if (listen_failure) {
+        listen_failure = false;
+        errno = EIO;
+        return -1;
+    }
+    return __real_listen(fd, backlog);
+}
 
 void fake_socket_send_limit(usize limit)
 {
@@ -65,6 +79,7 @@ void fake_socket_reset(void)
     pending_so_error = 0;
     send_limit = 0;
     send_would_block = false;
+    listen_failure = false;
 }
 
 /* True while an error is still waiting to be read. */

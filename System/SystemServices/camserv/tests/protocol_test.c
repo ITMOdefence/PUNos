@@ -29,11 +29,11 @@ int main(int argc, char **argv, char **envp)
     EXPECT(3, bytes[0] == 1 && bytes[4] == 0);
     for (usize i = 5; i < 25; ++i) EXPECT(4, bytes[i] == 0);
     u8 data[] = { 0xaa, 0x00, 0xff };
-    CameraFrame frame = { .data = { data, 3 }, .timestamp = 0x1122334455667788ULL,
+    CameraFrame frame = { .data = { data, 3 }, .timestamp = 1001,
                           .sequence = 0x0102030405060708ULL };
     usize size;
     const u8 frame_expected[] = {
-        8,7,6,5,4,3,2,1, 0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11,
+        8,7,6,5,4,3,2,1, 0x40,0x0c,0xaa,0x3b,0,0,0,0,
         3,0,0,0, 0xaa,0x00,0xff
     };
     EXPECT(5, cam_encode_frame(bytes, sizeof(bytes), &frame, &size) == CORE_OK &&
@@ -43,6 +43,9 @@ int main(int argc, char **argv, char **envp)
     EXPECT(7, cam_encode_frame(bytes, sizeof(bytes), &frame, &size) == CORE_INVALID_ARGUMENT);
     frame.data.size++;
     EXPECT(8, cam_encode_frame(bytes, sizeof(bytes), &frame, &size) == CORE_INVALID_ARGUMENT);
+    frame.data.size = 3;
+    frame.timestamp = (u64)-1;
+    EXPECT(17, cam_encode_frame(bytes, sizeof(bytes), &frame, &size) == CORE_OVERFLOW);
     u8 version[] = { 1, 0 };
     IpcMessage request = { CAM_SUBSCRIBE, { version, 2 } };
     u32 type;
