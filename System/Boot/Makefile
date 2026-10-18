@@ -22,6 +22,7 @@ SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libinputdevice/build/input_device_runtime \
                          $(SYSTEM_LIBS_DIR)/libv4l2/build/v4l2_runtime
 SPECIAL_LIBS_DIR := ../SpecialLibs
+APPLICATION_LAYER_DIR := ../ApplicationLayer
 SYSTEM_SERVICES_DIR := ../SystemServices
 REGISTRY ?= $(abspath $(SYSTEM_SERVICES_DIR)/platform_registry.json)
 # Runtime tests of Special Libs, packaged as /punos/bin/<name>-selftest.
@@ -29,6 +30,15 @@ SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
                          $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
                          $(SPECIAL_LIBS_DIR)/inputlib/build/input_runtime \
                          $(SPECIAL_LIBS_DIR)/camlib/build/camera_runtime
+
+# Runtime tests of appframework, packaged as /punos/bin/appfw-<name>-selftest.
+APPFRAMEWORK_SELFTESTS := $(APPLICATION_LAYER_DIR)/appframework/build/lifecycle_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/create_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/run_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/fault_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/logserv_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/apps_wire_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/apps_runtime
 
 CPPFLAGS := -I$(NATIVE_DIR)/include -I$(SYSCALL_DIR)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
@@ -39,9 +49,9 @@ STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv-smoke
 
-.PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS)
+.PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) $(APPFRAMEWORK_SELFTESTS)
 
-all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) system-services
+all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) $(APPFRAMEWORK_SELFTESTS) system-services
 
 system-services:
 	$(MAKE) -C $(SYSTEM_SERVICES_DIR) REGISTRY=$(REGISTRY) all runtime-test
@@ -62,6 +72,9 @@ $(SYSTEM_LIBS_SELFTESTS):
 	$(MAKE) -C $(dir $(@D)) runtime-test
 
 $(SPECIAL_LIBS_SELFTESTS):
+	$(MAKE) -C $(dir $(@D)) runtime-test
+
+$(APPFRAMEWORK_SELFTESTS):
 	$(MAKE) -C $(dir $(@D)) runtime-test
 
 $(INIT_OBJECT): Init/init.c | $(BUILD_DIR)

@@ -1,5 +1,6 @@
 #include <sys/eventloop.h>
 #include <sys/memory.h>
+#include <special/ipc.h>
 #include <punos/syscall/syscall.h>
 
 #include "fault.h"
@@ -12,6 +13,10 @@ ErrorCode __real_memory_free(MemoryBlock *block);
 ErrorCode __real_eventloop_wait(EventLoopHandle loop, Event *events, usize capacity,
                                 DurationMs timeout, usize *out_count);
 ErrorCode __real_eventloop_wake(EventLoopHandle loop);
+ErrorCode __real_ipc_connection_finish_connect(IpcConnectionHandle connection,
+                                               IpcConnectionState *out_state);
+ErrorCode __real_ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message);
+ErrorCode __real_ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pending);
 i32 __real_sigaction(i32 signal, const struct sigaction *action, struct sigaction *old_action);
 
 static bool should_fail_allocation(void)
@@ -84,4 +89,37 @@ ErrorCode __wrap_eventloop_wake(EventLoopHandle loop)
         return CORE_IO_ERROR;
     }
     return __real_eventloop_wake(loop);
+}
+
+ErrorCode __wrap_ipc_connection_finish_connect(IpcConnectionHandle connection,
+                                               IpcConnectionState *out_state)
+{
+    if (fault_plan.connecting_polls != 0 && out_state != NULL) {
+        fault_plan.connecting_polls--;
+        *out_state = IPC_CONNECTION_STATE_CONNECTING; /* the connection itself is untouched */
+        return CORE_OK;
+    }
+    return __real_ipc_connection_finish_connect(connection, out_state);
+}
+
+ErrorCode __wrap_ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message)
+{
+    if (fault_plan.send_error != CORE_OK) {
+        ErrorCode error = fault_plan.send_error;
+
+        fault_plan.send_error = CORE_OK;
+        return error;
+    }
+    return __real_ipc_connection_send(connection, message);
+}
+
+ErrorCode __wrap_ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pending)
+{
+    if (fault_plan.flush_error != CORE_OK) {
+        ErrorCode error = fault_plan.flush_error;
+
+        fault_plan.flush_error = CORE_OK;
+        return error;
+    }
+    return __real_ipc_connection_flush(connection, out_has_pending);
 }

@@ -17,6 +17,13 @@ typedef struct FaultPlan {
     i32 sigaction_errno;
     /* eventloop_wake(): fails once, leaving this errno behind; 0 = off. */
     i32 wake_errno;
+    /* ipc_connection_finish_connect(): reports Connecting this many times
+     * before the real call is made. */
+    u32 connecting_polls;
+    /* ipc_connection_send(): fails once with this code; CORE_OK = off. */
+    ErrorCode send_error;
+    /* ipc_connection_flush(): fails once with this code; CORE_OK = off. */
+    ErrorCode flush_error;
     /* Counters, always on. */
     u32 allocations;
     u32 frees;

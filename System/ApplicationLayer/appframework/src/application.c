@@ -16,6 +16,11 @@ ErrorCode libappframework_internal_enter(AppHandle app, AppOperationKind operati
     if (gettid() != app->owner_tid) {
         return CORE_INVALID_STATE;
     }
+    /* A callback of app_destroy() sees the state Stopping, where a destroy
+     * would otherwise be allowed; it is not (appframework.md, "Порядок"). */
+    if (operation == APP_OPERATION_DESTROY && app->destroying) {
+        return CORE_INVALID_STATE;
+    }
     return libappframework_internal_operation_allowed(operation, app->state);
 }
 
@@ -110,9 +115,10 @@ ErrorCode app_destroy(AppHandle *app)
         return result;
     }
 
+    handle->destroying = true;
     handle->state = APP_LIFECYCLE_STOPPING;
+    libappframework_internal_apps_shutdown(handle);      /* callbacks: CORE_INVALID_STATE */
     (void)libappframework_internal_log(handle, APP_LOG_LEVEL_INFO, "AppHandle destroyed");
-    libappframework_internal_apps_shutdown(handle);
     libappframework_internal_logging_shutdown(handle);
 
     result = CORE_OK;

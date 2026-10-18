@@ -56,6 +56,16 @@ jobs:
       - name: System Services and device integration
         run: make -C System/SystemServices check
 
+      - name: Application Layer
+        run: make -C System/ApplicationLayer check
+
+      # appframework against the real logserv and appserv, in separate processes.
+      - name: appframework with real logserv and appserv
+        run: make -C System/ApplicationLayer/appframework check-system
+
+      - name: Application Layer regression mutation checks
+        run: python3 System/ApplicationLayer/appframework/tests/check_mutations.py
+
       # Races in thread and signal code do not show up on every run.
       - name: Repeat thread, sync and signal tests
         run: |
@@ -80,6 +90,18 @@ jobs:
                       camlib/build/camera_runtime; do
               for run in $(seq 30); do
                   "System/SpecialLibs/${test}" > /dev/null \
+                      || { echo "${test} failed on run ${run}"; exit 1; }
+              done
+          done
+
+      # Fake peers, timers and sockets: a leftover socket or a lost wakeup shows
+      # up only on some runs.
+      - name: Repeat Application Layer tests
+        run: |
+          for test in lifecycle_runtime create_runtime run_runtime fault_runtime \
+                      logserv_runtime apps_wire_runtime apps_runtime; do
+              for run in $(seq 30); do
+                  "System/ApplicationLayer/appframework/build/${test}" > /dev/null \
                       || { echo "${test} failed on run ${run}"; exit 1; }
               done
           done

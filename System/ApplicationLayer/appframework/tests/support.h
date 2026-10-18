@@ -55,6 +55,25 @@ static inline void test_sleep_ms(DurationMs duration)
     }
 }
 
+/* Runs the event loop of app by hand for about duration milliseconds: waits,
+ * dispatches, and stops after one wait that finds nothing. The state of the
+ * handle does not change, so the tests can alternate it with app_log() and
+ * the fake peers' calls. */
+static inline void test_pump(AppHandle app, DurationMs duration)
+{
+    for (u32 round = 0; round < 10000; ++round) {
+        Event events[APP_EVENT_BATCH_SIZE];
+        usize count = 0;
+
+        if (eventloop_wait(app->loop, events, APP_EVENT_BATCH_SIZE, duration, &count) !=
+                CORE_OK ||
+            count == 0) {
+            return;
+        }
+        libappframework_internal_dispatch(app, events, count);
+    }
+}
+
 /* Runs entry on a new thread, returns after it finished; false if it failed to
  * start or reported a non-zero status. */
 static inline bool test_run_on_thread(ThreadEntry entry, void *argument)

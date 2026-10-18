@@ -9,6 +9,7 @@
 
 #include <appframework/app.h>
 #include <punos/syscall/syscall.h>
+#include <special/ipc.h>
 #include <sys/memory.h>
 
 /* ------------------------------------------------------------------------ */
@@ -62,6 +63,42 @@ typedef struct AppSource {
     bool internal; /* never visible to, or removable by, the application */
 } AppSource;
 
+/* The connection to logserv and the records that have not been confirmed. */
+typedef struct AppLogClient {
+    IpcConnectionHandle connection;  /* NULL: not connected */
+    bool open;                       /* connection is Open (else Connecting) */
+    bool write_interest;             /* WRITABLE is requested for the source */
+    AppEventSourceId source;         /* 0: not registered */
+    MemoryBlock *queue;              /* encoded records waiting for Open */
+    MemoryBlock queue_block;         /* the allocation behind queue */
+    usize queued;
+    usize queue_capacity;
+    usize unacknowledged;            /* sent, no reply yet */
+} AppLogClient;
+
+/* One request to appserv, from app_apps_*() until its callback. */
+typedef struct AppRequest {
+    AppRequestId id;
+    AppAppsOperation operation;
+    AppAppsCallback callback;
+    void *context;
+    MemoryBlock payload; /* encoded request; released once it is sent */
+    bool sent;
+} AppRequest;
+
+/* The connection to appserv and the FIFO of requests (a ring buffer). */
+typedef struct AppAppsClient {
+    IpcConnectionHandle connection;  /* NULL: not connected */
+    bool open;
+    bool write_interest;
+    AppEventSourceId source;         /* 0: not registered */
+    MemoryBlock block;               /* APP_APPS_MAX_PENDING requests */
+    AppRequest *requests;
+    usize head;
+    usize count;
+    AppRequestId last_request;       /* last identifier handed out */
+} AppAppsClient;
+
 struct AppHandle {
     MemoryBlock block;          /* the allocation that holds this structure */
     AppLifecycleState state;    /* owner thread only */
@@ -74,10 +111,13 @@ struct AppHandle {
     volatile u32 sigterm_received;  /* atomic: set by the signal handler */
     struct sigaction previous_sigterm;
     bool sigterm_installed;
+    bool destroying;                /* app_destroy() is running: no second one */
     const char *application_id;     /* NUL-terminated, inside block */
     usize application_id_length;
     const char *log_component;      /* NUL-terminated, inside block */
     usize log_component_length;
+    AppLogClient logserv;
+    AppAppsClient appserv;
 };
 
 /*
@@ -139,6 +179,41 @@ bool libappframework_internal_quit_requested(AppHandle app);
 /* ------------------------------------------------------------------------ */
 /* Services (modules logging and applications)                               */
 /* ------------------------------------------------------------------------ */
+
+/* Where the clients connect. The variables exist so that tests can point the
+ * library at a fake peer; nothing else changes them. */
+extern const char *libappframework_internal_logserv_endpoint;
+
+/* Encodes the log.submit payload (appframework.md, "Протокол клиента logserv").
+ * The block is allocated by the function; the caller frees it. */
+ErrorCode libappframework_internal_log_encode(AppHandle app, AppLogLevel level,
+                                              const char *message, usize message_length,
+                                              i32 process_id, i32 thread_id,
+                                              MemoryBlock *out_payload);
+
+extern const char *libappframework_internal_appserv_endpoint;
+
+/* A reply of appserv, decoded and checked. */
+typedef struct AppDecoded {
+    ErrorCode service_error;   /* the ErrorCode inside the reply; CORE_OK on success */
+    AppAppsResult result;      /* defined if service_error is CORE_OK */
+    MemoryBlock storage;       /* copies of the strings of a list or info result */
+} AppDecoded;
+
+/* Builds the payload and the message type of a request (appserv.md). id is
+ * used by GetInfo and Launch, instance by Stop and GetStatus. */
+ErrorCode libappframework_internal_apps_encode(AppAppsOperation operation, const char *id,
+                                               usize id_length, AppInstanceId instance,
+                                               MemoryBlock *out_payload,
+                                               IpcMessageType *out_type);
+
+/* Checks a reply to a request of the given operation (the strict rules of
+ * "Протокол клиента appserv"). CORE_OK if it is well formed, CORE_IO_ERROR if
+ * it breaks the protocol, CORE_OUT_OF_MEMORY if the copies cannot be made. */
+ErrorCode libappframework_internal_apps_decode(AppAppsOperation operation, const u8 *data,
+                                               usize size, AppDecoded *out);
+
+void libappframework_internal_apps_decoded_release(AppDecoded *decoded);
 
 /* Best effort: queues a record for logserv; the result is advisory. */
 ErrorCode libappframework_internal_log(AppHandle app, AppLogLevel level,
