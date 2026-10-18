@@ -1,0 +1,17 @@
+core_error_from_errno
+core_size_multiply
+eventloop_add_fd
+eventloop_close
+eventloop_create
+eventloop_create_timer
+eventloop_remove_source
+eventloop_update_fd
+eventloop_wait
+eventloop_wake
+gettid
+memory_allocate
+memory_copy
+memory_free
+memory_reallocate
+sigaction
+sys_errno_location
