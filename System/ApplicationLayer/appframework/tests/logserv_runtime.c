@@ -203,8 +203,16 @@ static void argument_checks(FakePeer *peer)
     EXPECT(32, app->logserv.unacknowledged == 0 && before == 1);
     longest[16384] = '\0';
     EXPECT(33, app_log(app, APP_LOG_LEVEL_INFO, longest) == CORE_OK); /* the exact limit */
-    test_pump(app, 20);
-    EXPECT(34, fake_peer_receive(peer, &message) == 1 && message.payload.size == 17 + 4 + 16384);
+    /* A 16 KiB record may not fit the socket buffer at once: read while the
+     * application keeps flushing. */
+    for (u32 round = 0, got = 0; round < 100 && got != 1; ++round) {
+        test_pump(app, 20);
+        got = (u32)fake_peer_receive(peer, &message);
+        if (got == 1) {
+            break;
+        }
+    }
+    EXPECT(34, message.payload.size == 17 + 4 + 16384);
     (void)ipc_message_destroy(&message);
     EXPECT(35, true);
     EXPECT(36, app_destroy(&app) == CORE_OK);

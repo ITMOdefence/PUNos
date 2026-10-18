@@ -160,6 +160,29 @@ static u32 take_any_requests(void)
     return count;
 }
 
+/* Collects the requests that reach the fake appserv while the application keeps
+ * running: the connection may still be completing, and a partial flush goes on
+ * only while somebody reads. A fixed number of pumps proved too short on a slow
+ * (QEMU without KVM) machine. Returns once `expected` requests arrived and one
+ * more round brought nothing, or after about three seconds. */
+static u32 wait_requests(AppHandle app, u32 expected)
+{
+    u32 count = 0;
+
+    for (u32 round = 0; round < 150; ++round) {
+        u32 got;
+
+        (void)fake_peer_accept(&appserv);
+        test_pump(app, 20);
+        got = take_any_requests();
+        count += got;
+        if (count >= expected && got == 0) {
+            break;
+        }
+    }
+    return count;
+}
+
 static void put16(u8 *out, u16 value)
 {
     out[0] = (u8)(value & 0xff);
@@ -389,7 +412,7 @@ static void fifo_and_errors(void)
     CHECK(quick(app, APP_APPS_OPERATION_GET_STATUS) == 5);
     CHECK(quick(app, APP_APPS_OPERATION_STOP) == 6);
     settle(app);
-    CHECK(take_any_requests() == 3);
+    CHECK(wait_requests(app, 3) == 3);
     {
         u8 with_extra[9] = { 0 };
 
@@ -508,7 +531,7 @@ static void limits(void)
     CHECK(last == CORE_WOULD_BLOCK && accepted == APP_APPS_MAX_PENDING);
     CHECK(id == APP_APPS_MAX_PENDING);              /* the refused one took no number */
     settle(app);
-    CHECK(take_any_requests() == APP_APPS_MAX_PENDING);
+    CHECK(wait_requests(app, APP_APPS_MAX_PENDING) == APP_APPS_MAX_PENDING);
     for (u32 i = 0; i < 3; ++i) {
         CHECK(reply_error(2, CORE_NOT_FOUND));
     }
@@ -519,14 +542,30 @@ static void limits(void)
     CHECK(app_apps_list(app, record, NULL, &id) == CORE_OK && id == APP_APPS_MAX_PENDING + 3);
     CHECK(app_apps_list(app, record, NULL, &id) == CORE_WOULD_BLOCK);
     settle(app);
-    CHECK(take_any_requests() == 3);
+    CHECK(wait_requests(app, 3) == 3);
     for (u32 i = 0; i < 256; ++i) {
-        
-        if (!reply_error(2, CORE_NOT_FOUND)) {
+        bool sent = false;
+
+        /* The peer writes faster than the application reads when the socket
+         * buffer is small: let the application run and try again. */
+        for (u32 attempt = 0; attempt < 100 && !sent; ++attempt) {
+            sent = reply_error(2, CORE_NOT_FOUND);
+            if (!sent) {
+                test_pump(app, 20);
+            }
+        }
+        if (!sent) {
             fail_at(__LINE__);
         }
     }
-    test_pump(app, 50);
+    for (u32 round = 0; round < 150 && call_count < 3 + 256; ++round) {
+        bool pending = false;
+
+        if (appserv.connection != NULL) {
+            (void)ipc_connection_flush(appserv.connection, &pending); /* the tail of the replies */
+        }
+        test_pump(app, 20);
+    }
     CHECK(call_count == 3 + 256);
     for (u32 i = 0; i < call_count; ++i) {
         if (calls[i < 300 ? i : 299].request != i + 1) {
@@ -583,7 +622,7 @@ static void broken_connection(Breakage breakage, bool violation)
     CHECK(quick(app, APP_APPS_OPERATION_GET_STATUS) != 0);
     CHECK(quick(app, APP_APPS_OPERATION_STOP) != 0);
     settle(app);
-    CHECK(take_any_requests() == 3);
+    CHECK(wait_requests(app, 3) == 3);
     switch (breakage) {
     case BREAK_WRONG_TYPE:
         {
@@ -749,7 +788,7 @@ static void destroy_with_pending(void)
     CHECK(app_apps_get_status(app, 5, probing_callback, &probe, NULL) == CORE_OK);
     CHECK(app_apps_stop(app, 5, probing_callback, &probe, NULL) == CORE_OK);
     settle(app);
-    CHECK(take_any_requests() == 3);
+    CHECK(wait_requests(app, 3) == 3);
     CHECK(app_destroy(&app) == CORE_OK && app == NULL);
     CHECK(probe.calls == 3);                                  /* once each */
     CHECK(probe.order[0] == 1 && probe.order[1] == 2 && probe.order[2] == 3);
