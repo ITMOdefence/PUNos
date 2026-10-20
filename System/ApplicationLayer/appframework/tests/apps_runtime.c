@@ -706,8 +706,9 @@ static void failures(void)
     broken_connection(BREAK_HUGE_FRAME, false);
 }
 
-/* A socket error while writing: the earlier requests are ended, the new one is
- * not accepted and gets no callback. */
+/* A socket error while writing: the new request is not accepted and gets no
+ * callback. The earlier requests are ended by the event loop, not inside the
+ * public call (callbacks run only from app_run(), see the contract). */
 static void flush_failure(void)
 {
     AppHandle app = start();
@@ -716,11 +717,120 @@ static void flush_failure(void)
     CHECK(app != NULL && quick(app, APP_APPS_OPERATION_LIST) == 1);
     fault_plan.flush_error = CORE_IO_ERROR;
     CHECK(app_apps_list(app, record, NULL, &id) == CORE_IO_ERROR);
+    CHECK(call_count == 0);                       /* no callback inside app_apps_list() */
+    CHECK(app->appserv.count == 1);               /* the earlier request is still waiting */
+    test_pump(app, 20);                           /* the event loop ends it */
     CHECK(call_count == 1 && calls[0].request == 1 && calls[0].error == CORE_IO_ERROR);
     CHECK(app->appserv.connection == NULL && app->appserv.count == 0);
     CHECK(quick(app, APP_APPS_OPERATION_LIST) == 2);  /* the failed one took no number */
     CHECK(app_destroy(&app) == CORE_OK);
     CHECK(call_count == 2 && calls[1].error == CORE_INVALID_STATE);
+}
+
+/* A request made between the failed write and the event loop turn is accepted
+ * and ends with the same error as the earlier ones. */
+static void request_after_failed_write(void)
+{
+    AppHandle app = start();
+    AppRequestId id = 0;
+
+    CHECK(app != NULL && quick(app, APP_APPS_OPERATION_LIST) == 1);
+    fault_plan.flush_error = CORE_IO_ERROR;
+    CHECK(app_apps_list(app, record, NULL, &id) == CORE_IO_ERROR);
+    CHECK(app_apps_get_status(app, 5, record, NULL, &id) == CORE_OK && id == 2);
+    CHECK(call_count == 0);
+    test_pump(app, 20);
+    CHECK(call_count == 2 && calls[0].request == 1 && calls[1].request == 2);
+    CHECK(calls[0].error == CORE_IO_ERROR && calls[1].error == CORE_IO_ERROR);
+    CHECK(app->appserv.connection == NULL && app->appserv.count == 0);
+    CHECK(app_destroy(&app) == CORE_OK);
+}
+
+/* The first callback of a failed batch starts a new request while the rest of
+ * the batch is still being ended. The new connection opens at once; it must
+ * carry that one request and nothing from the old batch. */
+static AppRequestId reentry_id;
+
+static void reentering_callback(AppHandle app, AppRequestId request, ErrorCode error,
+                                const AppAppsResult *result, void *context)
+{
+    record(app, request, error, result, context);
+    if (request == 1) {
+        reentry_id = quick(app, APP_APPS_OPERATION_GET_INFO);
+    }
+}
+
+static void callback_reenters_after_failure(void)
+{
+    AppHandle app = start();
+
+    reentry_id = 0;
+    CHECK(app != NULL);
+    CHECK(app_apps_list(app, reentering_callback, NULL, NULL) == CORE_OK);
+    CHECK(quick(app, APP_APPS_OPERATION_LIST) == 2);
+    CHECK(quick(app, APP_APPS_OPERATION_GET_STATUS) == 3);
+    settle(app);
+    CHECK(wait_requests(app, 3) == 3);
+    fake_peer_drop(&appserv); /* the connection fails with three requests in it */
+    test_pump(app, 40);
+    CHECK(call_count == 3 && reentry_id == 4);
+    CHECK(calls[0].request == 1 && calls[1].request == 2 && calls[2].request == 3);
+    CHECK(calls[0].error == CORE_IO_ERROR && calls[1].error == CORE_IO_ERROR &&
+          calls[2].error == CORE_IO_ERROR);
+    settle(app);
+    CHECK(take_request(3, (const u8 *)"\1\0\5\0clock", 9)); /* only the new request */
+    CHECK(wait_requests(app, 0) == 0);
+    CHECK(reply_info("clock", "Clock"));
+    test_pump(app, 20);
+    CHECK(call_count == 4 && calls[3].request == 4 && calls[3].error == CORE_OK);
+    CHECK(app->appserv.count == 0);
+    CHECK(app_destroy(&app) == CORE_OK);
+}
+
+/* A full queue fails; the first callback tries to start three requests. The
+ * ring slots of the batch are reserved until their callbacks ran, so exactly
+ * one of them fits and no callback of the batch is overwritten. */
+static ErrorCode burst_results[3];
+
+static void bursting_callback(AppHandle app, AppRequestId request, ErrorCode error,
+                              const AppAppsResult *result, void *context)
+{
+    record(app, request, error, result, context);
+    if (request == 1) {
+        for (u32 i = 0; i < 3; ++i) {
+            burst_results[i] = app_apps_get_status(app, 5, record, NULL, NULL);
+        }
+    }
+}
+
+static void full_batch_reentry(void)
+{
+    AppHandle app = start();
+
+    CHECK(app != NULL);
+    CHECK(app_apps_list(app, bursting_callback, NULL, NULL) == CORE_OK);
+    for (u32 i = 1; i < APP_APPS_MAX_PENDING; ++i) {
+        CHECK(quick(app, APP_APPS_OPERATION_LIST) == i + 1);
+    }
+    CHECK(app_apps_list(app, record, NULL, NULL) == CORE_WOULD_BLOCK);
+    settle(app);
+    CHECK(wait_requests(app, APP_APPS_MAX_PENDING) == APP_APPS_MAX_PENDING);
+    fake_peer_drop(&appserv);
+    test_pump(app, 40);
+    CHECK(call_count == APP_APPS_MAX_PENDING + 0 && burst_results[0] == CORE_OK &&
+          burst_results[1] == CORE_WOULD_BLOCK && burst_results[2] == CORE_WOULD_BLOCK);
+    for (u32 i = 0; i < APP_APPS_MAX_PENDING; ++i) {
+        if (calls[i < 300 ? i : 299].request != i + 1 ||
+            calls[i < 300 ? i : 299].error != CORE_IO_ERROR) {
+            fail_at(__LINE__);
+        }
+    }
+    settle(app);
+    CHECK(take_request(9, (const u8 *)"\1\0\5\0\0\0\0\0\0\0", 10)); /* only the one that fit */
+    CHECK(wait_requests(app, 0) == 0);
+    CHECK(app->appserv.count == 1 && app->appserv.ending == 0);
+    CHECK(app_destroy(&app) == CORE_OK);
+    CHECK(call_count == APP_APPS_MAX_PENDING + 1 && calls[APP_APPS_MAX_PENDING].error == CORE_INVALID_STATE);
 }
 
 /* ---- no appserv -------------------------------------------------------------------------------- */
@@ -906,6 +1016,9 @@ int main(void)
     send_refusals();
     failures();
     flush_failure();
+    request_after_failed_write();
+    callback_reenters_after_failure();
+    full_batch_reentry();
     unavailable();
     destroy_with_pending();
     chained_request();

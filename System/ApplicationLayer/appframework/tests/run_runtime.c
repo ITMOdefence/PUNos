@@ -162,7 +162,7 @@ static void batch_changes(void)
 
     EXPECT(31, app != NULL && fd_a >= 0 && fd_b >= 0);
     /* Both are ready in the same batch; whichever comes first removes the other
-     * and quits. The one removed must not run afterwards (ids are never reused). */
+     * and quits. The one removed must not run afterwards (even if the loop reused its id). */
     EXPECT(32, app_event_add_fd(app, fd_a, EVENT_READABLE, remove_other, &counters, &a) ==
                    CORE_OK);
     EXPECT(33, app_event_add_fd(app, fd_b, EVENT_READABLE, remove_other, &other, &b) ==
@@ -376,6 +376,50 @@ static void sigterm(void)
     EXPECT(70, kill(getpid(), SIGTERM) == 0 && old_handler_calls == 1);
 }
 
+/* The SIGTERM handler may be running in another thread while the owner thread
+ * destroys the handle. app_destroy() must not free the handle before that
+ * handler is done with it. The "handler" here is a thread that enters the same
+ * way on_sigterm() does and leaves a while later. */
+static volatile u32 handler_inside;
+static volatile u32 handler_done;
+
+static i32 slow_handler(void *argument)
+{
+    AppHandle app = libappframework_internal_signal_enter();
+
+    (void)argument;
+    if (app == NULL) {
+        libappframework_internal_signal_leave();
+        return 1;
+    }
+    __atomic_store_n(&handler_inside, 1, __ATOMIC_SEQ_CST);
+    test_sleep_ms(80); /* still using the handle */
+    __atomic_store_n(&handler_done, 1, __ATOMIC_SEQ_CST);
+    libappframework_internal_signal_leave();
+    return 0;
+}
+
+static void sigterm_lifetime(void)
+{
+    AppHandle app = test_app();
+    ThreadHandle thread = NULL;
+    ThreadExitStatus status = -1;
+
+    EXPECT(88, app != NULL);
+    EXPECT(89, thread_create(slow_handler, NULL, &thread) == CORE_OK);
+    for (u32 i = 0; i < 2000 && __atomic_load_n(&handler_inside, __ATOMIC_SEQ_CST) == 0; ++i) {
+        test_sleep_ms(1);
+    }
+    EXPECT(90, __atomic_load_n(&handler_inside, __ATOMIC_SEQ_CST) == 1);
+    EXPECT(91, app_destroy(&app) == CORE_OK);
+    /* app_destroy() returned: the handler must have left before. */
+    EXPECT(92, __atomic_load_n(&handler_done, __ATOMIC_SEQ_CST) == 1);
+    EXPECT(93, thread_join(&thread, &status) == CORE_OK && status == 0);
+    /* With nobody running a handler, destroying does not wait. */
+    app = test_app();
+    EXPECT(94, app != NULL && app_destroy(&app) == CORE_OK);
+}
+
 int main(void)
 {
     quit_before_run();
@@ -387,6 +431,7 @@ int main(void)
     handler_rules();
     quit_from_thread();
     sigterm();
+    sigterm_lifetime();
     check_passed();
     return 0;
 }

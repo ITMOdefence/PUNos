@@ -50,7 +50,8 @@ static ErrorCode table_add(AppHandle app, AppEventSourceId id, AppEventHandler h
         }
     }
     table(app)[app->source_count++] =
-        (AppSource){ .id = id, .handler = handler, .context = context, .internal = internal };
+        (AppSource){ .id = id, .handler = handler, .context = context, .internal = internal,
+                    .serial = ++app->source_serial };
     return CORE_OK;
 }
 
@@ -100,6 +101,15 @@ ErrorCode libappframework_internal_unregister(AppHandle app, AppEventSourceId so
 
 void libappframework_internal_dispatch(AppHandle app, const Event *events, usize count)
 {
+    /* Sources registered while this batch runs have no events in it. The loop only
+     * promises ids unique among registered sources, so an id of a source removed
+     * earlier in the batch may come back for a new one. */
+    u64 batch_serial = app->source_serial;
+
+    /* Requests of a connection whose write failed end here, not in the call that failed. */
+    if (!libappframework_internal_quit_requested(app)) {
+        libappframework_internal_apps_deferred(app);
+    }
     for (usize i = 0; i < count; ++i) {
         AppSource *entry;
         AppEventHandler handler;
@@ -114,9 +124,9 @@ void libappframework_internal_dispatch(AppHandle app, const Event *events, usize
             continue; /* only interrupts the wait */
         }
         /* Looked up by id on every event: a handler earlier in this batch may
-         * have removed this source, and ids are never reused. */
+         * have removed this source (and an id may then belong to a newer one). */
         entry = libappframework_internal_source_find(app, events[i].source_id);
-        if (entry == NULL) {
+        if (entry == NULL || entry->serial > batch_serial) {
             continue;
         }
         handler = entry->handler;

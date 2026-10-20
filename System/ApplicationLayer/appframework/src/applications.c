@@ -279,9 +279,15 @@ static AppRequest *request_at(AppAppsClient *client, usize index)
     return &client->requests[(client->head + index) % APP_APPS_MAX_PENDING];
 }
 
+/* The slots of requests whose callbacks are still due stay reserved. */
+static bool queue_full(const AppAppsClient *client)
+{
+    return client->count + client->ending >= APP_APPS_MAX_PENDING;
+}
+
 static ErrorCode queue_push(AppAppsClient *client, const AppRequest *request)
 {
-    if (client->count >= APP_APPS_MAX_PENDING) {
+    if (queue_full(client)) {
         return CORE_WOULD_BLOCK;
     }
     if (client->requests == NULL) {
@@ -322,17 +328,28 @@ static void close_connection(AppHandle app)
     }
     client->open = false;
     client->write_interest = false;
+    client->failed = false;
 }
 
 /* Ends the first `count` requests of the queue, in order, each with one
- * callback. Requests added by a callback stay for the next connection. */
+ * callback. The whole batch leaves the queue before the first callback: a
+ * callback may start new requests (and a new connection, which opens at once),
+ * and those must never meet the old ones. The batch keeps its ring slots
+ * (`ending`) until each of its callbacks is due, so new requests cannot
+ * overwrite it and no copy is needed (thread stacks are small). */
 static void finish_requests(AppHandle app, usize count, ErrorCode error)
 {
     AppAppsClient *client = &app->appserv;
+    usize first = client->head;
+    usize taken = count < client->count ? count : client->count;
 
-    for (usize i = 0; i < count && client->count > 0; ++i) {
-        AppRequest request = queue_pop(client);
+    client->head = (client->head + taken) % APP_APPS_MAX_PENDING;
+    client->count -= taken;
+    client->ending += taken;
+    for (usize i = 0; i < taken; ++i) {
+        AppRequest request = client->requests[(first + i) % APP_APPS_MAX_PENDING];
 
+        client->ending--;
         (void)memory_free(&request.payload);
         request.callback(app, request.id, error, NULL, request.context);
     }
@@ -472,6 +489,15 @@ static ErrorCode read_replies(AppHandle app, bool *out_violation)
     }
 }
 
+/* A write failed inside a public call. The call only recorded it; the requests
+ * are ended here, from the event loop (callbacks run only from app_run()). */
+void libappframework_internal_apps_deferred(AppHandle app)
+{
+    if (app->appserv.failed) {
+        fail_connection(app, CORE_IO_ERROR, "appserv connection failed", APP_LOG_LEVEL_WARNING);
+    }
+}
+
 static void on_event(AppHandle app, AppEventSourceId source, EventMask mask, void *context)
 {
     AppAppsClient *client = &app->appserv;
@@ -481,6 +507,10 @@ static void on_event(AppHandle app, AppEventSourceId source, EventMask mask, voi
     (void)source;
     (void)context;
     if (client->connection == NULL) {
+        return;
+    }
+    if (client->failed) {
+        libappframework_internal_apps_deferred(app);
         return;
     }
     if (!client->open) {
@@ -558,7 +588,7 @@ static ErrorCode submit(AppHandle app, AppAppsOperation operation, const char *i
     IpcMessageType type;
     ErrorCode result;
 
-    if (client->count >= APP_APPS_MAX_PENDING) {
+    if (queue_full(client)) {
         return CORE_WOULD_BLOCK;
     }
     result = libappframework_internal_apps_encode(operation, id, id_length, instance,
@@ -583,7 +613,7 @@ static ErrorCode submit(AppHandle app, AppAppsOperation operation, const char *i
         (void)memory_free(&request.payload);
         return result;
     }
-    if (client->open) {
+    if (client->open && !client->failed) {
         AppRequest *queued = request_at(client, client->count - 1);
 
         result = send_request(app, queued);
@@ -591,10 +621,12 @@ static ErrorCode submit(AppHandle app, AppAppsOperation operation, const char *i
             result = flush(app);
             if (result != CORE_OK) {
                 /* A socket error. The new request was never accepted, so it
-                 * gets no callback; the earlier ones do, in order. */
+                 * gets no callback. The earlier ones are not ended here: that
+                 * would run their callbacks inside this call. The event loop
+                 * does it, in order. */
                 client->count--;
-                fail_connection(app, CORE_IO_ERROR, "appserv connection failed",
-                                APP_LOG_LEVEL_WARNING);
+                client->failed = true;
+                (void)eventloop_wake(app->loop);
                 return result;
             }
         } else {

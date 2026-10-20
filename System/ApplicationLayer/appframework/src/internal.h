@@ -61,6 +61,7 @@ typedef struct AppSource {
     AppEventHandler handler;
     void *context;
     bool internal; /* never visible to, or removable by, the application */
+    u64 serial;    /* order of registration, see dispatch */
 } AppSource;
 
 /* The connection to logserv and the records that have not been confirmed. */
@@ -91,11 +92,13 @@ typedef struct AppAppsClient {
     IpcConnectionHandle connection;  /* NULL: not connected */
     bool open;
     bool write_interest;
+    bool failed;                     /* a write failed; the event loop ends the requests */
     AppEventSourceId source;         /* 0: not registered */
     MemoryBlock block;               /* APP_APPS_MAX_PENDING requests */
     AppRequest *requests;
     usize head;
     usize count;
+    usize ending;                    /* taken out of the queue, callbacks still due; slots reserved */
     AppRequestId last_request;       /* last identifier handed out */
 } AppAppsClient;
 
@@ -107,6 +110,7 @@ struct AppHandle {
     MemoryBlock sources_block;  /* AppSource[source_capacity] */
     usize source_count;
     usize source_capacity;
+    u64 source_serial;          /* serial of the last registered source */
     volatile u32 quit_requested;    /* atomic: any thread, signal handler */
     volatile u32 sigterm_received;  /* atomic: set by the signal handler */
     struct sigaction previous_sigterm;
@@ -175,6 +179,10 @@ ErrorCode libappframework_internal_runtime_detach(AppHandle app);
 
 /* True once app_request_quit() or SIGTERM asked for the loop to stop. */
 bool libappframework_internal_quit_requested(AppHandle app);
+/* The SIGTERM handler's access to the handle (see runtime.c); the handle stays
+ * valid between the two calls. Exposed for the tests of the lifetime protocol. */
+AppHandle libappframework_internal_signal_enter(void);
+void libappframework_internal_signal_leave(void);
 
 /* ------------------------------------------------------------------------ */
 /* Services (modules logging and applications)                               */
@@ -221,6 +229,8 @@ ErrorCode libappframework_internal_log(AppHandle app, AppLogLevel level,
 
 /* Ends pending requests with CORE_INVALID_STATE and closes the connection. */
 void libappframework_internal_apps_shutdown(AppHandle app);
+/* Ends the requests of a connection whose write failed (called by the event loop). */
+void libappframework_internal_apps_deferred(AppHandle app);
 
 /* One non-blocking attempt to pass queued records on, then closes. */
 void libappframework_internal_logging_shutdown(AppHandle app);

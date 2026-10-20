@@ -16,6 +16,7 @@ LOGGING = LIBRARY + "/src/logging.c"
 APPS = LIBRARY + "/src/applications.c"
 APPLICATION = LIBRARY + "/src/application.c"
 EVENTLOOP = LIBRARY + "/src/eventloop.c"
+RUNTIME = LIBRARY + "/src/runtime.c"
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,18 @@ MUTATIONS = [
          "false"),)),
     Mutation("apps: stop reply with extra bytes accepted", APPS, (
         ("size == ERROR_CODE_SIZE ? CORE_OK : CORE_IO_ERROR", "CORE_OK"),)),
+    Mutation("apps: failed batch stays in the queue during callbacks", APPS, (
+        ("    client->head = (client->head + taken) % APP_APPS_MAX_PENDING;\n    client->count -= taken;\n    client->ending += taken;\n"
+         "    for (usize i = 0; i < taken; ++i) {\n        AppRequest request = client->requests[(first + i) % APP_APPS_MAX_PENDING];\n\n        client->ending--;\n",
+         "    (void)first;\n    for (usize i = 0; i < taken; ++i) {\n        AppRequest request = *request_at(client, 0);\n\n        client->head = (client->head + 1) % APP_APPS_MAX_PENDING;\n        client->count--;\n"),)),
+    Mutation("apps: slots of a failing batch are not reserved", APPS, (
+        ("return client->count + client->ending >= APP_APPS_MAX_PENDING;",
+         "return client->count >= APP_APPS_MAX_PENDING;"),)),
+    Mutation("apps: failed write ends requests inside the public call", APPS, (
+        ("client->failed = true;\n                (void)eventloop_wake(app->loop);",
+         "fail_connection(app, CORE_IO_ERROR, \"appserv connection failed\", APP_LOG_LEVEL_WARNING);"),)),
+    Mutation("sigterm: destroy does not wait for a running handler", RUNTIME, (
+        ("while (__atomic_load_n(&handlers_running, __ATOMIC_SEQ_CST) != 0) {", "while (false) {"),)),
     Mutation("events: internal source removable by the application", EVENTLOOP, (
         ("entry == NULL || entry->internal", "entry == NULL"),)),
 ]

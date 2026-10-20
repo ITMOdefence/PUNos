@@ -26,3 +26,4 @@ sigaction
 string_destroy
 string_from_c_str
 sys_errno_location
+time_sleep

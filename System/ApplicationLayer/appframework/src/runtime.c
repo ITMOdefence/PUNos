@@ -8,6 +8,16 @@
  */
 static struct AppHandle *volatile active_app;
 
+/*
+ * SIGTERM handlers in progress. A handler registers here before it reads
+ * active_app and unregisters when it is done with the handle, so app_destroy()
+ * can wait until no handler (in any thread) can still touch the handle it is
+ * about to free. All accesses are sequentially consistent: the destroying
+ * thread stores NULL and then reads the count, a handler increments and then
+ * reads the pointer; with weaker ordering both could miss each other.
+ */
+static volatile u32 handlers_running;
+
 static bool flag_is_set(volatile u32 *flag)
 {
     return __atomic_load_n(flag, __ATOMIC_ACQUIRE) != 0;
@@ -21,16 +31,30 @@ static ErrorCode request_quit(AppHandle app)
     return eventloop_wake(app->loop);
 }
 
+/* The handler's view of the handle: returns it (or NULL) and keeps it alive
+ * until libappframework_internal_signal_leave(). Async-signal-safe. */
+AppHandle libappframework_internal_signal_enter(void)
+{
+    __atomic_fetch_add(&handlers_running, 1, __ATOMIC_SEQ_CST);
+    return __atomic_load_n(&active_app, __ATOMIC_SEQ_CST);
+}
+
+void libappframework_internal_signal_leave(void)
+{
+    __atomic_fetch_sub(&handlers_running, 1, __ATOMIC_SEQ_CST);
+}
+
 static void on_sigterm(i32 signal)
 {
-    AppHandle app = __atomic_load_n(&active_app, __ATOMIC_ACQUIRE);
     i32 saved_errno = errno;
+    AppHandle app = libappframework_internal_signal_enter();
 
     (void)signal;
     if (app != NULL) {
         __atomic_store_n(&app->sigterm_received, 1, __ATOMIC_RELEASE);
         (void)request_quit(app);
     }
+    libappframework_internal_signal_leave();
     errno = saved_errno;
 }
 
@@ -64,7 +88,15 @@ ErrorCode libappframework_internal_runtime_detach(AppHandle app)
         }
         app->sigterm_installed = false;
     }
-    __atomic_store_n(&active_app, NULL, __ATOMIC_RELEASE);
+    __atomic_store_n(&active_app, NULL, __ATOMIC_SEQ_CST);
+    /* A handler that started before the store may still be using the handle
+     * (it runs in another thread, or was interrupted there). It only stores a
+     * flag and writes to an eventfd, so this wait is short. */
+    while (__atomic_load_n(&handlers_running, __ATOMIC_SEQ_CST) != 0) {
+        DurationMs remaining = 0;
+
+        (void)time_sleep(1, &remaining);
+    }
     return result;
 }
 
