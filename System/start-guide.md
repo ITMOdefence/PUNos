@@ -267,6 +267,20 @@ PUNos initserv stub: ipc self-test passed
 PUNos initserv stub: log self-test passed
 PUNos initserv stub: input self-test passed
 PUNos initserv stub: camera self-test passed
+appframework-lifecycle runtime test passed
+PUNos initserv stub: appfwlifecycle self-test passed
+appframework-create runtime test passed
+PUNos initserv stub: appfwcreate self-test passed
+appframework-run runtime test passed
+PUNos initserv stub: appfwrun self-test passed
+appframework-fault runtime test passed
+PUNos initserv stub: appfwfault self-test passed
+appframework-logserv runtime test passed
+PUNos initserv stub: appfwlogserv self-test passed
+appframework-apps-wire runtime test passed
+PUNos initserv stub: appfwwire self-test passed
+appframework-apps runtime test passed
+PUNos initserv stub: appfwapps self-test passed
 appserv runtime test passed
 PUNos initserv stub: appserv self-test passed
 ```
@@ -432,7 +446,7 @@ gzip -dc System/images/punos-initramfs.cpio.gz | cpio -itv
 `init`, `init-smoke`, `punos/bin/initserv`, `punos/bin/logserv`, `punos/bin/appserv` и self-test'ы `punos/bin/*-selftest`
 (`syscall`, `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`,
 `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`,
-`libv4l2`, `ipc`, `log`, `input`, `camera`, `appserv`, `logserv`, `initserv`) с владельцем `root:root` и правами
+`libv4l2`, `ipc`, `log`, `input`, `camera`, `appfw-*` (семь тестов appframework), `appserv`, `logserv`, `initserv`) с владельцем `root:root` и правами
 `0755`.
 
 ## Рабочая структура
