@@ -24,19 +24,19 @@ static ErrorCode connect_client_pair(const String *endpoint,
                                      CompositorServiceHandle compositor,
                                      IpcConnectionHandle *out_client)
 {
-    IpcConnectionState state = IPC_CONNECTION_CONNECTING;
+    IpcConnectionState state = IPC_CONNECTION_STATE_CONNECTING;
     usize attempt;
     ErrorCode result = ipc_connection_begin_connect(endpoint, out_client);
 
     if (result != CORE_OK) return result;
-    for (attempt = 0; attempt < 2000 && state == IPC_CONNECTION_CONNECTING;
+    for (attempt = 0; attempt < 2000 && state == IPC_CONNECTION_STATE_CONNECTING;
          ++attempt) {
         result = pump_pair(display, compositor);
         if (result != CORE_OK) return result;
         result = ipc_connection_finish_connect(*out_client, &state);
         if (result != CORE_OK) return result;
     }
-    return state == IPC_CONNECTION_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
+    return state == IPC_CONNECTION_STATE_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
 }
 
 static ErrorCode send_message_with_descriptor(IpcConnectionHandle client,
@@ -44,9 +44,11 @@ static ErrorCode send_message_with_descriptor(IpcConnectionHandle client,
                                               u8 *payload, usize size,
                                               i32 descriptor)
 {
-    IpcMessage message = { type, 0, { payload, size }, descriptor, 0 };
+    IpcMessage message = { type, { payload, size } };
     bool pending;
-    ErrorCode result = ipc_connection_send(client, &message);
+    ErrorCode result = descriptor == IPC_NO_DESCRIPTOR ?
+        ipc_connection_send(client, &message) :
+        ipc_connection_send_with_descriptor(client, &message, descriptor);
 
     if (result != CORE_OK) return result;
     return ipc_connection_flush(client, &pending);
@@ -72,8 +74,8 @@ static ErrorCode receive_message_pair(DisplayServiceHandle display,
         if (result != CORE_OK) return result;
         result = ipc_connection_receive(client, &status, out_message);
         if (result != CORE_OK) return result;
-        if (status == IPC_RECEIVE_MESSAGE) return CORE_OK;
-        if (status == IPC_RECEIVE_PEER_CLOSED) return CORE_IO_ERROR;
+        if (status == IPC_RECEIVE_STATUS_MESSAGE) return CORE_OK;
+        if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_IO_ERROR;
     }
     return CORE_WOULD_BLOCK;
 }
@@ -123,8 +125,8 @@ static ErrorCode wait_for_surface_events(DisplayServiceHandle display,
         if (result != CORE_OK) return result;
         result = ipc_connection_receive(app, &status, &message);
         if (result != CORE_OK) return result;
-        if (status == IPC_RECEIVE_PEER_CLOSED) return CORE_IO_ERROR;
-        if (status != IPC_RECEIVE_MESSAGE) continue;
+        if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_IO_ERROR;
+        if (status != IPC_RECEIVE_STATUS_MESSAGE) continue;
 
         if (message.type == GUI_SURFACE_FRAME_DONE) {
             GuiSurfaceFrameDoneEvent event;
@@ -507,13 +509,13 @@ static void test_fd_cleanup_strict(void)
          * enough; connect_client_pair cannot be used with NULL display here. */
         {
             usize attempt;
-            IpcReceiveStatus status = IPC_RECEIVE_NO_MESSAGE;
-            for (attempt = 0; attempt < 1000 && status == IPC_RECEIVE_NO_MESSAGE;
+            IpcReceiveStatus status = IPC_RECEIVE_STATUS_NO_MESSAGE;
+            for (attempt = 0; attempt < 1000 && status == IPC_RECEIVE_STATUS_NO_MESSAGE;
                  ++attempt) {
                 EXPECT(96, compositor_service_poll(service, 0) == CORE_OK);
                 EXPECT(97, ipc_connection_receive(client, &status, &message) == CORE_OK);
             }
-            EXPECT(98, status == IPC_RECEIVE_MESSAGE);
+            EXPECT(98, status == IPC_RECEIVE_STATUS_MESSAGE);
         }
         EXPECT(99, gui_decode_buffer_import_result(&message, &result) == CORE_OK &&
                     result.result.error == CORE_OK);

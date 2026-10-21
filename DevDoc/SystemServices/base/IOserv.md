@@ -12,7 +12,7 @@ windowserv.
 
 | Поле | Значение |
 | --- | --- |
-| Идентификатор | ioserv |
+| Идентификатор | IOserv |
 | Исполняемый файл | IOserv |
 | Владелец запуска | initserv |
 | IPC endpoint | /run/punos/ioserv.sock |
@@ -107,8 +107,8 @@ eventloop_remove_source().
 
 | Клиент | Разрешённые операции | Проверка доступа |
 | --- | --- | --- |
-| appframework | io.subscribe, io.unsubscribe | Доверенный системный клиент v1 |
-| windowserv | io.subscribe, io.unsubscribe | Доверенный системный клиент будущей UI-конфигурации |
+| windowserv | io.subscribe, io.unsubscribe | Целевой клиент будущей UI-интеграции |
+| Независимый тестовый клиент | io.subscribe, io.unsubscribe | Проверка серверного IPC без GUI |
 
 Приложения не подключаются к IOserv напрямую. В ipclib пока нет контракта
 получения идентичности peer, поэтому IOserv не может достоверно отличить
@@ -131,6 +131,16 @@ endpoint является внутренним, а не публичным API �
 | 5, io.input_frame | Сервис → клиент | IoInputFrameEvent |
 | 6, io.device_added | Сервис → клиент | IoDeviceEvent |
 | 7, io.device_removed | Сервис → клиент | IoDeviceEvent |
+| 8, io.error | Сервис → клиент | `u32 ErrorCode`; ответ на неизвестный либо серверный тип от клиента |
+
+`ErrorCode` сериализуется как `u32` little-endian. Неверный размер известного
+запроса получает ответ соответствующей операции. Неизвестный или серверный
+`message_type`, присланный клиентом, получает `io.error` с
+`CORE_INVALID_ARGUMENT`. Повреждённый IPC-кадр закрывает соединение через
+ipclib. `service_id` и имя ELF имеют регистр `IOserv`; путь endpoint остаётся
+`/run/punos/ioserv.sock`. appframework к этому endpoint напрямую не
+подключается. Код windowserv находится в отдельной GUI-ветке; эта реализация
+сервера проверяется независимым IPC-клиентом и не заявляет GUI-интеграцию.
 
 ### Операции
 

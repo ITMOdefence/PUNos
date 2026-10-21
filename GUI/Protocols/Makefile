@@ -5,8 +5,10 @@ ROOT := ../..
 CORE := $(ROOT)/System/SystemLibs/libcore
 IPC := $(ROOT)/System/SpecialLibs/ipclib
 STR := $(ROOT)/System/SystemLibs/libstr
+MEM := $(ROOT)/System/SystemLibs/libmem
 NATIVE := $(ROOT)/System/NativeRuntime
 CPPFLAGS := -Iinclude -I$(CORE)/include -I$(IPC)/include -I$(STR)/include \
+            -I$(MEM)/include \
             -I$(NATIVE)/SyscallWrappers/include -I$(NATIVE)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
           -fno-stack-protector -fno-pic -m64 -Wall -Wextra -Werror

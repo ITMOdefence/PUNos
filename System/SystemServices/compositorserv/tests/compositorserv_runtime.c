@@ -11,19 +11,19 @@ static ErrorCode connect_client(const String *endpoint,
                                 CompositorServiceHandle service,
                                 IpcConnectionHandle *out_client)
 {
-    IpcConnectionState state = IPC_CONNECTION_CONNECTING;
+    IpcConnectionState state = IPC_CONNECTION_STATE_CONNECTING;
     usize attempt;
     ErrorCode result = ipc_connection_begin_connect(endpoint, out_client);
 
     if (result != CORE_OK) return result;
-    for (attempt = 0; attempt < 1000 && state == IPC_CONNECTION_CONNECTING;
+    for (attempt = 0; attempt < 1000 && state == IPC_CONNECTION_STATE_CONNECTING;
          ++attempt) {
         result = compositor_service_poll(service, 0);
         if (result != CORE_OK) return result;
         result = ipc_connection_finish_connect(*out_client, &state);
         if (result != CORE_OK) return result;
     }
-    return state == IPC_CONNECTION_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
+    return state == IPC_CONNECTION_STATE_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
 }
 
 static ErrorCode send_message_with_descriptor(IpcConnectionHandle client,
@@ -31,9 +31,11 @@ static ErrorCode send_message_with_descriptor(IpcConnectionHandle client,
                                               u8 *payload, usize size,
                                               i32 descriptor)
 {
-    IpcMessage message = { type, 0, { payload, size }, descriptor, 0 };
+    IpcMessage message = { type, { payload, size } };
     bool pending;
-    ErrorCode result = ipc_connection_send(client, &message);
+    ErrorCode result = descriptor == IPC_NO_DESCRIPTOR ?
+        ipc_connection_send(client, &message) :
+        ipc_connection_send_with_descriptor(client, &message, descriptor);
 
     if (result != CORE_OK) return result;
     return ipc_connection_flush(client, &pending);
@@ -58,8 +60,8 @@ static ErrorCode receive_message(CompositorServiceHandle service,
         if (result != CORE_OK) return result;
         result = ipc_connection_receive(client, &status, out_message);
         if (result != CORE_OK) return result;
-        if (status == IPC_RECEIVE_MESSAGE) return CORE_OK;
-        if (status == IPC_RECEIVE_PEER_CLOSED) return CORE_IO_ERROR;
+        if (status == IPC_RECEIVE_STATUS_MESSAGE) return CORE_OK;
+        if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_IO_ERROR;
     }
     return CORE_WOULD_BLOCK;
 }
@@ -596,7 +598,7 @@ static void test_controller_bind_failure_limit(void)
         request.controller_token[attempt] = 0;
     }
     for (attempt = 0; attempt < 3; ++attempt) {
-        IpcReceiveStatus status = IPC_RECEIVE_NO_MESSAGE;
+        IpcReceiveStatus status = IPC_RECEIVE_STATUS_NO_MESSAGE;
         IpcMessage message;
         GuiBasicResult result;
         usize pump;
@@ -606,32 +608,32 @@ static void test_controller_bind_failure_limit(void)
             (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK);
         EXPECT(214, send_message(client, GUI_COMPOSITOR_BIND_CONTROLLER,
                                  payload, size) == CORE_OK);
-        for (pump = 0; pump < 1000 && status == IPC_RECEIVE_NO_MESSAGE; ++pump) {
+        for (pump = 0; pump < 1000 && status == IPC_RECEIVE_STATUS_NO_MESSAGE; ++pump) {
             EXPECT(215, compositor_service_poll(service, 0) == CORE_OK);
             EXPECT(216, ipc_connection_receive(client, &status, &message) == CORE_OK);
         }
-        if (status == IPC_RECEIVE_MESSAGE) {
+        if (status == IPC_RECEIVE_STATUS_MESSAGE) {
             EXPECT(217, gui_decode_basic_result(&message,
                 GUI_COMPOSITOR_BIND_CONTROLLER_RESULT, &result) == CORE_OK &&
                 result.error == CORE_PERMISSION_DENIED);
             EXPECT(218, ipc_message_destroy(&message) == CORE_OK);
         }
         if (attempt < 2) {
-            EXPECT(219, status == IPC_RECEIVE_MESSAGE);
+            EXPECT(219, status == IPC_RECEIVE_STATUS_MESSAGE);
         }
     }
     {
-        IpcReceiveStatus status = IPC_RECEIVE_NO_MESSAGE;
+        IpcReceiveStatus status = IPC_RECEIVE_STATUS_NO_MESSAGE;
         IpcMessage message;
         usize pump;
-        for (pump = 0; pump < 1000 && status != IPC_RECEIVE_PEER_CLOSED; ++pump) {
+        for (pump = 0; pump < 1000 && status != IPC_RECEIVE_STATUS_PEER_CLOSED; ++pump) {
             EXPECT(220, compositor_service_poll(service, 0) == CORE_OK);
             EXPECT(221, ipc_connection_receive(client, &status, &message) == CORE_OK);
-            if (status == IPC_RECEIVE_MESSAGE) {
+            if (status == IPC_RECEIVE_STATUS_MESSAGE) {
                 EXPECT(222, ipc_message_destroy(&message) == CORE_OK);
             }
         }
-        EXPECT(223, status == IPC_RECEIVE_PEER_CLOSED);
+        EXPECT(223, status == IPC_RECEIVE_STATUS_PEER_CLOSED);
     }
 
     (void)ipc_connection_close(&client);

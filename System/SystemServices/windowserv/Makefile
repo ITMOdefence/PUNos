@@ -16,7 +16,7 @@ SYSCALL_LIBRARY := $(SYSCALL)/build/libpunos_syscall.a
 SYSTEM_DEPENDENCIES := libeventloop libprocess libstr libtime libmem libcore
 SYSTEM_ARCHIVES := $(foreach dependency,$(SYSTEM_DEPENDENCIES),\
     $(SYSTEM_LIBS)/$(dependency)/build/libpunos_$(patsubst lib%,%,$(dependency)).a)
-IPC_LIBRARY := $(SPECIAL_LIBS)/ipclib/build/libpunos_ipc.a
+IPC_LIBRARY := $(SPECIAL_LIBS)/ipclib/build/libpunos_special_ipc.a
 PROTOCOL_LIBRARY := $(GUI_PROTOCOLS)/build/libpunos_gui_protocol.a
 
 CPPFLAGS := -Iinclude -I$(GUI_PROTOCOLS)/include \

@@ -1,0 +1,86 @@
+{
+  "services": [
+    {
+      "service_id": "logserv",
+      "executable": "/punos/bin/logserv",
+      "arguments": [
+        "--log-path=/var/log/punos/system.log"
+      ],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "appserv",
+      "executable": "/punos/bin/appserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "IOserv",
+      "executable": "/punos/bin/IOserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": false,
+      "critical": false,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "camserv",
+      "executable": "/punos/bin/camserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": false,
+      "critical": false,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "displayserv",
+      "executable": "/punos/bin/displayserv",
+      "arguments": [
+        "--backend=software",
+        "--presenter-token=@PUNOS_PRESENTER_TOKEN@"
+      ],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "compositorserv",
+      "executable": "/punos/bin/compositorserv",
+      "arguments": [
+        "--presenter-token=@PUNOS_PRESENTER_TOKEN@",
+        "--controller-token=@PUNOS_CONTROLLER_TOKEN@"
+      ],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "windowserv",
+      "executable": "/punos/bin/windowserv",
+      "arguments": [
+        "--controller-token=@PUNOS_CONTROLLER_TOKEN@",
+        "--shell-token=@PUNOS_SHELL_TOKEN@"
+      ],
+      "environment": [],
+      "enabled": true,
+      "critical": true,
+      "restart": "restart",
+      "terminates_on_sigterm": true
+    }
+  ],
+  "native_apps": []
+}

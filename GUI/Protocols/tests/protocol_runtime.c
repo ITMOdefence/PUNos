@@ -21,13 +21,11 @@ static void test_buffer_import(void)
               encoded[9] == 1);
     message.type = GUI_SURFACE_BUFFER_IMPORT;
     message.payload = (Bytes){ encoded, sizeof(encoded) };
-    message.descriptor = 5;
-    EXPECT(4, gui_decode_buffer_import(&message, &decoded) == CORE_OK);
+    EXPECT(4, gui_decode_buffer_import(&message, 5, &decoded) == CORE_OK);
     EXPECT(5, decoded.prefix.request_id == source.prefix.request_id &&
               decoded.width == 320 && decoded.height == 640 &&
               decoded.stride == 1280 && decoded.byte_size == 819200);
-    message.descriptor = IPC_NO_DESCRIPTOR;
-    EXPECT(6, gui_decode_buffer_import(&message, &decoded) ==
+    EXPECT(6, gui_decode_buffer_import(&message, IPC_NO_DESCRIPTOR, &decoded) ==
               CORE_INVALID_ARGUMENT);
 }
 
@@ -52,7 +50,6 @@ static void test_damage_and_present(void)
     EXPECT(11, size == sizeof(damage_bytes));
     message.type = GUI_SURFACE_DAMAGE;
     message.payload = (Bytes){ damage_bytes, sizeof(damage_bytes) };
-    message.descriptor = IPC_NO_DESCRIPTOR;
     EXPECT(12, gui_decode_surface_damage(&message, &decoded_damage) == CORE_OK);
     EXPECT(13, decoded_damage.rect_count == 1 &&
                decoded_damage.rects[0].x == -2 &&
@@ -74,8 +71,7 @@ static void test_damage_and_present(void)
     EXPECT(15, size == sizeof(present_bytes));
     message.type = GUI_DISPLAY_PRESENT;
     message.payload = (Bytes){ present_bytes, sizeof(present_bytes) };
-    message.descriptor = 7;
-    EXPECT(16, gui_decode_display_present(&message, &decoded_present) ==
+    EXPECT(16, gui_decode_display_present(&message, 7, &decoded_present) ==
                CORE_OK);
     EXPECT(17, decoded_present.display_id == 1 &&
                decoded_present.generation == 2 &&
@@ -113,7 +109,6 @@ static void test_display_control(void)
                                           &size) == CORE_OK && size == 42);
     message.type = GUI_DISPLAY_BIND_PRESENTER;
     message.payload = (Bytes){ bytes, size };
-    message.descriptor = IPC_NO_DESCRIPTOR;
     EXPECT(31, gui_decode_presenter_bind(&message, &decoded_bind) == CORE_OK &&
                decoded_bind.presenter_token[31] == 32);
 
@@ -207,7 +202,6 @@ static void test_display_information(void)
     }
     message.type = GUI_DISPLAY_LIST_RESULT;
     message.payload = (Bytes){ list_bytes, sizeof(list_bytes) };
-    message.descriptor = IPC_NO_DESCRIPTOR;
     EXPECT(54, gui_decode_display_list_header(&message, &header,
                                                &first_display) == CORE_OK);
     EXPECT(55, header.result.request_id == 50 && header.snapshot_serial == 9 &&
@@ -259,7 +253,6 @@ static void test_window_protocol(void)
         (Bytes){ bytes, sizeof(bytes) }, &size) == CORE_OK && size == 52);
     message.type = GUI_WINDOW_CREATE;
     message.payload = (Bytes){ bytes, size };
-    message.descriptor = IPC_NO_DESCRIPTOR;
     EXPECT(71, gui_decode_window_create(&message, &decoded_create) == CORE_OK);
     EXPECT(72, decoded_create.surface_id == 11 &&
                decoded_create.title_length == 3 &&
@@ -323,7 +316,6 @@ static void test_io_protocol(void)
         (Bytes){ bytes, sizeof(bytes) }, &size) == CORE_OK && size == 6);
     message.type = GUI_IO_SUBSCRIBE;
     message.payload = (Bytes){ bytes, size };
-    message.descriptor = IPC_NO_DESCRIPTOR;
     EXPECT(91, gui_decode_io_subscribe(&message, &decoded_subscribe) ==
                CORE_OK &&
                decoded_subscribe.device_class_mask ==

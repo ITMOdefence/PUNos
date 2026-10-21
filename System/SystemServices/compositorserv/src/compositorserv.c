@@ -460,7 +460,7 @@ static ErrorCode display_update_interest(CompositorServiceHandle service,
 static ErrorCode display_queue(CompositorServiceHandle service,
                                IpcMessageType type, u8 *data, usize size)
 {
-    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result;
 
@@ -476,12 +476,13 @@ static ErrorCode display_queue_descriptor(CompositorServiceHandle service,
                                           IpcMessageType type, u8 *data,
                                           usize size, i32 descriptor)
 {
-    IpcMessage message = { type, 0, { data, size }, descriptor, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result;
 
     if (service->display_connection == NULL) return CORE_INVALID_STATE;
-    result = ipc_connection_send(service->display_connection, &message);
+    result = ipc_connection_send_with_descriptor(service->display_connection,
+                                                 &message, descriptor);
     if (result != CORE_OK) return result;
     result = ipc_connection_flush(service->display_connection, &pending);
     if (result != CORE_OK) return result;
@@ -1215,7 +1216,7 @@ static ErrorCode service_display_event(CompositorServiceHandle service,
                 display_suspend(service);
                 return CORE_OK;
             }
-            if (state == IPC_CONNECTION_OPEN) {
+            if (state == IPC_CONNECTION_STATE_OPEN) {
                 result = display_send_bind(service);
                 if (result != CORE_OK) {
                     display_suspend(service);
@@ -1244,8 +1245,8 @@ static ErrorCode service_display_event(CompositorServiceHandle service,
                 display_suspend(service);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 display_suspend(service);
                 break;
             }
@@ -1289,7 +1290,7 @@ static ErrorCode queue_payload(CompositorServiceHandle service,
                                CompositorClient *client, IpcMessageType type,
                                u8 *data, usize size)
 {
-    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result = ipc_connection_send(client->connection, &message);
 
@@ -1481,12 +1482,14 @@ static ErrorCode send_buffer_import_result(CompositorServiceHandle service,
 
 static ErrorCode handle_buffer_import(CompositorServiceHandle service,
                                       CompositorClient *client,
-                                      IpcMessage *message)
+                                      IpcMessage *message,
+                                      i32 *descriptor_fd)
 {
     GuiBufferImportRequest request;
     CompositorBuffer *buffer;
     SharedMemoryMapping mapping = { NULL, 0 };
-    ErrorCode result = gui_decode_buffer_import(message, &request);
+    ErrorCode result = gui_decode_buffer_import(message, *descriptor_fd,
+                                                &request);
 
     if (result != CORE_OK) return result;
 
@@ -1502,7 +1505,7 @@ static ErrorCode handle_buffer_import(CompositorServiceHandle service,
                                          CORE_OVERFLOW, 0);
     }
 
-    result = memory_shared_map_readonly(message->descriptor,
+    result = memory_shared_map_readonly(*descriptor_fd,
                                         (usize)request.byte_size, &mapping);
     if (result != CORE_OK) {
         return send_buffer_import_result(service, client,
@@ -1517,13 +1520,13 @@ static ErrorCode handle_buffer_import(CompositorServiceHandle service,
     buffer->stride = request.stride;
     buffer->pixel_format = request.pixel_format;
     buffer->byte_size = request.byte_size;
-    buffer->fd = message->descriptor;
+    buffer->fd = *descriptor_fd;
     buffer->mapping = mapping;
     buffer->state = COMPOSITOR_BUFFER_AVAILABLE;
     buffer->surface_id = 0;
 
-    /* Ownership of the received descriptor moves from IpcMessage to Buffer. */
-    message->descriptor = IPC_NO_DESCRIPTOR;
+    /* Ownership of the received descriptor moves to Buffer. */
+    *descriptor_fd = IPC_NO_DESCRIPTOR;
 
     return send_buffer_import_result(service, client,
                                      request.prefix.request_id, CORE_OK,
@@ -2106,15 +2109,19 @@ static void remove_scene_for_client(CompositorServiceHandle service,
 
 static ErrorCode dispatch(CompositorServiceHandle service,
                           CompositorClient *client,
-                          IpcMessage *message)
+                          IpcMessage *message, i32 *descriptor_fd)
 {
+    if (message->type != GUI_SURFACE_BUFFER_IMPORT &&
+        *descriptor_fd != IPC_NO_DESCRIPTOR) {
+        return CORE_INVALID_ARGUMENT;
+    }
     switch (message->type) {
     case GUI_SURFACE_CREATE:
         return handle_surface_create(service, client, message);
     case GUI_SURFACE_DESTROY:
         return handle_surface_destroy(service, client, message);
     case GUI_SURFACE_BUFFER_IMPORT:
-        return handle_buffer_import(service, client, message);
+        return handle_buffer_import(service, client, message, descriptor_fd);
     case GUI_SURFACE_BUFFER_DESTROY:
         return handle_buffer_destroy(service, client, message);
     case GUI_SURFACE_ATTACH:
@@ -2244,21 +2251,25 @@ static ErrorCode service_client_event(CompositorServiceHandle service,
         while (client->connection != NULL) {
             IpcReceiveStatus status;
             IpcMessage message;
-            ErrorCode result = ipc_connection_receive(client->connection,
-                                                       &status, &message);
+            i32 descriptor_fd = IPC_NO_DESCRIPTOR;
+            ErrorCode result = ipc_connection_receive_with_descriptor(
+                client->connection, &status, &message, &descriptor_fd);
 
             if (result != CORE_OK) {
                 remove_client(service, client);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 remove_client(service, client);
                 break;
             }
 
-            result = dispatch(service, client, &message);
+            result = dispatch(service, client, &message, &descriptor_fd);
             (void)ipc_message_destroy(&message);
+            if (descriptor_fd != IPC_NO_DESCRIPTOR) {
+                (void)close(descriptor_fd);
+            }
             if (result != CORE_OK) {
                 remove_client(service, client);
                 return CORE_OK;

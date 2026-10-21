@@ -647,7 +647,7 @@ typedef struct GuiWindowNavigationEvent {
 
 ErrorCode gui_encode_buffer_import(const GuiBufferImportRequest *request,
                                    Bytes destination, usize *out_size);
-ErrorCode gui_decode_buffer_import(const IpcMessage *message,
+ErrorCode gui_decode_buffer_import(const IpcMessage *message, i32 descriptor,
                                    GuiBufferImportRequest *out_request);
 
 ErrorCode gui_encode_surface_id_request(const GuiSurfaceIdRequest *request,
@@ -774,7 +774,7 @@ ErrorCode gui_decode_scene_binding_lost(
 
 ErrorCode gui_encode_display_present(const GuiDisplayPresentRequest *request,
                                      Bytes destination, usize *out_size);
-ErrorCode gui_decode_display_present(const IpcMessage *message,
+ErrorCode gui_decode_display_present(const IpcMessage *message, i32 descriptor,
                                      GuiDisplayPresentRequest *out_request);
 ErrorCode gui_encode_presenter_bind(const GuiPresenterBindRequest *request,
                                     Bytes destination, usize *out_size);

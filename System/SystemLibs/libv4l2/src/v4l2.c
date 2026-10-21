@@ -190,6 +190,8 @@ _Static_assert(sizeof(struct RawV4l2StreamParm) == 204, "RawV4l2StreamParm ABI m
 struct MappedBuffer {
     u8 *data;
     usize length;
+    bool queued;
+    V4l2Buffer issued;
 };
 
 struct V4l2DeviceHandle {
@@ -197,6 +199,7 @@ struct V4l2DeviceHandle {
     i32 fd;
     bool configured;
     bool streaming;
+    bool device_lost;
     usize buffer_count;
     usize outstanding_count;
     MemoryBlock buffers_block; /* array of struct MappedBuffer, buffer_count long */
@@ -267,7 +270,7 @@ static ErrorCode release_buffers(struct V4l2DeviceHandle *device)
         reqbufs.count = 0;
         reqbufs.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         reqbufs.memory = V4L2_MEMORY_MMAP;
-        if (ioctl_ptr(device->fd, VIDIOC_REQBUFS, &reqbufs) != 0 && result == CORE_OK) {
+        if (device->fd >= 0 && ioctl_ptr(device->fd, VIDIOC_REQBUFS, &reqbufs) != 0 && result == CORE_OK) {
             result = last_error();
         }
     }
@@ -286,6 +289,10 @@ static ErrorCode release_buffers(struct V4l2DeviceHandle *device)
 /* Open / fd / close                                                       */
 /* ------------------------------------------------------------------------ */
 
+#define V4L2_CAP_VIDEO_CAPTURE 0x00000001u
+#define V4L2_CAP_DEVICE_CAPS 0x80000000u
+#define V4L2_CAP_STREAMING 0x04000000u
+
 ErrorCode v4l2_open(const V4l2DeviceConfig *config, V4l2DeviceHandle *out_device)
 {
     const char *path_data;
@@ -302,6 +309,34 @@ ErrorCode v4l2_open(const V4l2DeviceConfig *config, V4l2DeviceHandle *out_device
     fd = open(path_data, O_RDWR | O_NONBLOCK | O_CLOEXEC, 0);
     if (fd < 0) {
         return last_error();
+    }
+
+    /* The device has to be a V4L2 one that can capture video with MMAP
+     * streaming, otherwise nothing below could work. Drivers without the
+     * DEVICE_CAPS flag report the usable bits in capabilities. */
+    {
+        struct RawV4l2Capability capability;
+        u32 usable;
+
+        zero_struct(&capability, sizeof(capability));
+        if (ioctl_ptr(fd, VIDIOC_QUERYCAP, &capability) != 0) {
+            i32 err = errno;
+
+            (void)close(fd);
+            /* ENOTTY / EINVAL mean the file is not a V4L2 device at all. */
+            if (err == ENOTTY || err == EINVAL || err == ENOSYS) {
+                return CORE_UNSUPPORTED;
+            }
+            return core_error_from_errno(err);
+        }
+        usable = (capability.capabilities & V4L2_CAP_DEVICE_CAPS) != 0
+                     ? capability.device_caps
+                     : capability.capabilities;
+        if ((usable & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING)) !=
+            (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING)) {
+            (void)close(fd);
+            return CORE_UNSUPPORTED;
+        }
     }
 
     result = memory_allocate(sizeof(struct V4l2DeviceHandle), &handle_block);
@@ -326,11 +361,12 @@ ErrorCode v4l2_get_fd(V4l2DeviceHandle device, i32 *out_fd)
     if (device == NULL || out_fd == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
+    if (device->device_lost) { return CORE_INVALID_STATE; }
     *out_fd = device->fd;
     return CORE_OK;
 }
 
-ErrorCode v4l2_close(V4l2DeviceHandle *device)
+static ErrorCode close_device(V4l2DeviceHandle *device, bool aborting)
 {
     struct V4l2DeviceHandle *handle;
     ErrorCode result = CORE_OK;
@@ -340,18 +376,34 @@ ErrorCode v4l2_close(V4l2DeviceHandle *device)
         return CORE_INVALID_ARGUMENT;
     }
     handle = *device;
-    if (handle->outstanding_count != 0) {
+    if (!aborting && handle->outstanding_count != 0) {
         return CORE_INVALID_STATE;
     }
 
-    result = release_buffers(handle);
-    if (close(handle->fd) != 0 && result == CORE_OK) {
+    /* Closing the fd stops DMA before any mappings are removed, even when
+     * STREAMOFF failed. Linux consumes the fd even on a close error. */
+    if (close(handle->fd) != 0) {
         result = last_error();
+    }
+    handle->fd = -1;
+    {
+        ErrorCode released = release_buffers(handle);
+        if (result == CORE_OK) { result = released; }
     }
     handle_block = handle->block;
     (void)memory_free(&handle_block);
     *device = NULL;
     return result;
+}
+
+ErrorCode v4l2_close(V4l2DeviceHandle *device)
+{
+    return close_device(device, false);
+}
+
+ErrorCode v4l2_abort(V4l2DeviceHandle *device)
+{
+    return close_device(device, true);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -424,6 +476,7 @@ ErrorCode v4l2_get_capture_configurations(V4l2DeviceHandle device,
     if (device == NULL || out_configurations == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
+    if (device->device_lost || device->streaming) { return CORE_INVALID_STATE; }
     list.items = NULL;
     list.count = 0;
 
@@ -500,11 +553,10 @@ ErrorCode v4l2_get_capture_configurations(V4l2DeviceHandle device,
                 config.pixel_format = fmtdesc.pixelformat;
                 config.width = width;
                 config.height = height;
-                config.frames_per_second = denominator / numerator;
-                if (config.frames_per_second == 0) {
-                    result = CORE_UNSUPPORTED;
-                    goto fail;
-                }
+                config.frame_rate_numerator = denominator;
+                config.frame_rate_denominator = numerator;
+                config.frames_per_second = denominator % numerator == 0 ?
+                                           denominator / numerator : 0;
                 result = try_frame_bytes(device->fd, fmtdesc.pixelformat, width, height,
                                          &config.max_frame_bytes);
                 if (result != CORE_OK) {
@@ -572,9 +624,16 @@ ErrorCode v4l2_stream_config_list_destroy(V4l2StreamConfigList *configurations)
 
 static bool stream_config_is_valid_request(const V4l2StreamConfig *config)
 {
-    return config->width >= V4L2_MIN_WIDTH && config->height >= V4L2_MIN_HEIGHT &&
-           config->frames_per_second >= V4L2_MIN_FRAMES_PER_SECOND &&
-           config->max_frame_bytes == 0;
+    if (config->width < V4L2_MIN_WIDTH || config->height < V4L2_MIN_HEIGHT ||
+        config->max_frame_bytes != 0) return false;
+    if (config->frame_rate_numerator == 0 && config->frame_rate_denominator == 0)
+        return config->frames_per_second >= V4L2_MIN_FRAMES_PER_SECOND;
+    if (config->frame_rate_numerator == 0 || config->frame_rate_denominator == 0)
+        return false;
+    u32 numerator = config->frame_rate_numerator;
+    u32 denominator = config->frame_rate_denominator;
+    return config->frames_per_second ==
+           (numerator % denominator == 0 ? numerator / denominator : 0);
 }
 
 ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig *requested_config,
@@ -590,7 +649,7 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
         !stream_config_is_valid_request(requested_config)) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (device->outstanding_count != 0) {
+    if (device->device_lost || device->streaming || device->outstanding_count != 0) {
         return CORE_INVALID_STATE;
     }
     if (device->configured) {
@@ -612,8 +671,12 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
 
     zero_struct(&streamparm, sizeof(streamparm));
     streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    streamparm.parm.capture.timeperframe_numerator = 1;
-    streamparm.parm.capture.timeperframe_denominator = requested_config->frames_per_second;
+    streamparm.parm.capture.timeperframe_numerator =
+        requested_config->frame_rate_denominator == 0 ? 1 :
+        requested_config->frame_rate_denominator;
+    streamparm.parm.capture.timeperframe_denominator =
+        requested_config->frame_rate_numerator == 0 ?
+        requested_config->frames_per_second : requested_config->frame_rate_numerator;
     if (ioctl_ptr(device->fd, VIDIOC_S_PARM, &streamparm) != 0) {
         return last_error();
     }
@@ -629,8 +692,14 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
         return CORE_UNSUPPORTED;
     }
 
+    /* A driver may allocate more buffers than requested. Queue only the
+     * requested prefix, whose indices fit camlib's public ownership table. */
+    if (reqbufs.count > V4L2_BUFFER_COUNT) { reqbufs.count = V4L2_BUFFER_COUNT; }
+
     result = memory_allocate(reqbufs.count * sizeof(struct MappedBuffer), &device->buffers_block);
     if (result != CORE_OK) {
+        reqbufs.count = 0;
+        (void)ioctl_ptr(device->fd, VIDIOC_REQBUFS, &reqbufs);
         return result;
     }
     device->buffer_count = reqbufs.count;
@@ -647,6 +716,10 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
             result = last_error();
             goto fail_buffers;
         }
+        if (querybuf.length == 0) {
+            result = CORE_IO_ERROR;
+            goto fail_buffers;
+        }
 
         mapping = mmap(NULL, querybuf.length, PROT_READ | PROT_WRITE, MAP_SHARED, device->fd,
                        (off_t)(u32)querybuf.m);
@@ -660,17 +733,31 @@ ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig
 
     /* Read back the frame rate the driver actually applied: VIDIOC_S_PARM
      * may adjust a rate the hardware cannot produce exactly. */
-    if (ioctl_ptr(device->fd, VIDIOC_G_PARM, &streamparm) == 0 &&
-        streamparm.parm.capture.timeperframe_numerator != 0) {
-        out_actual_config->frames_per_second = streamparm.parm.capture.timeperframe_denominator /
-                                               streamparm.parm.capture.timeperframe_numerator;
-    } else {
-        out_actual_config->frames_per_second = requested_config->frames_per_second;
+    if (ioctl_ptr(device->fd, VIDIOC_G_PARM, &streamparm) != 0) {
+        result = last_error();
+        goto fail_buffers;
     }
+    if (streamparm.parm.capture.timeperframe_numerator == 0 ||
+        streamparm.parm.capture.timeperframe_denominator == 0) {
+        result = CORE_UNSUPPORTED;
+        goto fail_buffers;
+    }
+    out_actual_config->frame_rate_numerator =
+        streamparm.parm.capture.timeperframe_denominator;
+    out_actual_config->frame_rate_denominator =
+        streamparm.parm.capture.timeperframe_numerator;
+    out_actual_config->frames_per_second =
+        out_actual_config->frame_rate_numerator % out_actual_config->frame_rate_denominator == 0 ?
+        out_actual_config->frame_rate_numerator / out_actual_config->frame_rate_denominator : 0;
     out_actual_config->pixel_format = format.fmt.pix.pixelformat;
     out_actual_config->width = format.fmt.pix.width;
     out_actual_config->height = format.fmt.pix.height;
     out_actual_config->max_frame_bytes = format.fmt.pix.sizeimage;
+    if (out_actual_config->width == 0 || out_actual_config->height == 0 ||
+        out_actual_config->max_frame_bytes == 0) {
+        result = CORE_UNSUPPORTED;
+        goto fail_buffers;
+    }
     device->configured = true;
     return CORE_OK;
 
@@ -687,12 +774,16 @@ ErrorCode v4l2_start_capture(V4l2DeviceHandle device)
     if (device == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
-    if (!device->configured) {
+    if (device->device_lost || !device->configured || device->streaming) {
         return CORE_INVALID_STATE;
     }
 
     for (i = 0; i < device->buffer_count; ++i) {
         struct RawV4l2Buffer buf;
+
+        /* A failed start can leave a prefix queued. Retrying must not QBUF
+         * those buffers a second time. */
+        if (buffers_of(device)[i].queued) { continue; }
 
         zero_struct(&buf, sizeof(buf));
         buf.index = (u32)i;
@@ -701,6 +792,7 @@ ErrorCode v4l2_start_capture(V4l2DeviceHandle device)
         if (ioctl_ptr(device->fd, VIDIOC_QBUF, &buf) != 0) {
             return last_error();
         }
+        buffers_of(device)[i].queued = true;
     }
     if (ioctl_ptr(device->fd, VIDIOC_STREAMON, &type_value) != 0) {
         return last_error();
@@ -719,6 +811,12 @@ ErrorCode v4l2_dequeue_buffer(V4l2DeviceHandle device, V4l2DequeueStatus *out_st
     if (device == NULL || out_status == NULL || out_buffer == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
+    if (!device->streaming || !device->configured) {
+        return CORE_INVALID_STATE;
+    }
+    /* Obtain time before consuming a driver-owned buffer. */
+    result = time_monotonic_now(&now);
+    if (result != CORE_OK) { return result; }
 
     zero_struct(&buf, sizeof(buf));
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -729,21 +827,32 @@ ErrorCode v4l2_dequeue_buffer(V4l2DeviceHandle device, V4l2DequeueStatus *out_st
             return CORE_OK;
         }
         if (errno == ENODEV) {
+            /* The driver is gone, so the buffers it had handed out are gone
+             * with it: they can no longer be queued back. Clearing the count
+             * here is what lets v4l2_close() release the handle instead of
+             * refusing with CORE_INVALID_STATE and leaking it. */
+            device->outstanding_count = 0;
+            device->streaming = false;
+            device->device_lost = true;
             *out_status = V4L2_DEQUEUE_STATUS_DEVICE_LOST;
             return CORE_OK;
         }
         return last_error();
     }
 
-    result = time_monotonic_now(&now);
-    if (result != CORE_OK) {
-        return result;
+    if (buf.index >= device->buffer_count ||
+        (usize)buf.bytesused > buffers_of(device)[buf.index].length) {
+        return CORE_IO_ERROR;
     }
+    if (!buffers_of(device)[buf.index].queued) { return CORE_IO_ERROR; }
+
     out_buffer->index = buf.index;
     out_buffer->data.data = buffers_of(device)[buf.index].data;
     out_buffer->data.size = buf.bytesused;
     out_buffer->timestamp = now;
     out_buffer->sequence = buf.sequence;
+    buffers_of(device)[buf.index].queued = false;
+    buffers_of(device)[buf.index].issued = *out_buffer;
     ++device->outstanding_count;
     *out_status = V4L2_DEQUEUE_STATUS_BUFFER_READY;
     return CORE_OK;
@@ -754,6 +863,14 @@ ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer)
     struct RawV4l2Buffer buf;
 
     if (device == NULL || buffer == NULL || buffer->index >= device->buffer_count) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (device->device_lost || !device->streaming) { return CORE_INVALID_STATE; }
+    struct MappedBuffer *mapped = &buffers_of(device)[buffer->index];
+    const V4l2Buffer *issued = &mapped->issued;
+    if (mapped->queued || device->outstanding_count == 0 ||
+        buffer->data.data != issued->data.data || buffer->data.size != issued->data.size ||
+        buffer->timestamp != issued->timestamp || buffer->sequence != issued->sequence) {
         return CORE_INVALID_ARGUMENT;
     }
 
@@ -768,6 +885,7 @@ ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer)
     if (device->outstanding_count > 0) {
         --device->outstanding_count;
     }
+    mapped->queued = true;
     buffer->index = 0;
     buffer->data.data = NULL;
     buffer->data.size = 0;
@@ -783,6 +901,7 @@ ErrorCode v4l2_stop_capture(V4l2DeviceHandle device)
     if (device == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
+    if (device->device_lost) { return CORE_INVALID_STATE; }
     if (device->outstanding_count != 0) {
         return CORE_INVALID_STATE;
     }
@@ -791,7 +910,8 @@ ErrorCode v4l2_stop_capture(V4l2DeviceHandle device)
         u32 type_value = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
         if (ioctl_ptr(device->fd, VIDIOC_STREAMOFF, &type_value) != 0) {
-            result = last_error();
+            /* Keep mappings alive while the driver may still be using them. */
+            return last_error();
         }
         device->streaming = false;
     }

@@ -130,8 +130,21 @@ crt0.o <objects> libpunos_v4l2.a libpunos_time.a libpunos_str.a libpunos_mem.a l
   — `v4l2_stream_config_list_destroy()` then only ever needs
   `configurations->count`, not a separately tracked capacity, to free it
   correctly.
+- **Discrete fractional frame rates** remain exact in
+  `frame_rate_numerator/frame_rate_denominator`. The integer convenience field
+  is zero for `30000/1001`; configuration sends the reciprocal interval to
+  V4L2 and reads back the applied ratio.
+- **A failed QBUF** can leave an outstanding view that prevents normal close.
+  `v4l2_abort()` closes the fd before unmapping and consumes the handle.
 
 ## Tests
+
+Capture lifecycle checks cover a partial QBUF failure followed by a start
+retry, drivers allocating extra buffers, stale/double buffer returns, and
+STREAMOFF failure. Configuring during capture and starting twice are rejected.
+Closing consumes the descriptor before unmapping so DMA cannot target unmapped
+memory. Timestamps are sampled immediately before DQBUF; a clock error therefore
+cannot consume a frame. After DeviceLost, only closing is allowed.
 
 - `tests/abi_compile.c`: `V4L2_BUFFER_COUNT`/`V4L2_MIN_*`, the ABI numbering
   this library chose for the unpinned `V4l2DequeueStatus`, and the layout

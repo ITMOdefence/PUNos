@@ -32,6 +32,13 @@ typedef u32 InputRawCapabilityMask;
 #define INPUT_RAW_CAP_KEY ((InputRawCapabilityMask)1)
 #define INPUT_RAW_CAP_RELATIVE ((InputRawCapabilityMask)2)
 #define INPUT_RAW_CAP_ABSOLUTE ((InputRawCapabilityMask)4)
+/* At least one EV_KEY code in a KEY_* range. KEY_* codes also occur above
+ * BTN_MISC (0x100); classification follows the ranges in
+ * src/key_capabilities.h. */
+#define INPUT_RAW_CAP_KEYBOARD_KEYS ((InputRawCapabilityMask)8)
+/* At least one EV_KEY code in a BTN_* range; codes above BTN_MISC are not
+ * all buttons. */
+#define INPUT_RAW_CAP_POINTER_BUTTONS ((InputRawCapabilityMask)16)
 
 typedef struct InputRawDeviceInfo {
     u16 bus;

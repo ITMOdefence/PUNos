@@ -20,14 +20,15 @@ upstream-ядра Linux** (6.12.111 LTS, x86_64) и запускаемая в QE
 | Syscall Wrappers | Минимальный системный ABI: вызовы через инструкцию `syscall`, thread-local `errno`, без libc и vDSO | Готово |
 | CRT | `_start`, настройка TLS, вызов `main()` и выход | Готово |
 | Boot | `/init` (PID 1) и воспроизводимый initramfs | Готово |
-| System Libs | `libcore`, `libmath`, `libmem`, `librandom`, `libgraphics`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
-| Special Libs | IPC, журналы, камера, устройства ввода, дисплей | Спецификации |
-| System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | Спецификации |
+| System Libs | `libcore`, `libmath`, `libmem`, `libstr`, `libfile`, `libtime`, `libprocess`, `libthread`, `libsync`, `libeventloop`, `libinputdevice`, `libv4l2` | Готово |
+| Special Libs | IPC, журналы, камера, устройства ввода, дисплей | IPC, журналы, камера и устройства ввода готовы; дисплей — спецификация |
+| System Services | `initserv`, `logserv`, `appserv`, `IOserv`, `camserv`, `locationserv`, UI-серверы | initserv, logserv и appserv реализованы и включены в образ; остальные — спецификации |
 | Application Layer | `appframework`, `uilib` | Спецификации |
 
-Сейчас на месте `initserv` стоит smoke-test заглушка: при загрузке она по
-очереди запускает self-test'ы Syscall Wrappers и всех System Libs и печатает
-результат каждого.
+Обычная загрузка запускает настоящий initserv, который открывает путь запуска
+logserv → appserv после подтверждения готовности журнала. Для CI предусмотрен
+отдельный `/init-smoke`: он выполняет self-test'ы, затем запускает тот же
+supervisor и проверяет доступность appserv по IPC.
 
 ## Быстрый старт
 
@@ -45,9 +46,9 @@ upstream-ядра Linux** (6.12.111 LTS, x86_64) и запускаемая в QE
 При нелатинской локали запускайте сборку initramfs как
 `LC_ALL=C ./System/scripts/build-initramfs.sh`.
 
-Успешная загрузка заканчивается строками `PUNos initserv stub: <имя>
-self-test passed` для каждого теста. Проверить загрузку без ручного просмотра
-журнала можно командой `./System/scripts/check-qemu-boot.sh`.
+Обычная загрузка выводит `PUNos initserv: logserv ready` и `services started`.
+Команда `./System/scripts/check-qemu-boot.sh` выбирает проверочный `/init-smoke`,
+проверяет self-test'ы и реальный ответ appserv по IPC.
 
 Тесты на хосте, без QEMU:
 
@@ -55,6 +56,7 @@ self-test passed` для каждого теста. Проверить загр�
 make -C System/NativeRuntime/SyscallWrappers check
 make -C System/NativeRuntime/CRT check
 make -C System/SystemLibs check
+make -C System/SystemServices check
 ```
 
 ## Структура репозитория
@@ -68,6 +70,7 @@ make -C System/SystemLibs check
 │   ├── scripts/            # подготовка, сборка, запуск и проверка в QEMU
 │   ├── NativeRuntime/      # Syscall Wrappers и CRT
 │   ├── SystemLibs/         # System Libs
+│   ├── SystemServices/     # appserv, сборочный реестр и каталог приложений
 │   └── Boot/               # /init и заглушка initserv
 └── .github/workflows/      # CI: тесты, initramfs, ядро, загрузка в QEMU, релизы
 ```
@@ -83,6 +86,8 @@ make -C System/SystemLibs check
   [списка System Services](DevDoc/SystemServices/_ServList.md).
 - [System/SystemLibs/README.md](System/SystemLibs/README.md) — соглашения
   для библиотек и чек-лист добавления новой.
+- [System/SystemServices/README.md](System/SystemServices/README.md) — интеграция
+  appserv, общий сборочный каталог и границы его активации.
 
 Документация и спецификации пишутся на русском, код, комментарии и README
 компонентов — на английском.

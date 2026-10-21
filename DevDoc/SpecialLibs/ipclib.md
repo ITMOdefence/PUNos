@@ -59,9 +59,11 @@
     `IPC_NO_DESCRIPTOR` означает отсутствие дескриптора. При постановке кадра
     в очередь библиотека создаёт собственную `CLOEXEC`-копию исходного fd;
     отправитель сохраняет владение оригиналом.
-15. Payload и optional descriptor, полученные через
-    `ipc_connection_receive()`, принадлежат вызывающему коду и должны быть
-    освобождены ровно один раз через `ipc_message_destroy()`.
+15. Payload, полученный через `ipc_connection_receive()` или
+    `ipc_connection_receive_with_descriptor()`, освобождается через
+    `ipc_message_destroy()`. Дескриптор, возвращённый отдельным параметром
+    `ipc_connection_receive_with_descriptor()`, принадлежит вызывающему коду и
+    должен быть закрыт отдельно.
 16. `ipc_connection_close()` отбрасывает непереданные исходящие сообщения и
     неполный входящий кадр. Для штатного завершения вызывающий код обязан
     вызвать `ipc_connection_flush()` до закрытия.
@@ -85,8 +87,10 @@
 | --- | --- | --- | --- |
 | `0` | `payload_size` | `u32` | Размер payload в байтах, без заголовка |
 | `4` | `message_type` | `u32` | Тип сообщения, определяемый протоколом сервиса |
-| `8` | `descriptor_count` | `u32` | `0` или `1`; сам fd передаётся через `SCM_RIGHTS` |
-| `12` | `payload` | `u8[payload_size]` | Непрозрачные данные сообщения |
+| `8` | `payload` | `u8[payload_size]` | Непрозрачные данные сообщения |
+
+Optional FD передаётся ancillary-данными `SCM_RIGHTS` вместе с первым байтом
+кадра и не изменяет формат заголовка.
 
 ### Состояния соединения
 
@@ -107,7 +111,7 @@
 | `IpcServerHandle` | Непрозрачный указатель: `struct IpcServerHandle *` | `NULL` или открытый сервер | Сервер, ожидающий локальные подключения |
 | `IpcConnectionHandle` | Непрозрачный указатель: `struct IpcConnectionHandle *` | `NULL` или открытое/подключающееся соединение | Двунаправленное IPC-соединение |
 | `IpcMessageType` | `u32` из `libcore` | Определяется протоколом конкретного сервиса | Идентификатор смысла сообщения |
-| `IpcMessage` | Структура: `IpcMessageType type`, `Bytes payload`, `i32 descriptor` | Payload не больше `IPC_MESSAGE_MAX_SIZE`; descriptor равен `IPC_NO_DESCRIPTOR` или открытому fd | Полученное или отправляемое сообщение |
+| `IpcMessage` | Структура: `IpcMessageType type`, `Bytes payload` | Payload не больше `IPC_MESSAGE_MAX_SIZE` | Полученное или отправляемое сообщение; FD передаётся отдельным параметром расширенного API |
 | `IpcConnectionState` | Перечисление | `Connecting`, `Open`, `PeerClosed` | Текущее состояние соединения |
 | `IpcReceiveStatus` | Перечисление | `NoMessage`, `Message`, `PeerClosed` | Результат неблокирующей попытки приёма |
 
@@ -116,7 +120,7 @@
 | Наименование | Значение | Назначение |
 | --- | --- | --- |
 | `IPC_ENDPOINT_MAX_LENGTH` | `107` | Максимальная длина endpoint в байтах без завершающего `NUL` |
-| `IPC_FRAME_HEADER_SIZE` | `12` | Размер заголовка IPC-кадра в байтах |
+| `IPC_FRAME_HEADER_SIZE` | `8` | Размер заголовка IPC-кадра в байтах |
 | `IPC_NO_DESCRIPTOR` | `-1` | В сообщении нет файлового дескриптора |
 | `IPC_MESSAGE_MAX_SIZE` | `1048576` | Максимальный размер payload одного сообщения в байтах |
 | `IPC_OUTGOING_QUEUE_MAX_SIZE` | `4194304` | Максимальный суммарный размер очереди исходящих кадров одного соединения в байтах |
@@ -132,11 +136,16 @@
 | `ipc_connection_begin_connect(endpoint, out_connection)` | `const IpcEndpoint *endpoint`, `IpcConnectionHandle *out_connection` | `ErrorCode` | Создаёт неблокирующее клиентское соединение в состоянии `Connecting` |
 | `ipc_connection_finish_connect(connection, out_state)` | `IpcConnectionHandle connection`, `IpcConnectionState *out_state` | `ErrorCode` | Проверяет `SOL_SOCKET`/`SO_ERROR` через `getsockopt()`; записывает `Open`, если соединение установлено, либо `Connecting`, если ядро ещё не завершило подключение |
 | `ipc_connection_get_fd(connection, out_fd)` | `IpcConnectionHandle connection`, `i32 *out_fd` | `ErrorCode` | Возвращает невладеющий файловый дескриптор соединения для регистрации в event loop |
-| `ipc_connection_send(connection, message)` | `IpcConnectionHandle connection`, `const IpcMessage *message` | `ErrorCode` | Проверяет размер, копирует кадр во внутреннюю исходящую очередь и не передаёт его в сокет непосредственно |
+| `ipc_connection_send(connection, message)` | `IpcConnectionHandle connection`, `const IpcMessage *message` | `ErrorCode` | Ставит обычный кадр без FD в очередь |
+| `ipc_connection_send_with_descriptor(connection, message, descriptor)` | `IpcConnectionHandle connection`, `const IpcMessage *message`, `i32 descriptor` | `ErrorCode` | Ставит кадр и собственную `CLOEXEC`-копию одного FD в очередь |
 | `ipc_connection_flush(connection, out_has_pending)` | `IpcConnectionHandle connection`, `bool *out_has_pending` | `ErrorCode` | Передаёт максимальное доступное число исходящих байтов без блокировки; записывает `true`, если часть очереди ещё ожидает передачи |
-| `ipc_connection_receive(connection, out_status, out_message)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message` | `ErrorCode` | Читает доступные байты, собирает не более одного полного кадра и передаёт его вызывающему коду; при `NoMessage` и `PeerClosed` значение `out_message` не определено |
-| `ipc_message_destroy(message)` | `IpcMessage *message` | `ErrorCode` | Освобождает payload, закрывает полученный descriptor и делает структуру недействительной |
+| `ipc_connection_receive(connection, out_status, out_message)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message` | `ErrorCode` | Принимает кадр без выдачи FD; случайно полученный FD безопасно закрывается |
+| `ipc_connection_receive_with_descriptor(connection, out_status, out_message, out_descriptor)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message`, `i32 *out_descriptor` | `ErrorCode` | Принимает кадр и передаёт владение optional FD вызывающему коду |
+| `ipc_message_destroy(message)` | `IpcMessage *message` | `ErrorCode` | Освобождает payload и обнуляет сообщение; descriptor закрывается его владельцем отдельно |
 | `ipc_connection_close(connection)` | `IpcConnectionHandle *connection` | `ErrorCode` | Закрывает соединение, освобождает внутренние буферы и записывает `NULL` |
+
+Если `bind()` выполнен, а `listen()` завершился ошибкой, операция удаляет
+созданный socket path и закрывает FD до возврата ошибки.
 
 ## Ошибки
 

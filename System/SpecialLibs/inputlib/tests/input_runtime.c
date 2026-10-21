@@ -1,0 +1,531 @@
+/*
+ * Runtime test of the inputlib operations against
+ * DevDoc/SpecialLibs/inputlib.md.
+ *
+ * Each check has its own number; see System/SystemLibs/testing/check.h.
+ *
+ * The test needs a real evdev device, which neither the host build nor the
+ * PUNos initramfs is guaranteed to have. /dev/input/event0 is used when it is
+ * present and openable; otherwise the checks that need a device are skipped
+ * and only the argument validation is verified. That keeps the test honest on
+ * a machine without input devices instead of failing for the wrong reason.
+ *
+ * Check number groups:
+ *   1-5    input_device_open / input_device_close with invalid arguments
+ *   10     a device path that does not exist
+ *   20-32  get_fd, get_info, read_frame, input_frame_destroy on a real device
+ *   40-43  read_frame and input_frame_destroy with invalid arguments
+ */
+
+#define CHECK_TEST_NAME "inputlib"
+#include <check.h>
+
+#include <punos/syscall/syscall.h>
+#include <punos/syscall/constants.h>
+#include <special/input.h>
+#include <sys/memory.h>
+#include <sys/string.h>
+
+#define TEST_DEVICE_PATH "/dev/input/event0"
+
+static String make_str(const char *text)
+{
+    String s;
+    if (string_from_c_str(text, &s) != CORE_OK) {
+        check_fail(250);
+    }
+    return s;
+}
+
+static void destroy_str(String *s)
+{
+    (void)string_destroy(s);
+}
+
+static void test_open_close_errors(void)
+{
+    String path = make_str(TEST_DEVICE_PATH);
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    config.path = &path;
+
+    EXPECT(1, input_device_open(NULL, &device) == CORE_INVALID_ARGUMENT);
+    EXPECT(2, input_device_open(&config, NULL) == CORE_INVALID_ARGUMENT);
+
+    InputDeviceConfig bad_config;
+    bad_config.path = NULL;
+    EXPECT(3, input_device_open(&bad_config, &device) == CORE_INVALID_ARGUMENT);
+
+    EXPECT(4, input_device_close(NULL) == CORE_INVALID_ARGUMENT);
+    {
+        InputDeviceHandle null_device = NULL;
+        EXPECT(5, input_device_close(&null_device) == CORE_INVALID_ARGUMENT);
+    }
+
+    destroy_str(&path);
+}
+
+static void test_open_nonexistent(void)
+{
+    String path = make_str("/dev/input/event999");
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    config.path = &path;
+
+    EXPECT(6, input_device_open(&config, &device) == CORE_NOT_FOUND);
+
+    destroy_str(&path);
+}
+
+static void test_get_fd_and_info(void)
+{
+    String path = make_str(TEST_DEVICE_PATH);
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    config.path = &path;
+
+    ErrorCode result = input_device_open(&config, &device);
+    if (result == CORE_OK) {
+        i32 fd = -1;
+        EXPECT(7, input_device_get_fd(device, &fd) == CORE_OK && fd >= 0);
+        EXPECT(8, input_device_get_fd(NULL, &fd) == CORE_INVALID_ARGUMENT);
+        EXPECT(9, input_device_get_fd(device, NULL) == CORE_INVALID_ARGUMENT);
+
+        InputDeviceInfo info;
+        EXPECT(10, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(11, input_device_get_info(NULL, &info) == CORE_INVALID_ARGUMENT);
+        EXPECT(12, input_device_get_info(device, NULL) == CORE_INVALID_ARGUMENT);
+
+        InputReadStatus status;
+        InputFrame frame;
+        EXPECT(13, input_device_read_frame(device, &status, &frame) == CORE_OK);
+        EXPECT(14, status == INPUT_READ_STATUS_NO_FRAME || status == INPUT_READ_STATUS_FRAME_READY);
+
+        if (status == INPUT_READ_STATUS_FRAME_READY) {
+            EXPECT(15, frame.count > 0);
+            EXPECT(16, input_frame_destroy(&frame) == CORE_OK);
+            EXPECT(17, frame.events == NULL && frame.count == 0);
+        }
+
+        EXPECT(18, input_device_close(&device) == CORE_OK);
+        EXPECT(19, device == NULL);
+    } else {
+        EXPECT(20, result == CORE_NOT_FOUND || result == CORE_PERMISSION_DENIED);
+    }
+
+    destroy_str(&path);
+}
+
+static void test_read_frame_errors(void)
+{
+    String path = make_str(TEST_DEVICE_PATH);
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    config.path = &path;
+
+    ErrorCode result = input_device_open(&config, &device);
+    if (result == CORE_OK) {
+        InputReadStatus status;
+        InputFrame frame;
+
+        EXPECT(21, input_device_read_frame(NULL, &status, &frame) == CORE_INVALID_ARGUMENT);
+        EXPECT(22, input_device_read_frame(device, NULL, &frame) == CORE_INVALID_ARGUMENT);
+        EXPECT(23, input_frame_destroy(NULL) == CORE_INVALID_ARGUMENT);
+
+        EXPECT(24, input_device_close(&device) == CORE_OK);
+    }
+
+    destroy_str(&path);
+}
+
+/* Issue 13: only /dev/input/event* may be opened, and an empty path is not a
+ * path at all. Both must be refused here rather than by the lower layer. */
+static void test_path_validation(void)
+{
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    String empty = make_str("");
+    config.path = &empty;
+    EXPECT(25, input_device_open(&config, &device) == CORE_INVALID_ARGUMENT);
+
+    String wrong_dir = make_str("/dev/video0");
+    config.path = &wrong_dir;
+    EXPECT(26, input_device_open(&config, &device) == CORE_INVALID_PATH);
+
+    String no_digits = make_str("/dev/input/eventX");
+    config.path = &no_digits;
+    EXPECT(27, input_device_open(&config, &device) == CORE_INVALID_PATH);
+
+    String prefix_only = make_str("/dev/input/event");
+    config.path = &prefix_only;
+    EXPECT(28, input_device_open(&config, &device) == CORE_INVALID_PATH);
+
+    InputDeviceConfig null_path;
+    null_path.path = NULL;
+    EXPECT(29, input_device_open(&null_path, &device) == CORE_INVALID_ARGUMENT);
+
+    destroy_str(&empty);
+    destroy_str(&wrong_dir);
+    destroy_str(&no_digits);
+    destroy_str(&prefix_only);
+}
+
+/* Issues 2 and 3: a frame without its SYN_REPORT is not handed over, and the
+ * events read past a returned frame are not thrown away. Both need a real
+ * device, so they only run when one can be opened. */
+/* --- driven through tests/input_device_fake.c, so no device is needed --- */
+
+/* Control surface of the fake. */
+void fake_input_forget(void);
+void fake_input_set_capabilities(InputRawCapabilityMask capabilities);
+void fake_input_queue(const InputRawEvent *events, usize count);
+void fake_input_lose_device(void);
+usize fake_input_pending(void);
+
+#define FAKE_KEY_A ((u16)30)
+#define FAKE_KEY_B ((u16)48)
+
+static InputRawEvent raw_key(u16 code, i32 value)
+{
+    InputRawEvent event;
+
+    event.type = INPUT_RAW_EVENT_KEY;
+    event.code = code;
+    event.value = value;
+    event.timestamp = 0;
+    return event;
+}
+
+static InputRawEvent raw_syn(u16 code)
+{
+    InputRawEvent event;
+
+    event.type = INPUT_RAW_EVENT_SYN;
+    event.code = code;
+    event.value = 0;
+    event.timestamp = 0;
+    return event;
+}
+
+static InputDeviceHandle open_fake_device(void)
+{
+    String path = make_str(TEST_DEVICE_PATH);
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+
+    config.path = &path;
+    (void)input_device_open(&config, &device);
+    destroy_str(&path);
+    return device;
+}
+
+/*
+ * Issue 2: events read without their SYN_REPORT are not a frame. The old code
+ * reset its state at the start of every call and handed the accumulated events
+ * over as soon as a read came back empty, so a caller received a frame that
+ * was never terminated. The partial frame has to survive until the kernel
+ * finishes it.
+ */
+static void test_partial_frame_is_not_handed_over(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+    InputRawEvent events[1];
+
+    EXPECT(30, device != NULL);
+
+    /* KEY_A with no SYN_REPORT yet. */
+    events[0] = raw_key(FAKE_KEY_A, 1);
+    fake_input_queue(events, 1);
+
+    EXPECT(31, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(32, status == INPUT_READ_STATUS_NO_FRAME);
+
+    /* Still nothing new: the same partial frame must not be flushed either. */
+    EXPECT(33, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(34, status == INPUT_READ_STATUS_NO_FRAME);
+
+    /* Now the kernel terminates it, and the earlier KEY_A comes with it. */
+    events[0] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 1);
+
+    EXPECT(35, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(36, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(37, frame.count == 2);
+    EXPECT(38, frame.events[0].kind == INPUT_EVENT_KIND_KEY);
+    EXPECT(39, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(40, frame.events[1].kind == INPUT_EVENT_KIND_SYNC_REPORT);
+    EXPECT(41, input_frame_destroy(&frame) == CORE_OK);
+
+    EXPECT(42, input_device_close(&device) == CORE_OK);
+}
+
+/*
+ * Issue 3: one read can carry several frames. The old code returned as soon as
+ * it saw the first SYN_REPORT and dropped the rest of the batch, so the second
+ * frame never reached the caller. KEY_A/SYN_REPORT/KEY_B/SYN_REPORT must come
+ * back as two frames, in that order, from two calls.
+ */
+static void test_two_frames_in_one_batch(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+    InputRawEvent events[4];
+
+    events[0] = raw_key(FAKE_KEY_A, 1);
+    events[1] = raw_syn(INPUT_RAW_SYN_REPORT);
+    events[2] = raw_key(FAKE_KEY_B, 1);
+    events[3] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 4);
+
+    /* First call: the frame ending at the first SYN_REPORT. */
+    EXPECT(43, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(44, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(45, frame.count == 2);
+    EXPECT(46, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(47, input_frame_destroy(&frame) == CORE_OK);
+
+    /* Second call: the frame that was sitting behind it in the same batch.
+     * With the old code this came back as NoFrame and KEY_B was lost. */
+    EXPECT(48, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(49, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(50, frame.count == 2);
+    EXPECT(51, frame.events[0].code == FAKE_KEY_B);
+    EXPECT(52, input_frame_destroy(&frame) == CORE_OK);
+
+    /* Nothing is left over. */
+    EXPECT(53, fake_input_pending() == 0);
+    EXPECT(54, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(55, status == INPUT_READ_STATUS_NO_FRAME);
+
+    EXPECT(56, input_device_close(&device) == CORE_OK);
+}
+
+/*
+ * Contract 12: after SYN_DROPPED the frame is a single SyncLost event, and the
+ * events the kernel also drops - everything up to the next SYN_REPORT - must
+ * not leak into the next frame.
+ */
+static void test_syn_dropped_discards_until_resync(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+    InputRawEvent events[4];
+
+    events[0] = raw_key(FAKE_KEY_A, 1);
+    events[1] = raw_syn(INPUT_RAW_SYN_DROPPED);
+    events[2] = raw_key(FAKE_KEY_B, 1);
+    events[3] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 4);
+
+    /* The unterminated KEY_A is dropped and reported as SyncLost. */
+    EXPECT(57, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(58, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(59, frame.count == 1);
+    EXPECT(60, frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(61, frame.events[0].code == INPUT_RAW_SYN_DROPPED);
+    EXPECT(62, input_frame_destroy(&frame) == CORE_OK);
+
+    /* KEY_B was after the drop and before the resync, so it belongs to no
+     * frame: this call finds nothing. */
+    EXPECT(63, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(64, status == INPUT_READ_STATUS_NO_FRAME);
+
+    /* Past the resync the device works again. */
+    events[0] = raw_key(FAKE_KEY_A, 1);
+    events[1] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 2);
+
+    EXPECT(65, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(66, status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(67, frame.count == 2);
+    EXPECT(68, frame.events[0].code == FAKE_KEY_A);
+    EXPECT(69, input_frame_destroy(&frame) == CORE_OK);
+
+    EXPECT(70, input_device_close(&device) == CORE_OK);
+}
+
+/* Contract 8: a lost device is reported once, then only close is allowed. */
+static void test_device_lost(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+
+    EXPECT(71, device != NULL);
+
+    fake_input_lose_device();
+    EXPECT(72, input_device_read_frame(device, &status, &frame) == CORE_OK);
+    EXPECT(73, status == INPUT_READ_STATUS_DEVICE_LOST);
+
+    EXPECT(74, input_device_close(&device) == CORE_OK);
+    EXPECT(75, device == NULL);
+}
+
+/*
+ * Issue 14b: a device whose only key codes are buttons must not be reported as
+ * a keyboard, which is what the single INPUT_RAW_CAP_KEY flag used to cause.
+ */
+static void test_device_classes(void)
+{
+    String path = make_str(TEST_DEVICE_PATH);
+    InputDeviceHandle device = NULL;
+    InputDeviceConfig config;
+    InputDeviceInfo info;
+
+    config.path = &path;
+
+    /* Buttons and relative axes: a pointer, not a keyboard. */
+    fake_input_set_capabilities(INPUT_RAW_CAP_KEY | INPUT_RAW_CAP_POINTER_BUTTONS |
+                                INPUT_RAW_CAP_RELATIVE);
+    if (input_device_open(&config, &device) == CORE_OK) {
+        EXPECT(76, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(77, (info.classes & INPUT_DEVICE_POINTER) != 0);
+        EXPECT(78, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
+        EXPECT(79, input_device_close(&device) == CORE_OK);
+    }
+    fake_input_forget();
+
+    /* Key codes below BTN_MISC: a keyboard. */
+    fake_input_set_capabilities(INPUT_RAW_CAP_KEY | INPUT_RAW_CAP_KEYBOARD_KEYS);
+    if (input_device_open(&config, &device) == CORE_OK) {
+        EXPECT(80, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(81, (info.classes & INPUT_DEVICE_KEYBOARD) != 0);
+        EXPECT(82, (info.classes & INPUT_DEVICE_POINTER) == 0);
+        EXPECT(83, input_device_close(&device) == CORE_OK);
+    }
+    fake_input_forget();
+
+    /* Absolute axes: touch. */
+    fake_input_set_capabilities(INPUT_RAW_CAP_ABSOLUTE);
+    if (input_device_open(&config, &device) == CORE_OK) {
+        EXPECT(84, input_device_get_info(device, &info) == CORE_OK);
+        EXPECT(85, (info.classes & INPUT_DEVICE_TOUCH) != 0);
+        EXPECT(86, (info.classes & INPUT_DEVICE_KEYBOARD) == 0);
+        EXPECT(87, input_device_close(&device) == CORE_OK);
+    }
+    fake_input_forget();
+
+    destroy_str(&path);
+}
+
+void fake_input_fail_allocation(void);
+
+static void test_completed_frame_allocation_retry(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputRawEvent events[4] = { raw_key(FAKE_KEY_A, 1), raw_syn(INPUT_RAW_SYN_REPORT),
+                               raw_key(FAKE_KEY_B, 1), raw_syn(INPUT_RAW_SYN_REPORT) };
+    InputFrame frame;
+    InputReadStatus status;
+    fake_input_queue(events, 4);
+    fake_input_fail_allocation();
+    EXPECT(88, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(89, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(90, frame.count == 2 && frame.events[0].code == FAKE_KEY_A);
+    EXPECT(91, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(92, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(93, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(94, input_frame_destroy(&frame) == CORE_OK);
+    events[0] = raw_syn(INPUT_RAW_SYN_DROPPED);
+    events[1] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, 4);
+    fake_input_fail_allocation();
+    EXPECT(95, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(96, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(97, frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(98, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(99, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+               status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(100, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(101, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(102, input_device_close(&device) == CORE_OK);
+}
+
+static void test_overflow_ending_at_syn_report(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputRawEvent events[INPUT_FRAME_MAX_EVENTS + 3];
+    InputReadStatus status;
+    InputFrame frame;
+    for (usize i = 0; i < INPUT_FRAME_MAX_EVENTS; ++i) { events[i] = raw_key(FAKE_KEY_A, 1); }
+    events[INPUT_FRAME_MAX_EVENTS] = raw_syn(INPUT_RAW_SYN_REPORT);
+    events[INPUT_FRAME_MAX_EVENTS + 1] = raw_key(FAKE_KEY_B, 1);
+    events[INPUT_FRAME_MAX_EVENTS + 2] = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(events, INPUT_FRAME_MAX_EVENTS + 3);
+    EXPECT(103, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(104, frame.count == 1 && frame.events[0].kind == INPUT_EVENT_KIND_SYNC_LOST);
+    EXPECT(105, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(106, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY);
+    EXPECT(107, frame.count == 2 && frame.events[0].code == FAKE_KEY_B);
+    EXPECT(108, input_frame_destroy(&frame) == CORE_OK);
+    fake_input_lose_device();
+    EXPECT(109, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_DEVICE_LOST);
+    EXPECT(110, input_device_read_frame(device, &status, &frame) == CORE_INVALID_STATE);
+    InputDeviceInfo info;
+    i32 fd;
+    EXPECT(111, input_device_get_info(device, &info) == CORE_INVALID_STATE);
+    EXPECT(112, input_device_get_fd(device, &fd) == CORE_INVALID_STATE);
+    EXPECT(113, input_device_close(&device) == CORE_OK);
+}
+
+void fake_input_fail_read(void);
+
+static void test_partial_frame_read_failure_retry(void)
+{
+    InputDeviceHandle device = open_fake_device();
+    InputReadStatus status;
+    InputFrame frame;
+    InputRawEvent key = raw_key(FAKE_KEY_A, 1);
+    InputRawEvent report = raw_syn(INPUT_RAW_SYN_REPORT);
+    fake_input_queue(&key, 1);
+    EXPECT(114, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_NO_FRAME);
+    fake_input_queue(&report, 1);
+    fake_input_fail_read();
+    EXPECT(115, input_device_read_frame(device, &status, &frame) == CORE_OUT_OF_MEMORY);
+    EXPECT(116, input_device_read_frame(device, &status, &frame) == CORE_OK &&
+                status == INPUT_READ_STATUS_FRAME_READY && frame.count == 2 &&
+                frame.events[0].code == FAKE_KEY_A);
+    EXPECT(117, input_frame_destroy(&frame) == CORE_OK);
+    EXPECT(118, input_device_close(&device) == CORE_OK);
+}
+
+int main(int argc, char **argv, char **envp)
+{
+    (void)argc;
+    (void)argv;
+    (void)envp;
+
+    test_open_close_errors();
+    test_open_nonexistent();
+    test_get_fd_and_info();
+    test_read_frame_errors();
+    test_path_validation();
+
+    test_partial_frame_is_not_handed_over();
+    test_two_frames_in_one_batch();
+    test_syn_dropped_discards_until_resync();
+    test_device_lost();
+    test_device_classes();
+    test_completed_frame_allocation_retry();
+    test_overflow_ending_at_syn_report();
+    test_partial_frame_read_failure_retry();
+
+    check_passed();
+    return 0;
+}

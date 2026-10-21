@@ -21,22 +21,23 @@ fi
 EXPECTED_LINES=(
     "PUNos init: userspace started"
     "PUNos init: filesystems ready"
-    "PUNos init: initserv started"
     "PUNos initserv stub: smoke-test process is running"
 )
 while IFS= read -r line; do
     EXPECTED_LINES+=("${line}")
 done < <(grep -oE 'PUNos initserv stub: [a-z0-9]+ self-test passed' "${STUB_SOURCE}")
 
-if [[ "${#EXPECTED_LINES[@]}" -le 4 ]]; then
+if [[ "${#EXPECTED_LINES[@]}" -le 3 ]]; then
     echo "No self-tests found in ${STUB_SOURCE}" >&2
     exit 1
 fi
 
+EXPECTED_LINES+=("PUNos init: initserv started" "PUNos initserv: logserv ready" "PUNos initserv: services started" "PUNos services: appserv ready")
+
 mkdir -p "$(dirname -- "${LOG_FILE}")"
 : > "${LOG_FILE}"
 
-"${SCRIPT_DIR}/run-qemu-initramfs.sh" < /dev/null > "${LOG_FILE}" 2>&1 &
+INIT_PATH=/init-smoke "${SCRIPT_DIR}/run-qemu-initramfs.sh" < /dev/null > "${LOG_FILE}" 2>&1 &
 QEMU_PID=$!
 trap 'kill "${QEMU_PID}" 2>/dev/null || true; wait "${QEMU_PID}" 2>/dev/null || true' EXIT
 

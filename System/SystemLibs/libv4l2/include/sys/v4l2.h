@@ -13,6 +13,8 @@
  * capture, read/write I/O and multi-planar formats are not. The only
  * syscall wrappers used are open(), close(), ioctl(), mmap() and munmap().
  * All operations return ErrorCode; see <sys/core.h> for the conventions.
+ * After DeviceLost, only v4l2_close() or v4l2_abort() is allowed. Capture configuration and
+ * enumeration are refused while streaming; starting twice is refused too.
  */
 
 #include <sys/core.h>
@@ -34,7 +36,10 @@ typedef u32 V4l2PixelFormat;
  * 0 is valid only in a request (v4l2_configure_capture()'s requested_config,
  * where max_frame_bytes must be 0); the actual configuration returned by
  * v4l2_configure_capture() and by v4l2_get_capture_configurations() always
- * has a positive max_frame_bytes.
+ * has a positive max_frame_bytes. The exact frame rate is
+ * frame_rate_numerator / frame_rate_denominator. Both are zero in a legacy
+ * integer-FPS request; returned configurations always fill both. The legacy
+ * frames_per_second is zero when the exact rate is fractional.
  */
 typedef struct V4l2StreamConfig {
     V4l2PixelFormat pixel_format;
@@ -42,6 +47,8 @@ typedef struct V4l2StreamConfig {
     u32 height;
     u32 frames_per_second;
     u32 max_frame_bytes;
+    u32 frame_rate_numerator;
+    u32 frame_rate_denominator;
 } V4l2StreamConfig;
 
 /* Owning array released with v4l2_stream_config_list_destroy(). */
@@ -73,7 +80,7 @@ typedef enum V4l2DequeueStatus {
 #define V4L2_MIN_HEIGHT ((u32)1)
 #define V4L2_MIN_FRAMES_PER_SECOND ((u32)1)
 
-_Static_assert(sizeof(V4l2StreamConfig) == 20, "V4l2StreamConfig ABI mismatch");
+_Static_assert(sizeof(V4l2StreamConfig) == 28, "V4l2StreamConfig ABI mismatch");
 _Static_assert(sizeof(V4l2Buffer) == 40, "V4l2Buffer ABI mismatch"); /* index(4)+pad(4)+Bytes(16)+timestamp(8)+sequence(8) */
 _Static_assert(sizeof(V4l2DequeueStatus) == 4, "V4l2DequeueStatus ABI mismatch");
 
@@ -128,7 +135,9 @@ ErrorCode v4l2_stream_config_list_destroy(V4l2StreamConfigList *configurations);
  * out_actual_config is invalid, or requested_config's fields are out of
  * range (contract 11); CORE_INVALID_STATE if a V4l2Buffer from this device
  * is still outstanding (contract 9); codes from core_error_from_errno() for
- * an unexpected ioctl()/mmap() failure; errors of libmem.
+ * an unexpected ioctl()/mmap() failure; errors of libmem. A request may set
+ * the exact numerator and denominator, or leave both zero and specify an
+ * integer frames_per_second.
  */
 ErrorCode v4l2_configure_capture(V4l2DeviceHandle device, const V4l2StreamConfig *requested_config,
                                  V4l2StreamConfig *out_actual_config);
@@ -160,13 +169,16 @@ ErrorCode v4l2_dequeue_buffer(V4l2DeviceHandle device, V4l2DequeueStatus *out_st
  * *buffer to an invalid, empty V4l2Buffer (its data no longer usable).
  *
  * Errors: CORE_INVALID_ARGUMENT if device or buffer is NULL, or
- * buffer->index is out of range for device; codes from
+ * buffer->index is out of range, or its fields do not match an outstanding
+ * buffer issued by this device; CORE_INVALID_STATE if not streaming; codes from
  * core_error_from_errno() for an unexpected ioctl() failure.
  */
 ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer);
 
 /*
  * Stops streaming and releases the MMAP buffers.
+ * A STREAMOFF failure retains the mappings because DMA may still be active.
+ * A subsequent cleanup failure may consume them; close the device on error.
  *
  * Errors: CORE_INVALID_ARGUMENT if device is NULL; CORE_INVALID_STATE if a
  * V4l2Buffer from this device is still outstanding (contract 9); codes
@@ -175,7 +187,7 @@ ErrorCode v4l2_queue_buffer(V4l2DeviceHandle device, V4l2Buffer *buffer);
 ErrorCode v4l2_stop_capture(V4l2DeviceHandle device);
 
 /*
- * Closes device: unmaps any MMAP buffers, closes the file descriptor,
+ * Closes device: closes the file descriptor to stop DMA, unmaps MMAP buffers,
  * releases internal state and sets *device to NULL.
  *
  * Errors: CORE_INVALID_ARGUMENT if device or *device is NULL;
@@ -184,5 +196,10 @@ ErrorCode v4l2_stop_capture(V4l2DeviceHandle device);
  * close()/munmap() failure (the handle is still released).
  */
 ErrorCode v4l2_close(V4l2DeviceHandle *device);
+
+/* Emergency shutdown after a buffer cannot be queued. Closes the fd before
+ * unmapping, invalidates outstanding buffers and consumes the handle even if
+ * close()/munmap() reports an error. Never access issued buffer views again. */
+ErrorCode v4l2_abort(V4l2DeviceHandle *device);
 
 #endif

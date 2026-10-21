@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEM_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 KERNEL_IMAGE="${SYSTEM_DIR}/linux-build/arch/x86/boot/bzImage"
 INITRAMFS_IMAGE="${SYSTEM_DIR}/images/punos-initramfs.cpio.gz"
+INIT_PATH="${INIT_PATH:-/init}"
+if [[ "${INIT_PATH}" != "/init" && "${INIT_PATH}" != "/init-smoke" ]]; then
+    echo "INIT_PATH must be /init or /init-smoke" >&2; exit 1
+fi
 
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "Required command is not installed: qemu-system-x86_64" >&2
@@ -32,6 +36,6 @@ exec qemu-system-x86_64 \
     -m 512M \
     -kernel "${KERNEL_IMAGE}" \
     -initrd "${INITRAMFS_IMAGE}" \
-    -append "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 rdinit=/init panic=-1" \
+    -append "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 rdinit=${INIT_PATH} panic=-1" \
     -nographic \
     -no-reboot

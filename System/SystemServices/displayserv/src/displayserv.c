@@ -5,6 +5,7 @@
 #include <special/ipc.h>
 #include <sys/eventloop.h>
 #include <sys/memory.h>
+#include <punos/syscall/syscall.h>
 
 #define DISPLAY_SERVICE_CLIENT_MAX ((usize)16)
 #define DISPLAY_SERVICE_EVENT_MAX ((usize)32)
@@ -113,7 +114,7 @@ static ErrorCode queue_payload(DisplayServiceHandle service,
                                DisplayClient *client, IpcMessageType type,
                                u8 *data, usize size)
 {
-    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result = ipc_connection_send(client->connection, &message);
 
@@ -351,7 +352,8 @@ static ErrorCode handle_configure(DisplayServiceHandle service,
 }
 
 static ErrorCode handle_present(DisplayServiceHandle service,
-                                DisplayClient *client, IpcMessage *message)
+                                DisplayClient *client, IpcMessage *message,
+                                i32 *descriptor_fd)
 {
     GuiDisplayPresentRequest request;
     DisplayFrameDescriptor descriptor;
@@ -360,7 +362,8 @@ static ErrorCode handle_present(DisplayServiceHandle service,
     DisplayFrameHandle frame;
     usize slot;
     usize index;
-    ErrorCode result = gui_decode_display_present(message, &request);
+    ErrorCode result = gui_decode_display_present(message, *descriptor_fd,
+                                                   &request);
 
     if (result != CORE_OK) return result;
     if (!client->presenter) {
@@ -388,12 +391,12 @@ static ErrorCode handle_present(DisplayServiceHandle service,
     descriptor.format = request.pixel_format;
     descriptor.byte_size = request.byte_size;
     result = display_frame_import(service->backend, &descriptor,
-                                  message->descriptor, &frame);
+                                  *descriptor_fd, &frame);
     if (result != CORE_OK) {
         return send_basic(service, client, GUI_DISPLAY_PRESENT_RESULT,
                           request.prefix.request_id, result);
     }
-    message->descriptor = IPC_NO_DESCRIPTOR;
+    *descriptor_fd = IPC_NO_DESCRIPTOR;
     for (index = 0; index < request.damage_count; ++index) {
         rects[index].x = request.damage[index].x;
         rects[index].y = request.damage[index].y;
@@ -421,15 +424,20 @@ static ErrorCode handle_present(DisplayServiceHandle service,
 }
 
 static ErrorCode dispatch(DisplayServiceHandle service, DisplayClient *client,
-                          IpcMessage *message)
+                          IpcMessage *message, i32 *descriptor_fd)
 {
+    if (message->type != GUI_DISPLAY_PRESENT &&
+        *descriptor_fd != IPC_NO_DESCRIPTOR) {
+        return CORE_INVALID_ARGUMENT;
+    }
     switch (message->type) {
     case GUI_DISPLAY_LIST: return handle_list(service, client, message);
     case GUI_DISPLAY_GET_STATE: return handle_get_state(service, client, message);
     case GUI_DISPLAY_SUBSCRIBE: return handle_subscribe(service, client, message);
     case GUI_DISPLAY_BIND_PRESENTER: return handle_bind(service, client, message);
     case GUI_DISPLAY_CONFIGURE: return handle_configure(service, client, message);
-    case GUI_DISPLAY_PRESENT: return handle_present(service, client, message);
+    case GUI_DISPLAY_PRESENT:
+        return handle_present(service, client, message, descriptor_fd);
     default: return CORE_UNSUPPORTED;
     }
 }
@@ -601,19 +609,23 @@ static ErrorCode service_client_event(DisplayServiceHandle service,
         while (client->connection != NULL) {
             IpcReceiveStatus status;
             IpcMessage message;
-            ErrorCode result = ipc_connection_receive(client->connection,
-                                                       &status, &message);
+            i32 descriptor_fd = IPC_NO_DESCRIPTOR;
+            ErrorCode result = ipc_connection_receive_with_descriptor(
+                client->connection, &status, &message, &descriptor_fd);
             if (result != CORE_OK) {
                 remove_client(service, client);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 remove_client(service, client);
                 break;
             }
-            result = dispatch(service, client, &message);
+            result = dispatch(service, client, &message, &descriptor_fd);
             (void)ipc_message_destroy(&message);
+            if (descriptor_fd != IPC_NO_DESCRIPTOR) {
+                (void)close(descriptor_fd);
+            }
             if (result != CORE_OK) {
                 remove_client(service, client);
                 return CORE_OK;

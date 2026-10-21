@@ -1,12 +1,7 @@
-LIBRARIES := ipclib displaylib
+# Builds and tests every Special Lib. Libraries are listed in dependency order.
+LIBS := ipclib loglib inputlib camlib displaylib
 
 .PHONY: all check clean
 
-all:
-	@set -e; for library in $(LIBRARIES); do $(MAKE) -C $$library all; done
-
-check:
-	@set -e; for library in $(LIBRARIES); do $(MAKE) -C $$library check; done
-
-clean:
-	@set -e; for library in $(LIBRARIES); do $(MAKE) -C $$library clean; done
+all check clean:
+	@set -e; for lib in $(LIBS); do $(MAKE) -C $$lib $@; done

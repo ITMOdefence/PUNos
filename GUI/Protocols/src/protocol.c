@@ -355,7 +355,7 @@ ErrorCode gui_encode_buffer_import(const GuiBufferImportRequest *request,
     return CORE_OK;
 }
 
-ErrorCode gui_decode_buffer_import(const IpcMessage *message,
+ErrorCode gui_decode_buffer_import(const IpcMessage *message, i32 descriptor,
                                    GuiBufferImportRequest *out_request)
 {
     ErrorCode result;
@@ -363,7 +363,7 @@ ErrorCode gui_decode_buffer_import(const IpcMessage *message,
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SURFACE_BUFFER_IMPORT ||
         message->payload.data == NULL || message->payload.size != BUFFER_IMPORT_SIZE ||
-        message->descriptor < 0) {
+        descriptor < 0) {
         return CORE_INVALID_ARGUMENT;
     }
     result = decode_prefix(message->payload.data, &out_request->prefix);
@@ -432,8 +432,7 @@ ErrorCode gui_decode_surface_damage(const IpcMessage *message,
     ErrorCode result;
 
     if (message == NULL || out_request == NULL ||
-        message->type != GUI_SURFACE_DAMAGE || message->descriptor != IPC_NO_DESCRIPTOR ||
-        message->payload.data == NULL || message->payload.size < SURFACE_DAMAGE_BASE_SIZE) {
+        message->type != GUI_SURFACE_DAMAGE || message->payload.data == NULL || message->payload.size < SURFACE_DAMAGE_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
     out_request->rect_count = get_u16(message->payload.data + 22);
@@ -482,7 +481,7 @@ ErrorCode gui_decode_surface_id_request(const IpcMessage *message,
     ErrorCode result;
 
     if (message == NULL || out_request == NULL || message->type != expected_type ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != SURFACE_ID_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -520,7 +519,7 @@ ErrorCode gui_decode_buffer_id_request(const IpcMessage *message,
     ErrorCode result;
 
     if (message == NULL || out_request == NULL || message->type != expected_type ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != BUFFER_ID_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -559,7 +558,7 @@ ErrorCode gui_decode_surface_attach(const IpcMessage *message,
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SURFACE_ATTACH ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != SURFACE_ATTACH_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -599,7 +598,7 @@ ErrorCode gui_decode_surface_frame_request(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SURFACE_REQUEST_FRAME ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != SURFACE_FRAME_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -639,7 +638,7 @@ ErrorCode gui_decode_surface_commit(const IpcMessage *message,
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SURFACE_COMMIT ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != SURFACE_COMMIT_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -702,7 +701,6 @@ ErrorCode gui_decode_surface_region(const IpcMessage *message,
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SURFACE_SET_OPAQUE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size < SURFACE_REGION_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -770,7 +768,6 @@ ErrorCode gui_decode_surface_create_result(
 
     if (message == NULL || out_result == NULL ||
         message->type != GUI_SURFACE_CREATE_RESULT ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SURFACE_CREATE_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -825,7 +822,6 @@ ErrorCode gui_decode_buffer_import_result(
 {
     if (message == NULL || out_result == NULL ||
         message->type != GUI_SURFACE_BUFFER_IMPORT_RESULT ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != BUFFER_IMPORT_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -863,7 +859,6 @@ ErrorCode gui_decode_surface_frame_done(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_SURFACE_FRAME_DONE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SURFACE_FRAME_DONE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -896,7 +891,6 @@ ErrorCode gui_decode_buffer_released(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_SURFACE_BUFFER_RELEASED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != BUFFER_RELEASED_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -930,7 +924,6 @@ ErrorCode gui_decode_surface_output_event(
     if (message == NULL || out_event == NULL || message->type != expected_type ||
         (expected_type != GUI_SURFACE_OUTPUT_ENTER &&
          expected_type != GUI_SURFACE_OUTPUT_LEAVE) ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SURFACE_OUTPUT_EVENT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -963,7 +956,6 @@ ErrorCode gui_decode_surface_redraw(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_SURFACE_FULL_REDRAW ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SURFACE_REDRAW_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1027,7 +1019,7 @@ ErrorCode gui_encode_display_present(const GuiDisplayPresentRequest *request,
     return CORE_OK;
 }
 
-ErrorCode gui_decode_display_present(const IpcMessage *message,
+ErrorCode gui_decode_display_present(const IpcMessage *message, i32 descriptor,
                                      GuiDisplayPresentRequest *out_request)
 {
     usize expected;
@@ -1035,7 +1027,7 @@ ErrorCode gui_decode_display_present(const IpcMessage *message,
     ErrorCode result;
 
     if (message == NULL || out_request == NULL ||
-        message->type != GUI_DISPLAY_PRESENT || message->descriptor < 0 ||
+        message->type != GUI_DISPLAY_PRESENT || descriptor < 0 ||
         message->payload.data == NULL || message->payload.size < DISPLAY_PRESENT_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1102,7 +1094,6 @@ ErrorCode gui_decode_presenter_bind(const IpcMessage *message,
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_DISPLAY_BIND_PRESENTER ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != PRESENTER_BIND_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1156,7 +1147,6 @@ ErrorCode gui_decode_display_configure(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_DISPLAY_CONFIGURE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != DISPLAY_CONFIGURE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1200,7 +1190,6 @@ ErrorCode gui_decode_basic_result(const IpcMessage *message,
                                   GuiBasicResult *out_result)
 {
     if (message == NULL || out_result == NULL || message->type != expected_type ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != BASIC_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1234,7 +1223,7 @@ ErrorCode gui_decode_display_presented(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_DISPLAY_PRESENTED ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != DISPLAY_PRESENTED_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1269,7 +1258,7 @@ ErrorCode gui_decode_display_present_failed(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_DISPLAY_PRESENT_FAILED ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != DISPLAY_PRESENT_FAILED_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1305,7 +1294,7 @@ ErrorCode gui_decode_display_backend_lost(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_DISPLAY_BACKEND_LOST ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != DISPLAY_BACKEND_LOST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1340,7 +1329,7 @@ ErrorCode gui_decode_versioned_request(const IpcMessage *message,
                                        GuiRequestPrefix *out_prefix)
 {
     if (message == NULL || out_prefix == NULL || message->type != expected_type ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != VERSIONED_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1373,8 +1362,7 @@ ErrorCode gui_decode_display_id_request(const IpcMessage *message,
 {
     ErrorCode result;
     if (message == NULL || out_prefix == NULL || out_display_id == NULL ||
-        message->type != expected_type || message->descriptor != IPC_NO_DESCRIPTOR ||
-        message->payload.data == NULL ||
+        message->type != expected_type || message->payload.data == NULL ||
         message->payload.size != DISPLAY_ID_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1498,7 +1486,7 @@ ErrorCode gui_decode_display_list_header(const IpcMessage *message,
 
     if (message == NULL || out_header == NULL || out_first_display == NULL ||
         message->type != GUI_DISPLAY_LIST_RESULT ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size < DISPLAY_LIST_FIXED_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1593,8 +1581,7 @@ ErrorCode gui_decode_display_info_result(const IpcMessage *message,
     ErrorCode result;
 
     if (message == NULL || out_result == NULL || out_info == NULL ||
-        message->type != expected_type || message->descriptor != IPC_NO_DESCRIPTOR ||
-        message->payload.data == NULL || message->payload.size < BASIC_RESULT_SIZE) {
+        message->type != expected_type || message->payload.data == NULL || message->payload.size < BASIC_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
     out_result->error = (ErrorCode)get_u32(message->payload.data);
@@ -1650,7 +1637,7 @@ ErrorCode gui_decode_display_info_event(const IpcMessage *message,
         message->type != expected_type ||
         (expected_type != GUI_DISPLAY_ADDED &&
          expected_type != GUI_DISPLAY_CHANGED) ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size < 8 + DISPLAY_INFO_FIXED_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1685,7 +1672,7 @@ ErrorCode gui_decode_display_removed(const IpcMessage *message,
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_DISPLAY_REMOVED ||
-        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.data == NULL ||
         message->payload.size != DISPLAY_REMOVED_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -1735,7 +1722,6 @@ ErrorCode gui_decode_io_subscribe(
 {
     if (message == NULL || out_request == NULL ||
         message->type != GUI_IO_SUBSCRIBE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != IO_SUBSCRIBE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1769,7 +1755,6 @@ ErrorCode gui_decode_io_result(const IpcMessage *message,
         message->type != expected_type ||
         (expected_type != GUI_IO_SUBSCRIBE_RESULT &&
          expected_type != GUI_IO_UNSUBSCRIBE_RESULT) ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != IO_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1805,7 +1790,6 @@ ErrorCode gui_decode_io_device_event(
         message->type != expected_type ||
         (expected_type != GUI_IO_DEVICE_ADDED &&
          expected_type != GUI_IO_DEVICE_REMOVED) ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != IO_DEVICE_EVENT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1863,7 +1847,6 @@ ErrorCode gui_decode_io_input_frame(
 
     if (message == NULL || out_event == NULL ||
         message->type != GUI_IO_INPUT_FRAME ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size < IO_INPUT_FRAME_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1947,7 +1930,6 @@ ErrorCode gui_decode_controller_bind(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_COMPOSITOR_BIND_CONTROLLER ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != CONTROLLER_BIND_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -1999,7 +1981,6 @@ ErrorCode gui_decode_scene_bind(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_BIND_WINDOW ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SCENE_BIND_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2055,7 +2036,6 @@ ErrorCode gui_decode_scene_geometry(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_SET_GEOMETRY ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SCENE_GEOMETRY_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2109,7 +2089,6 @@ ErrorCode gui_decode_scene_visibility(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_SET_VISIBILITY ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SCENE_VISIBILITY_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2161,7 +2140,6 @@ ErrorCode gui_decode_scene_stack(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_SET_STACK ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SCENE_STACK_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2213,7 +2191,6 @@ ErrorCode gui_decode_scene_output(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_SET_OUTPUT ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SCENE_OUTPUT_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2256,7 +2233,6 @@ ErrorCode gui_decode_scene_window(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SCENE_REMOVE_WINDOW ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SCENE_WINDOW_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2294,7 +2270,6 @@ ErrorCode gui_decode_scene_binding_lost(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_SCENE_BINDING_LOST ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != SCENE_BINDING_LOST_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2441,7 +2416,6 @@ ErrorCode gui_decode_window_create(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_CREATE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size < WINDOW_CREATE_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2494,7 +2468,6 @@ ErrorCode gui_decode_window_create_result(
 {
     if (message == NULL || out_result == NULL ||
         message->type != GUI_WINDOW_CREATE_RESULT ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_CREATE_RESULT_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2535,7 +2508,6 @@ ErrorCode gui_decode_window_id_request(
     ErrorCode result;
 
     if (message == NULL || out_request == NULL || message->type != expected_type ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_ID_REQUEST_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2589,7 +2561,6 @@ ErrorCode gui_decode_window_set_title(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_SET_TITLE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size < WINDOW_SET_TITLE_BASE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2644,7 +2615,6 @@ ErrorCode gui_decode_window_ack_configure(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_ACK_CONFIGURE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_ACK_CONFIGURE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2683,7 +2653,6 @@ ErrorCode gui_decode_window_modal(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_SET_MODAL ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_MODAL_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2729,7 +2698,6 @@ ErrorCode gui_decode_window_surface_rebind(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_SURFACE_REBIND ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_SURFACE_REBIND_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2773,7 +2741,6 @@ ErrorCode gui_decode_shell_bind(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_BIND_SHELL ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SHELL_BIND_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2838,7 +2805,6 @@ ErrorCode gui_decode_shell_insets(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SHELL_SET_INSETS ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SHELL_INSETS_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2879,7 +2845,6 @@ ErrorCode gui_decode_shell_navigate(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_SHELL_NAVIGATE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != SHELL_NAVIGATE_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -2920,7 +2885,6 @@ ErrorCode gui_decode_window_close_response(
 
     if (message == NULL || out_request == NULL ||
         message->type != GUI_WINDOW_RESPOND_CLOSE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_CLOSE_RESPONSE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -2964,7 +2928,6 @@ ErrorCode gui_decode_window_configure(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_CONFIGURE ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_CONFIGURE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -3008,7 +2971,6 @@ ErrorCode gui_decode_window_lifecycle(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_LIFECYCLE_CHANGED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_LIFECYCLE_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -3042,7 +3004,6 @@ ErrorCode gui_decode_window_close_event(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_CLOSE_REQUESTED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != WINDOW_CLOSE_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -3074,7 +3035,6 @@ ErrorCode gui_decode_window_visibility(
 
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_VISIBILITY_CHANGED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_VISIBILITY_SIZE) {
         return CORE_INVALID_ARGUMENT;
@@ -3114,7 +3074,6 @@ ErrorCode gui_decode_window_pointer(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_POINTER ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != WINDOW_POINTER_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -3157,7 +3116,6 @@ ErrorCode gui_decode_window_key(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_KEY ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != WINDOW_KEY_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -3197,7 +3155,6 @@ ErrorCode gui_decode_window_touch(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_TOUCH ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != WINDOW_TOUCH_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -3233,7 +3190,6 @@ ErrorCode gui_decode_window_service_event(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_RENDERING_SUSPENDED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL || message->payload.size != WINDOW_SERVICE_SIZE) {
         return CORE_INVALID_ARGUMENT;
     }
@@ -3265,7 +3221,6 @@ ErrorCode gui_decode_window_navigation(
 {
     if (message == NULL || out_event == NULL ||
         message->type != GUI_WINDOW_NAVIGATION_REQUESTED ||
-        message->descriptor != IPC_NO_DESCRIPTOR ||
         message->payload.data == NULL ||
         message->payload.size != WINDOW_NAVIGATION_SIZE) {
         return CORE_INVALID_ARGUMENT;

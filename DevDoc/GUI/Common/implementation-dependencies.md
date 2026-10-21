@@ -124,9 +124,10 @@ Syscall Wrappers предоставляет `getrandom()`, а `librandom` пол
 | Владелец | Системная команда, `initserv`/`appserv` |
 | Потребители | Весь GUI stack |
 
-Текущий `initserv` уже генерирует `PresenterToken`, запускает и перезапускает
-`displayserv`. `compositorserv`, `windowserv` и общий readiness-протокол пока
-отсутствуют. Нужен полный порядок:
+Текущий `initserv` генерирует startup tokens, запускает и перезапускает
+`displayserv`, `compositorserv` и `windowserv` в порядке реестра. Общий
+readiness-протокол пока отсутствует: зависимый сервис восстанавливает связь
+через собственный reconnect/restart. Целевой порядок подтверждённой готовности:
 
 ```text
 logserv

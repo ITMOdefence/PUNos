@@ -12,25 +12,25 @@ static ErrorCode connect_client(const String *endpoint,
                                 WindowServiceHandle service,
                                 IpcConnectionHandle *out_client)
 {
-    IpcConnectionState state = IPC_CONNECTION_CONNECTING;
+    IpcConnectionState state = IPC_CONNECTION_STATE_CONNECTING;
     usize attempt;
     ErrorCode result = ipc_connection_begin_connect(endpoint, out_client);
 
     if (result != CORE_OK) return result;
-    for (attempt = 0; attempt < 1000 && state == IPC_CONNECTION_CONNECTING;
+    for (attempt = 0; attempt < 1000 && state == IPC_CONNECTION_STATE_CONNECTING;
          ++attempt) {
         result = window_service_poll(service, 0);
         if (result != CORE_OK) return result;
         result = ipc_connection_finish_connect(*out_client, &state);
         if (result != CORE_OK) return result;
     }
-    return state == IPC_CONNECTION_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
+    return state == IPC_CONNECTION_STATE_OPEN ? CORE_OK : CORE_WOULD_BLOCK;
 }
 
 static ErrorCode send_message(IpcConnectionHandle client, IpcMessageType type,
                               u8 *payload, usize size)
 {
-    IpcMessage message = { type, 0, { payload, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { payload, size } };
     bool pending;
     ErrorCode result = ipc_connection_send(client, &message);
 
@@ -66,8 +66,8 @@ static ErrorCode receive_message_type(WindowServiceHandle service,
         if (result != CORE_OK) return result;
         result = ipc_connection_receive(client, &status, &message);
         if (result != CORE_OK) return result;
-        if (status == IPC_RECEIVE_PEER_CLOSED) return CORE_IO_ERROR;
-        if (status == IPC_RECEIVE_NO_MESSAGE) continue;
+        if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_IO_ERROR;
+        if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) continue;
         if (message.type == type) {
             *out_message = message;
             return CORE_OK;
@@ -90,8 +90,8 @@ static ErrorCode receive_visibility_for(WindowServiceHandle service,
         if (result != CORE_OK) return result;
         result = ipc_connection_receive(client, &status, &message);
         if (result != CORE_OK) return result;
-        if (status == IPC_RECEIVE_PEER_CLOSED) return CORE_IO_ERROR;
-        if (status == IPC_RECEIVE_NO_MESSAGE) continue;
+        if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) return CORE_IO_ERROR;
+        if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) continue;
         if (message.type == GUI_WINDOW_VISIBILITY_CHANGED) {
             GuiWindowVisibilityEvent event;
             result = gui_decode_window_visibility(&message, &event);
@@ -640,7 +640,7 @@ static void test_scene_policy_create_and_pending_destroy(void)
     EXPECT(198, gui_decode_scene_geometry(&message, &geometry) == CORE_OK);
     EXPECT(199, ipc_message_destroy(&message) == CORE_OK);
     EXPECT(200, ipc_connection_receive(app, &status, &message) == CORE_OK &&
-                status == IPC_RECEIVE_NO_MESSAGE);
+                status == IPC_RECEIVE_STATUS_NO_MESSAGE);
     EXPECT(201, send_basic_message(compositor_peer, GUI_SCENE_RESULT,
                                    CORE_OK,
                                    geometry.prefix.request_id) == CORE_OK);
@@ -720,7 +720,7 @@ static void test_scene_policy_create_and_pending_destroy(void)
     EXPECT(235, send_message(app, GUI_WINDOW_DESTROY, payload, size) == CORE_OK);
     EXPECT(236, window_service_poll(service, 0) == CORE_OK);
     EXPECT(237, ipc_connection_receive(app, &status, &message) == CORE_OK &&
-                status == IPC_RECEIVE_NO_MESSAGE);
+                status == IPC_RECEIVE_STATUS_NO_MESSAGE);
     EXPECT(238, send_basic_message(compositor_peer, GUI_SCENE_RESULT,
                                    CORE_OK,
                                    geometry.prefix.request_id) == CORE_OK);
@@ -907,7 +907,7 @@ static void test_scene_update_error_suspends_and_removes(void)
                                   scene_remove.prefix.request_id) == CORE_OK);
     EXPECT(53, window_service_poll(service, 0) == CORE_OK);
     EXPECT(54, ipc_connection_receive(compositor_peer, &status, &message) ==
-               CORE_OK && status == IPC_RECEIVE_NO_MESSAGE);
+               CORE_OK && status == IPC_RECEIVE_STATUS_NO_MESSAGE);
 
     EXPECT(55, ipc_connection_close(&app) == CORE_OK);
     EXPECT(56, ipc_connection_close(&compositor_peer) == CORE_OK);

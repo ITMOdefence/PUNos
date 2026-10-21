@@ -372,7 +372,7 @@ static ErrorCode queue_payload(WindowServiceHandle service,
                                WindowClient *client, IpcMessageType type,
                                u8 *data, usize size)
 {
-    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result;
 
@@ -496,7 +496,7 @@ static ErrorCode compositor_update_interest(WindowServiceHandle service,
 static ErrorCode compositor_queue(WindowServiceHandle service,
                                   IpcMessageType type, u8 *data, usize size)
 {
-    IpcMessage message = { type, 0, { data, size }, IPC_NO_DESCRIPTOR, 0 };
+    IpcMessage message = { type, { data, size } };
     bool pending;
     ErrorCode result;
 
@@ -1732,10 +1732,7 @@ static ErrorCode compositor_send_bind(WindowServiceHandle service)
         (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
     message.type = GUI_COMPOSITOR_BIND_CONTROLLER;
-    message.reserved = 0;
     message.payload = (Bytes){ payload, size };
-    message.descriptor = IPC_NO_DESCRIPTOR;
-    message.descriptor_reserved = 0;
     result = ipc_connection_send(service->compositor_connection, &message);
     if (result != CORE_OK) return result;
     result = ipc_connection_flush(service->compositor_connection, &pending);
@@ -2137,7 +2134,7 @@ static ErrorCode handle_compositor_event(WindowServiceHandle service,
                 compositor_suspend(service);
                 return CORE_OK;
             }
-            if (state == IPC_CONNECTION_OPEN) {
+            if (state == IPC_CONNECTION_STATE_OPEN) {
                 result = compositor_send_bind(service);
                 if (result != CORE_OK) compositor_suspend(service);
             }
@@ -2163,8 +2160,8 @@ static ErrorCode handle_compositor_event(WindowServiceHandle service,
                 compositor_suspend(service);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 compositor_suspend(service);
                 break;
             }
@@ -2230,10 +2227,7 @@ static ErrorCode io_send_subscribe(WindowServiceHandle service)
         (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
     message.type = GUI_IO_SUBSCRIBE;
-    message.reserved = 0;
     message.payload = (Bytes){ payload, size };
-    message.descriptor = IPC_NO_DESCRIPTOR;
-    message.descriptor_reserved = 0;
     result = ipc_connection_send(service->io_connection, &message);
     if (result != CORE_OK) return result;
     result = ipc_connection_flush(service->io_connection, &pending);
@@ -2750,7 +2744,7 @@ static ErrorCode handle_io_event(WindowServiceHandle service, EventMask mask)
                 io_suspend(service);
                 return CORE_OK;
             }
-            if (state == IPC_CONNECTION_OPEN) {
+            if (state == IPC_CONNECTION_STATE_OPEN) {
                 result = io_send_subscribe(service);
                 if (result != CORE_OK) io_suspend(service);
             }
@@ -2775,8 +2769,8 @@ static ErrorCode handle_io_event(WindowServiceHandle service, EventMask mask)
                 io_suspend(service);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 io_suspend(service);
                 break;
             }
@@ -2903,8 +2897,8 @@ static ErrorCode handle_client_event(WindowServiceHandle service,
                 remove_client(service, client);
                 return CORE_OK;
             }
-            if (status == IPC_RECEIVE_NO_MESSAGE) break;
-            if (status == IPC_RECEIVE_PEER_CLOSED) {
+            if (status == IPC_RECEIVE_STATUS_NO_MESSAGE) break;
+            if (status == IPC_RECEIVE_STATUS_PEER_CLOSED) {
                 remove_client(service, client);
                 break;
             }

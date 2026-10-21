@@ -2,7 +2,7 @@
 
 /*
  * Smoke-test stand-in for /punos/bin/initserv. It runs every self-test packaged
- * in the initramfs, reports each result on the console and then stays alive.
+ * in the initramfs, reports each result on the console and returns a result.
  */
 
 struct SelfTest {
@@ -12,6 +12,8 @@ struct SelfTest {
 };
 
 static const struct SelfTest self_tests[] = {
+    { "/punos/bin/logserv-selftest", "PUNos initserv stub: logserv self-test passed\n", "PUNos initserv stub: logserv self-test failed\n" },
+    { "/punos/bin/initserv-selftest", "PUNos initserv stub: initserv self-test passed\n", "PUNos initserv stub: initserv self-test failed\n" },
     { "/punos/bin/syscall-selftest",
       "PUNos initserv stub: syscall self-test passed\n",
       "PUNos initserv stub: syscall self-test failed\n" },
@@ -24,12 +26,6 @@ static const struct SelfTest self_tests[] = {
     { "/punos/bin/libmem-selftest",
       "PUNos initserv stub: libmem self-test passed\n",
       "PUNos initserv stub: libmem self-test failed\n" },
-    { "/punos/bin/librandom-selftest",
-      "PUNos initserv stub: librandom self-test passed\n",
-      "PUNos initserv stub: librandom self-test failed\n" },
-    { "/punos/bin/libgraphics-selftest",
-      "PUNos initserv stub: libgraphics self-test passed\n",
-      "PUNos initserv stub: libgraphics self-test failed\n" },
     { "/punos/bin/libstr-selftest",
       "PUNos initserv stub: libstr self-test passed\n",
       "PUNos initserv stub: libstr self-test failed\n" },
@@ -57,9 +53,42 @@ static const struct SelfTest self_tests[] = {
     { "/punos/bin/libv4l2-selftest",
       "PUNos initserv stub: libv4l2 self-test passed\n",
       "PUNos initserv stub: libv4l2 self-test failed\n" },
-    { "/punos/bin/displayserv-selftest",
-      "PUNos initserv stub: displayserv self-test passed\n",
-      "PUNos initserv stub: displayserv self-test failed\n" },
+    { "/punos/bin/ipc-selftest",
+      "PUNos initserv stub: ipc self-test passed\n",
+      "PUNos initserv stub: ipc self-test failed\n" },
+    { "/punos/bin/log-selftest",
+      "PUNos initserv stub: log self-test passed\n",
+      "PUNos initserv stub: log self-test failed\n" },
+    { "/punos/bin/input-selftest",
+      "PUNos initserv stub: input self-test passed\n",
+      "PUNos initserv stub: input self-test failed\n" },
+    { "/punos/bin/camera-selftest",
+      "PUNos initserv stub: camera self-test passed\n",
+      "PUNos initserv stub: camera self-test failed\n" },
+    { "/punos/bin/appfw-lifecycle-selftest",
+      "PUNos initserv stub: appfwlifecycle self-test passed\n",
+      "PUNos initserv stub: appfwlifecycle self-test failed\n" },
+    { "/punos/bin/appfw-create-selftest",
+      "PUNos initserv stub: appfwcreate self-test passed\n",
+      "PUNos initserv stub: appfwcreate self-test failed\n" },
+    { "/punos/bin/appfw-run-selftest",
+      "PUNos initserv stub: appfwrun self-test passed\n",
+      "PUNos initserv stub: appfwrun self-test failed\n" },
+    { "/punos/bin/appfw-fault-selftest",
+      "PUNos initserv stub: appfwfault self-test passed\n",
+      "PUNos initserv stub: appfwfault self-test failed\n" },
+    { "/punos/bin/appfw-logserv-selftest",
+      "PUNos initserv stub: appfwlogserv self-test passed\n",
+      "PUNos initserv stub: appfwlogserv self-test failed\n" },
+    { "/punos/bin/appfw-wire-selftest",
+      "PUNos initserv stub: appfwwire self-test passed\n",
+      "PUNos initserv stub: appfwwire self-test failed\n" },
+    { "/punos/bin/appfw-apps-selftest",
+      "PUNos initserv stub: appfwapps self-test passed\n",
+      "PUNos initserv stub: appfwapps self-test failed\n" },
+    { "/punos/bin/appserv-selftest",
+      "PUNos initserv stub: appserv self-test passed\n",
+      "PUNos initserv stub: appserv self-test failed\n" },
 };
 
 static size_t text_length(const char *text)
@@ -91,102 +120,9 @@ static i32 run_self_test(const char *path)
     return child > 0 && waitpid(child, &status, 0) == child && status == 0;
 }
 
-static i32 make_token(char token_text[65])
-{
-    static const char hex[] = "0123456789abcdef";
-    u8 token[32];
-    size_t index;
-
-    if (getrandom(token, sizeof(token), 0) != (ssize_t)sizeof(token)) return 0;
-    for (index = 0; index < sizeof(token); ++index) {
-        token_text[index * 2] = hex[token[index] >> 4];
-        token_text[index * 2 + 1] = hex[token[index] & 15];
-    }
-    token_text[64] = '\0';
-    return 1;
-}
-
-static i32 make_token_argument(const char *prefix, const char token_text[65],
-                               char argument[96])
-{
-    size_t index = 0;
-    size_t token_index;
-
-    while (prefix[index] != '\0') {
-        if (index + 1 >= 96) return 0;
-        argument[index] = prefix[index];
-        ++index;
-    }
-    for (token_index = 0; token_index < 64; ++token_index) {
-        if (index + 1 >= 96) return 0;
-        argument[index++] = token_text[token_index];
-    }
-    argument[index] = '\0';
-    return 1;
-}
-
-static pid_t start_displayserv(char presenter_argument[96])
-{
-    static char path[] = "/punos/bin/displayserv";
-    char *const service_argv[] = {
-        path, (char *)"--backend=software", presenter_argument, 0
-    };
-    char *const empty_env[] = { 0 };
-    pid_t child = fork();
-
-    if (child == 0) {
-        (void)execve(path, service_argv, empty_env);
-        exit(126);
-    }
-    return child;
-}
-
-static pid_t start_compositorserv(char presenter_argument[96],
-                                  char controller_argument[96])
-{
-    static char path[] = "/punos/bin/compositorserv";
-    char *const service_argv[] = {
-        path, presenter_argument, controller_argument, 0
-    };
-    char *const empty_env[] = { 0 };
-    pid_t child = fork();
-
-    if (child == 0) {
-        (void)execve(path, service_argv, empty_env);
-        exit(126);
-    }
-    return child;
-}
-
-static pid_t start_windowserv(char controller_argument[96],
-                              char shell_argument[96])
-{
-    static char path[] = "/punos/bin/windowserv";
-    char *const service_argv[] = {
-        path, controller_argument, shell_argument, 0
-    };
-    char *const empty_env[] = { 0 };
-    pid_t child = fork();
-
-    if (child == 0) {
-        (void)execve(path, service_argv, empty_env);
-        exit(126);
-    }
-    return child;
-}
-
 int main(int argc, char **argv, char **envp)
 {
-    static const struct timespec delay = { .tv_sec = 60, .tv_nsec = 0 };
-    char presenter_token[65];
-    char controller_token[65];
-    char shell_token[65];
-    char presenter_argument[96];
-    char controller_argument[96];
-    char shell_argument[96];
-    pid_t displayserv_pid;
-    pid_t compositorserv_pid;
-    pid_t windowserv_pid;
+    i32 failed = 0;
     size_t index;
 
     (void)argc;
@@ -198,60 +134,8 @@ int main(int argc, char **argv, char **envp)
             print(self_tests[index].passed);
         } else {
             print(self_tests[index].failed);
+            failed = 1;
         }
     }
-    if (!make_token(presenter_token) || !make_token(controller_token) ||
-        !make_token(shell_token) ||
-        !make_token_argument("--presenter-token=", presenter_token,
-                             presenter_argument) ||
-        !make_token_argument("--controller-token=", controller_token,
-                             controller_argument) ||
-        !make_token_argument("--shell-token=", shell_token,
-                             shell_argument)) {
-        print("PUNos initserv stub: GUI token generation failed\n");
-        return 3;
-    }
-    displayserv_pid = start_displayserv(presenter_argument);
-    if (displayserv_pid <= 0) {
-        print("PUNos initserv stub: displayserv start failed\n");
-        return 3;
-    }
-    print("PUNos initserv stub: displayserv started\n");
-    compositorserv_pid = start_compositorserv(presenter_argument,
-                                              controller_argument);
-    if (compositorserv_pid <= 0) {
-        print("PUNos initserv stub: compositorserv start failed\n");
-        return 3;
-    }
-    print("PUNos initserv stub: compositorserv started\n");
-    windowserv_pid = start_windowserv(controller_argument, shell_argument);
-    if (windowserv_pid <= 0) {
-        print("PUNos initserv stub: windowserv start failed\n");
-        return 3;
-    }
-    print("PUNos initserv stub: windowserv started\n");
-    for (;;) {
-        i32 status;
-        pid_t child = waitpid(displayserv_pid, &status, WNOHANG);
-        if (child == displayserv_pid) {
-            print("PUNos initserv stub: displayserv exited, restarting\n");
-            displayserv_pid = start_displayserv(presenter_argument);
-            if (displayserv_pid <= 0) return 3;
-        }
-        child = waitpid(compositorserv_pid, &status, WNOHANG);
-        if (child == compositorserv_pid) {
-            print("PUNos initserv stub: compositorserv exited, restarting\n");
-            compositorserv_pid = start_compositorserv(
-                presenter_argument, controller_argument);
-            if (compositorserv_pid <= 0) return 3;
-        }
-        child = waitpid(windowserv_pid, &status, WNOHANG);
-        if (child == windowserv_pid) {
-            print("PUNos initserv stub: windowserv exited, restarting\n");
-            windowserv_pid = start_windowserv(controller_argument,
-                                              shell_argument);
-            if (windowserv_pid <= 0) return 3;
-        }
-        (void)nanosleep(&delay, 0);
-    }
+    return failed;
 }
