@@ -6,9 +6,43 @@
 #define GUI_PROTOCOL_VERSION ((u16)1)
 #define GUI_MAX_DAMAGE_RECTS ((u16)64)
 #define GUI_FULL_DAMAGE ((u32)1)
+#define GUI_SURFACE_BIND_TOKEN_SIZE ((usize)16)
 
-#define GUI_SURFACE_BUFFER_IMPORT ((IpcMessageType)5)
-#define GUI_SURFACE_DAMAGE ((IpcMessageType)10)
+/* compositorserv: surface protocol, message types 1-19 */
+#define GUI_SURFACE_CREATE                  ((IpcMessageType)1)
+#define GUI_SURFACE_CREATE_RESULT           ((IpcMessageType)2)
+#define GUI_SURFACE_DESTROY                 ((IpcMessageType)3)
+#define GUI_SURFACE_DESTROY_RESULT          ((IpcMessageType)4)
+#define GUI_SURFACE_BUFFER_IMPORT           ((IpcMessageType)5)
+#define GUI_SURFACE_BUFFER_IMPORT_RESULT    ((IpcMessageType)6)
+#define GUI_SURFACE_BUFFER_DESTROY          ((IpcMessageType)7)
+#define GUI_SURFACE_BUFFER_DESTROY_RESULT   ((IpcMessageType)8)
+#define GUI_SURFACE_ATTACH                  ((IpcMessageType)9)
+#define GUI_SURFACE_DAMAGE                  ((IpcMessageType)10)
+#define GUI_SURFACE_SET_OPAQUE              ((IpcMessageType)11)
+#define GUI_SURFACE_REQUEST_FRAME           ((IpcMessageType)12)
+#define GUI_SURFACE_COMMIT                  ((IpcMessageType)13)
+#define GUI_SURFACE_COMMIT_RESULT           ((IpcMessageType)14)
+#define GUI_SURFACE_FRAME_DONE              ((IpcMessageType)15)
+#define GUI_SURFACE_BUFFER_RELEASED         ((IpcMessageType)16)
+#define GUI_SURFACE_OUTPUT_ENTER            ((IpcMessageType)17)
+#define GUI_SURFACE_OUTPUT_LEAVE            ((IpcMessageType)18)
+#define GUI_SURFACE_FULL_REDRAW             ((IpcMessageType)19)
+
+#define GUI_CONTROLLER_TOKEN_SIZE ((usize)32)
+
+/* compositorserv: scene protocol, message types 20-29 */
+#define GUI_COMPOSITOR_BIND_CONTROLLER        ((IpcMessageType)20)
+#define GUI_COMPOSITOR_BIND_CONTROLLER_RESULT ((IpcMessageType)21)
+#define GUI_SCENE_BIND_WINDOW                  ((IpcMessageType)22)
+#define GUI_SCENE_SET_GEOMETRY                 ((IpcMessageType)23)
+#define GUI_SCENE_SET_VISIBILITY               ((IpcMessageType)24)
+#define GUI_SCENE_SET_STACK                    ((IpcMessageType)25)
+#define GUI_SCENE_SET_OUTPUT                   ((IpcMessageType)26)
+#define GUI_SCENE_REMOVE_WINDOW                ((IpcMessageType)27)
+#define GUI_SCENE_RESULT                       ((IpcMessageType)28)
+#define GUI_SCENE_BINDING_LOST                 ((IpcMessageType)29)
+
 #define GUI_DISPLAY_PRESENT ((IpcMessageType)7)
 #define GUI_DISPLAY_PRESENT_RESULT ((IpcMessageType)8)
 #define GUI_DISPLAY_SUBSCRIBE_RESULT ((IpcMessageType)10)
@@ -70,6 +104,118 @@ typedef struct GuiSurfaceDamageRequest {
     GuiRect rects[GUI_MAX_DAMAGE_RECTS];
 } GuiSurfaceDamageRequest;
 
+typedef struct GuiSurfaceIdRequest {
+    GuiRequestPrefix prefix;
+    u64 surface_id;
+} GuiSurfaceIdRequest;
+
+typedef struct GuiBufferIdRequest {
+    GuiRequestPrefix prefix;
+    u64 buffer_id;
+} GuiBufferIdRequest;
+
+typedef struct GuiSurfaceAttachRequest {
+    GuiRequestPrefix prefix;
+    u64 surface_id;
+    u64 buffer_id;
+} GuiSurfaceAttachRequest;
+
+typedef struct GuiSurfaceRegionRequest {
+    GuiRequestPrefix prefix;
+    u64 surface_id;
+    u16 rect_count;
+    GuiRect rects[GUI_MAX_DAMAGE_RECTS];
+} GuiSurfaceRegionRequest;
+
+typedef struct GuiSurfaceFrameRequest {
+    GuiRequestPrefix prefix;
+    u64 surface_id;
+} GuiSurfaceFrameRequest;
+
+typedef struct GuiSurfaceCommitRequest {
+    GuiRequestPrefix prefix;
+    u64 surface_id;
+    u64 commit_serial;
+} GuiSurfaceCommitRequest;
+
+
+typedef struct GuiSceneRect {
+    i32 x;
+    i32 y;
+    u32 width;
+    u32 height;
+} GuiSceneRect;
+
+typedef u32 GuiSceneVisibility;
+#define GUI_SCENE_HIDDEN ((GuiSceneVisibility)0)
+#define GUI_SCENE_VISIBLE ((GuiSceneVisibility)1)
+
+typedef u32 GuiSceneLayer;
+#define GUI_SCENE_LAYER_BACKGROUND ((GuiSceneLayer)1)
+#define GUI_SCENE_LAYER_APP ((GuiSceneLayer)2)
+#define GUI_SCENE_LAYER_DIALOG ((GuiSceneLayer)3)
+#define GUI_SCENE_LAYER_SYSTEM ((GuiSceneLayer)4)
+#define GUI_SCENE_LAYER_LOCK ((GuiSceneLayer)5)
+
+typedef u32 GuiSceneBindingLostReason;
+#define GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED \
+    ((GuiSceneBindingLostReason)1)
+#define GUI_SCENE_BINDING_LOST_CLIENT_DISCONNECTED \
+    ((GuiSceneBindingLostReason)2)
+
+typedef struct GuiControllerBindRequest {
+    GuiRequestPrefix prefix;
+    u8 controller_token[GUI_CONTROLLER_TOKEN_SIZE];
+} GuiControllerBindRequest;
+
+typedef struct GuiSceneBindRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+    u64 surface_id;
+    u8 surface_bind_token[GUI_SURFACE_BIND_TOKEN_SIZE];
+} GuiSceneBindRequest;
+
+typedef struct GuiSceneGeometryRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+    GuiSceneRect geometry;
+    i32 clip_x;
+    i32 clip_y;
+    u32 clip_width;
+    u32 clip_height;
+} GuiSceneGeometryRequest;
+
+typedef struct GuiSceneVisibilityRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+    GuiSceneVisibility visibility;
+} GuiSceneVisibilityRequest;
+
+typedef struct GuiSceneStackRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+    GuiSceneLayer layer;
+    u64 above_window_id;
+} GuiSceneStackRequest;
+
+typedef struct GuiSceneOutputRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+    u64 display_id;
+} GuiSceneOutputRequest;
+
+typedef struct GuiSceneWindowRequest {
+    GuiRequestPrefix prefix;
+    u64 window_id;
+} GuiSceneWindowRequest;
+
+typedef struct GuiSceneBindingLostEvent {
+    u64 serial;
+    u64 window_id;
+    u64 surface_id;
+    GuiSceneBindingLostReason reason;
+} GuiSceneBindingLostEvent;
+
 typedef struct GuiDisplayPresentRequest {
     GuiRequestPrefix prefix;
     u64 display_id;
@@ -107,6 +253,41 @@ typedef struct GuiBasicResult {
     ErrorCode error;
     u64 request_id;
 } GuiBasicResult;
+
+typedef struct GuiSurfaceCreateResult {
+    GuiBasicResult result;
+    u64 surface_id;
+    u8 surface_bind_token[GUI_SURFACE_BIND_TOKEN_SIZE];
+} GuiSurfaceCreateResult;
+
+typedef struct GuiBufferImportResult {
+    GuiBasicResult result;
+    u64 buffer_id;
+} GuiBufferImportResult;
+
+typedef struct GuiSurfaceFrameDoneEvent {
+    u64 request_id;
+    u64 surface_id;
+    u64 commit_serial;
+    u64 presented_at_ms;
+} GuiSurfaceFrameDoneEvent;
+
+typedef struct GuiBufferReleasedEvent {
+    u64 serial;
+    u64 buffer_id;
+} GuiBufferReleasedEvent;
+
+typedef struct GuiSurfaceOutputEvent {
+    u64 serial;
+    u64 surface_id;
+    u64 display_id;
+} GuiSurfaceOutputEvent;
+
+typedef struct GuiSurfaceRedrawEvent {
+    u64 serial;
+    u64 surface_id;
+    u32 reason;
+} GuiSurfaceRedrawEvent;
 
 typedef struct GuiDisplayListHeader {
     GuiBasicResult result;
@@ -163,10 +344,129 @@ ErrorCode gui_encode_buffer_import(const GuiBufferImportRequest *request,
                                    Bytes destination, usize *out_size);
 ErrorCode gui_decode_buffer_import(const IpcMessage *message,
                                    GuiBufferImportRequest *out_request);
+
+ErrorCode gui_encode_surface_id_request(const GuiSurfaceIdRequest *request,
+                                        Bytes destination, usize *out_size);
+ErrorCode gui_decode_surface_id_request(const IpcMessage *message,
+                                        IpcMessageType expected_type,
+                                        GuiSurfaceIdRequest *out_request);
+
+ErrorCode gui_encode_buffer_id_request(const GuiBufferIdRequest *request,
+                                       Bytes destination, usize *out_size);
+ErrorCode gui_decode_buffer_id_request(const IpcMessage *message,
+                                       IpcMessageType expected_type,
+                                       GuiBufferIdRequest *out_request);
+
+ErrorCode gui_encode_surface_attach(const GuiSurfaceAttachRequest *request,
+                                    Bytes destination, usize *out_size);
+ErrorCode gui_decode_surface_attach(const IpcMessage *message,
+                                    GuiSurfaceAttachRequest *out_request);
+
 ErrorCode gui_encode_surface_damage(const GuiSurfaceDamageRequest *request,
                                     Bytes destination, usize *out_size);
 ErrorCode gui_decode_surface_damage(const IpcMessage *message,
                                     GuiSurfaceDamageRequest *out_request);
+
+ErrorCode gui_encode_surface_region(const GuiSurfaceRegionRequest *request,
+                                    Bytes destination, usize *out_size);
+ErrorCode gui_decode_surface_region(const IpcMessage *message,
+                                    GuiSurfaceRegionRequest *out_request);
+
+ErrorCode gui_encode_surface_frame_request(
+    const GuiSurfaceFrameRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_surface_frame_request(
+    const IpcMessage *message, GuiSurfaceFrameRequest *out_request);
+
+ErrorCode gui_encode_surface_commit(const GuiSurfaceCommitRequest *request,
+                                    Bytes destination, usize *out_size);
+ErrorCode gui_decode_surface_commit(const IpcMessage *message,
+                                    GuiSurfaceCommitRequest *out_request);
+
+ErrorCode gui_encode_surface_create_result(
+    const GuiSurfaceCreateResult *result, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_surface_create_result(
+    const IpcMessage *message, GuiSurfaceCreateResult *out_result);
+
+ErrorCode gui_encode_buffer_import_result(
+    const GuiBufferImportResult *result, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_buffer_import_result(
+    const IpcMessage *message, GuiBufferImportResult *out_result);
+
+ErrorCode gui_encode_surface_frame_done(
+    const GuiSurfaceFrameDoneEvent *event, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_surface_frame_done(
+    const IpcMessage *message, GuiSurfaceFrameDoneEvent *out_event);
+
+ErrorCode gui_encode_buffer_released(
+    const GuiBufferReleasedEvent *event, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_buffer_released(
+    const IpcMessage *message, GuiBufferReleasedEvent *out_event);
+
+ErrorCode gui_encode_surface_output_event(
+    const GuiSurfaceOutputEvent *event, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_surface_output_event(
+    const IpcMessage *message, IpcMessageType expected_type,
+    GuiSurfaceOutputEvent *out_event);
+
+ErrorCode gui_encode_surface_redraw(
+    const GuiSurfaceRedrawEvent *event, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_surface_redraw(
+    const IpcMessage *message, GuiSurfaceRedrawEvent *out_event);
+
+ErrorCode gui_encode_controller_bind(
+    const GuiControllerBindRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_controller_bind(
+    const IpcMessage *message, GuiControllerBindRequest *out_request);
+
+ErrorCode gui_encode_scene_bind(
+    const GuiSceneBindRequest *request, Bytes destination, usize *out_size);
+ErrorCode gui_decode_scene_bind(
+    const IpcMessage *message, GuiSceneBindRequest *out_request);
+
+ErrorCode gui_encode_scene_geometry(
+    const GuiSceneGeometryRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_geometry(
+    const IpcMessage *message, GuiSceneGeometryRequest *out_request);
+
+ErrorCode gui_encode_scene_visibility(
+    const GuiSceneVisibilityRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_visibility(
+    const IpcMessage *message, GuiSceneVisibilityRequest *out_request);
+
+ErrorCode gui_encode_scene_stack(
+    const GuiSceneStackRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_stack(
+    const IpcMessage *message, GuiSceneStackRequest *out_request);
+
+ErrorCode gui_encode_scene_output(
+    const GuiSceneOutputRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_output(
+    const IpcMessage *message, GuiSceneOutputRequest *out_request);
+
+ErrorCode gui_encode_scene_window(
+    const GuiSceneWindowRequest *request, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_window(
+    const IpcMessage *message, GuiSceneWindowRequest *out_request);
+
+ErrorCode gui_encode_scene_binding_lost(
+    const GuiSceneBindingLostEvent *event, Bytes destination,
+    usize *out_size);
+ErrorCode gui_decode_scene_binding_lost(
+    const IpcMessage *message, GuiSceneBindingLostEvent *out_event);
+
 ErrorCode gui_encode_display_present(const GuiDisplayPresentRequest *request,
                                      Bytes destination, usize *out_size);
 ErrorCode gui_decode_display_present(const IpcMessage *message,

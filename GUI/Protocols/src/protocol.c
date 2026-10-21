@@ -4,6 +4,18 @@
 #define RECT_SIZE ((usize)16)
 #define BUFFER_IMPORT_SIZE ((usize)34)
 #define SURFACE_DAMAGE_BASE_SIZE ((usize)24)
+#define SURFACE_ID_REQUEST_SIZE ((usize)18)
+#define BUFFER_ID_REQUEST_SIZE ((usize)18)
+#define SURFACE_ATTACH_SIZE ((usize)26)
+#define SURFACE_FRAME_REQUEST_SIZE ((usize)18)
+#define SURFACE_COMMIT_SIZE ((usize)26)
+#define SURFACE_REGION_BASE_SIZE ((usize)20)
+#define SURFACE_CREATE_RESULT_SIZE ((usize)36)
+#define BUFFER_IMPORT_RESULT_SIZE ((usize)20)
+#define SURFACE_FRAME_DONE_SIZE ((usize)32)
+#define BUFFER_RELEASED_SIZE ((usize)16)
+#define SURFACE_OUTPUT_EVENT_SIZE ((usize)24)
+#define SURFACE_REDRAW_SIZE ((usize)20)
 #define DISPLAY_PRESENT_BASE_SIZE ((usize)56)
 #define PRESENTER_BIND_SIZE ((usize)42)
 #define DISPLAY_CONFIGURE_SIZE ((usize)40)
@@ -16,6 +28,14 @@
 #define DISPLAY_INFO_FIXED_SIZE ((usize)44)
 #define DISPLAY_LIST_FIXED_SIZE ((usize)22)
 #define DISPLAY_REMOVED_SIZE ((usize)24)
+#define CONTROLLER_BIND_SIZE ((usize)42)
+#define SCENE_BIND_SIZE ((usize)42)
+#define SCENE_GEOMETRY_SIZE ((usize)50)
+#define SCENE_VISIBILITY_SIZE ((usize)22)
+#define SCENE_STACK_SIZE ((usize)30)
+#define SCENE_OUTPUT_SIZE ((usize)26)
+#define SCENE_WINDOW_SIZE ((usize)18)
+#define SCENE_BINDING_LOST_SIZE ((usize)28)
 #define DISPLAY_FLAGS_KNOWN (GUI_DISPLAY_CONNECTED | GUI_DISPLAY_ENABLED | \
                              GUI_DISPLAY_PRIMARY)
 #define MAX_BUFFER_DIMENSION ((u32)16384)
@@ -226,6 +246,21 @@ static ErrorCode validate_rects(u32 flags, u16 count, const GuiRect *rects)
     return CORE_OK;
 }
 
+static ErrorCode validate_region_rects(u16 count, const GuiRect *rects)
+{
+    usize index;
+
+    if (count > GUI_MAX_DAMAGE_RECTS) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    for (index = 0; index < count; ++index) {
+        if (rects[index].width == 0 || rects[index].height == 0) {
+            return CORE_INVALID_ARGUMENT;
+        }
+    }
+    return CORE_OK;
+}
+
 static void encode_rect(u8 *data, const GuiRect *rect)
 {
     put_u32(data, (u32)rect->x);
@@ -384,6 +419,526 @@ ErrorCode gui_decode_surface_damage(const IpcMessage *message,
     }
     return validate_rects(out_request->flags, out_request->rect_count,
                           out_request->rects);
+}
+
+ErrorCode gui_encode_surface_id_request(const GuiSurfaceIdRequest *request,
+                                        Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_ID_REQUEST_SIZE || request->surface_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    *out_size = SURFACE_ID_REQUEST_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_id_request(const IpcMessage *message,
+                                        IpcMessageType expected_type,
+                                        GuiSurfaceIdRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL || message->type != expected_type ||
+        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.size != SURFACE_ID_REQUEST_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->surface_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_buffer_id_request(const GuiBufferIdRequest *request,
+                                       Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < BUFFER_ID_REQUEST_SIZE || request->buffer_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->buffer_id);
+    *out_size = BUFFER_ID_REQUEST_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_buffer_id_request(const IpcMessage *message,
+                                       IpcMessageType expected_type,
+                                       GuiBufferIdRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL || message->type != expected_type ||
+        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.size != BUFFER_ID_REQUEST_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->buffer_id = get_u64(message->payload.data + 10);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->buffer_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_surface_attach(const GuiSurfaceAttachRequest *request,
+                                    Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_ATTACH_SIZE || request->surface_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    put_u64(destination.data + 18, request->buffer_id);
+    *out_size = SURFACE_ATTACH_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_attach(const IpcMessage *message,
+                                    GuiSurfaceAttachRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SURFACE_ATTACH ||
+        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.size != SURFACE_ATTACH_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    out_request->buffer_id = get_u64(message->payload.data + 18);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->surface_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_surface_frame_request(
+    const GuiSurfaceFrameRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_FRAME_REQUEST_SIZE || request->surface_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    *out_size = SURFACE_FRAME_REQUEST_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_frame_request(
+    const IpcMessage *message, GuiSurfaceFrameRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SURFACE_REQUEST_FRAME ||
+        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.size != SURFACE_FRAME_REQUEST_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->surface_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_surface_commit(const GuiSurfaceCommitRequest *request,
+                                    Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_COMMIT_SIZE || request->surface_id == 0 ||
+        request->commit_serial == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    put_u64(destination.data + 18, request->commit_serial);
+    *out_size = SURFACE_COMMIT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_commit(const IpcMessage *message,
+                                    GuiSurfaceCommitRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SURFACE_COMMIT ||
+        message->descriptor != IPC_NO_DESCRIPTOR || message->payload.data == NULL ||
+        message->payload.size != SURFACE_COMMIT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    out_request->commit_serial = get_u64(message->payload.data + 18);
+    if (result != CORE_OK) {
+        return result;
+    }
+    if (out_request->surface_id == 0 || out_request->commit_serial == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_surface_region(const GuiSurfaceRegionRequest *request,
+                                    Bytes destination, usize *out_size)
+{
+    usize size;
+    usize index;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result == CORE_OK && request->surface_id == 0) {
+        result = CORE_INVALID_ARGUMENT;
+    }
+    if (result == CORE_OK) {
+        result = validate_region_rects(request->rect_count, request->rects);
+    }
+    if (result == CORE_OK) {
+        result = variable_size(SURFACE_REGION_BASE_SIZE, request->rect_count,
+                               &size);
+    }
+    if (result != CORE_OK) {
+        return result;
+    }
+    if (destination.data == NULL || destination.size < size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    put_u16(destination.data + 18, request->rect_count);
+    for (index = 0; index < request->rect_count; ++index) {
+        encode_rect(destination.data + 20 + index * RECT_SIZE,
+                    &request->rects[index]);
+    }
+    *out_size = size;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_region(const IpcMessage *message,
+                                    GuiSurfaceRegionRequest *out_request)
+{
+    usize expected;
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SURFACE_SET_OPAQUE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size < SURFACE_REGION_BASE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_request->rect_count = get_u16(message->payload.data + 18);
+    result = variable_size(SURFACE_REGION_BASE_SIZE, out_request->rect_count,
+                           &expected);
+    if (result != CORE_OK || expected != message->payload.size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    for (index = 0; index < out_request->rect_count; ++index) {
+        decode_rect(message->payload.data + 20 + index * RECT_SIZE,
+                    &out_request->rects[index]);
+    }
+    if (result != CORE_OK || out_request->surface_id == 0) {
+        return result != CORE_OK ? result : CORE_INVALID_ARGUMENT;
+    }
+    return validate_region_rects(out_request->rect_count, out_request->rects);
+}
+
+ErrorCode gui_encode_surface_create_result(
+    const GuiSurfaceCreateResult *result, Bytes destination,
+    usize *out_size)
+{
+    usize basic_size;
+    usize index;
+    ErrorCode code;
+
+    if (result == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_CREATE_RESULT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (result->result.error == CORE_OK) {
+        if (result->surface_id == 0) {
+            return CORE_INVALID_ARGUMENT;
+        }
+    } else {
+        if (result->surface_id != 0) {
+            return CORE_INVALID_ARGUMENT;
+        }
+        for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+            if (result->surface_bind_token[index] != 0) {
+                return CORE_INVALID_ARGUMENT;
+            }
+        }
+    }
+    code = gui_encode_basic_result(&result->result, destination, &basic_size);
+    if (code != CORE_OK) {
+        return code;
+    }
+    put_u64(destination.data + basic_size, result->surface_id);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        destination.data[basic_size + 8 + index] = result->surface_bind_token[index];
+    }
+    *out_size = SURFACE_CREATE_RESULT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_create_result(
+    const IpcMessage *message, GuiSurfaceCreateResult *out_result)
+{
+    usize index;
+
+    if (message == NULL || out_result == NULL ||
+        message->type != GUI_SURFACE_CREATE_RESULT ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SURFACE_CREATE_RESULT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_result->result.error = (ErrorCode)get_u32(message->payload.data);
+    out_result->result.request_id = get_u64(message->payload.data + 4);
+    out_result->surface_id = get_u64(message->payload.data + 12);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        out_result->surface_bind_token[index] = message->payload.data[20 + index];
+    }
+    if (!error_is_known(out_result->result.error) ||
+        out_result->result.request_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (out_result->result.error == CORE_OK) {
+        return out_result->surface_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+    }
+    if (out_result->surface_id != 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        if (out_result->surface_bind_token[index] != 0) {
+            return CORE_INVALID_ARGUMENT;
+        }
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_buffer_import_result(
+    const GuiBufferImportResult *result, Bytes destination,
+    usize *out_size)
+{
+    usize basic_size;
+    ErrorCode code;
+
+    if (result == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < BUFFER_IMPORT_RESULT_SIZE ||
+        ((result->result.error == CORE_OK) != (result->buffer_id != 0))) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    code = gui_encode_basic_result(&result->result, destination, &basic_size);
+    if (code != CORE_OK) {
+        return code;
+    }
+    put_u64(destination.data + basic_size, result->buffer_id);
+    *out_size = BUFFER_IMPORT_RESULT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_buffer_import_result(
+    const IpcMessage *message, GuiBufferImportResult *out_result)
+{
+    if (message == NULL || out_result == NULL ||
+        message->type != GUI_SURFACE_BUFFER_IMPORT_RESULT ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != BUFFER_IMPORT_RESULT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_result->result.error = (ErrorCode)get_u32(message->payload.data);
+    out_result->result.request_id = get_u64(message->payload.data + 4);
+    out_result->buffer_id = get_u64(message->payload.data + 12);
+    if (!error_is_known(out_result->result.error) ||
+        out_result->result.request_id == 0 ||
+        ((out_result->result.error == CORE_OK) != (out_result->buffer_id != 0))) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_surface_frame_done(
+    const GuiSurfaceFrameDoneEvent *event, Bytes destination,
+    usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_FRAME_DONE_SIZE || event->request_id == 0 ||
+        event->surface_id == 0 || event->commit_serial == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->request_id);
+    put_u64(destination.data + 8, event->surface_id);
+    put_u64(destination.data + 16, event->commit_serial);
+    put_u64(destination.data + 24, event->presented_at_ms);
+    *out_size = SURFACE_FRAME_DONE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_frame_done(
+    const IpcMessage *message, GuiSurfaceFrameDoneEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_SURFACE_FRAME_DONE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SURFACE_FRAME_DONE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->request_id = get_u64(message->payload.data);
+    out_event->surface_id = get_u64(message->payload.data + 8);
+    out_event->commit_serial = get_u64(message->payload.data + 16);
+    out_event->presented_at_ms = get_u64(message->payload.data + 24);
+    return out_event->request_id != 0 && out_event->surface_id != 0 &&
+           out_event->commit_serial != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_buffer_released(
+    const GuiBufferReleasedEvent *event, Bytes destination,
+    usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < BUFFER_RELEASED_SIZE || event->serial == 0 ||
+        event->buffer_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->buffer_id);
+    *out_size = BUFFER_RELEASED_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_buffer_released(
+    const IpcMessage *message, GuiBufferReleasedEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_SURFACE_BUFFER_RELEASED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != BUFFER_RELEASED_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->buffer_id = get_u64(message->payload.data + 8);
+    return out_event->serial != 0 && out_event->buffer_id != 0 ? CORE_OK :
+           CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_surface_output_event(
+    const GuiSurfaceOutputEvent *event, Bytes destination,
+    usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_OUTPUT_EVENT_SIZE || event->serial == 0 ||
+        event->surface_id == 0 || event->display_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->surface_id);
+    put_u64(destination.data + 16, event->display_id);
+    *out_size = SURFACE_OUTPUT_EVENT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_output_event(
+    const IpcMessage *message, IpcMessageType expected_type,
+    GuiSurfaceOutputEvent *out_event)
+{
+    if (message == NULL || out_event == NULL || message->type != expected_type ||
+        (expected_type != GUI_SURFACE_OUTPUT_ENTER &&
+         expected_type != GUI_SURFACE_OUTPUT_LEAVE) ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SURFACE_OUTPUT_EVENT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->surface_id = get_u64(message->payload.data + 8);
+    out_event->display_id = get_u64(message->payload.data + 16);
+    return out_event->serial != 0 && out_event->surface_id != 0 &&
+           out_event->display_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_surface_redraw(
+    const GuiSurfaceRedrawEvent *event, Bytes destination,
+    usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SURFACE_REDRAW_SIZE || event->serial == 0 ||
+        event->surface_id == 0 || event->reason < 1 || event->reason > 3) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->surface_id);
+    put_u32(destination.data + 16, event->reason);
+    *out_size = SURFACE_REDRAW_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_surface_redraw(
+    const IpcMessage *message, GuiSurfaceRedrawEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_SURFACE_FULL_REDRAW ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SURFACE_REDRAW_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->surface_id = get_u64(message->payload.data + 8);
+    out_event->reason = get_u32(message->payload.data + 16);
+    return out_event->serial != 0 && out_event->surface_id != 0 &&
+           out_event->reason >= 1 && out_event->reason <= 3 ? CORE_OK :
+           CORE_INVALID_ARGUMENT;
 }
 
 ErrorCode gui_encode_display_present(const GuiDisplayPresentRequest *request,
@@ -1104,4 +1659,425 @@ ErrorCode gui_decode_display_removed(const IpcMessage *message,
     out_event->last_generation = get_u64(message->payload.data + 16);
     return out_event->serial != 0 && out_event->display_id != 0 &&
            out_event->last_generation != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+static bool scene_geometry_valid(const GuiSceneGeometryRequest *request)
+{
+    if (request->window_id == 0 ||
+        request->geometry.width == 0 || request->geometry.height == 0 ||
+        request->geometry.width > 16384 || request->geometry.height > 16384) {
+        return false;
+    }
+
+    /* Scene coordinates are 24.8 fixed-point; fractional part is zero in v1. */
+    if ((((u32)request->geometry.x) & 0xffu) != 0 ||
+        (((u32)request->geometry.y) & 0xffu) != 0) {
+        return false;
+    }
+
+    if ((request->clip_width == 0) != (request->clip_height == 0)) {
+        return false;
+    }
+
+    return true;
+}
+
+ErrorCode gui_encode_controller_bind(
+    const GuiControllerBindRequest *request, Bytes destination,
+    usize *out_size)
+{
+    usize index;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < CONTROLLER_BIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    for (index = 0; index < GUI_CONTROLLER_TOKEN_SIZE; ++index) {
+        destination.data[10 + index] = request->controller_token[index];
+    }
+    *out_size = CONTROLLER_BIND_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_controller_bind(
+    const IpcMessage *message, GuiControllerBindRequest *out_request)
+{
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_COMPOSITOR_BIND_CONTROLLER ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != CONTROLLER_BIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    for (index = 0; index < GUI_CONTROLLER_TOKEN_SIZE; ++index) {
+        out_request->controller_token[index] = message->payload.data[10 + index];
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_scene_bind(
+    const GuiSceneBindRequest *request, Bytes destination, usize *out_size)
+{
+    usize index;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_BIND_SIZE ||
+        request->window_id == 0 || request->surface_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->surface_id);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        destination.data[26 + index] = request->surface_bind_token[index];
+    }
+    *out_size = SCENE_BIND_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_bind(
+    const IpcMessage *message, GuiSceneBindRequest *out_request)
+{
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_BIND_WINDOW ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SCENE_BIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->surface_id = get_u64(message->payload.data + 18);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        out_request->surface_bind_token[index] = message->payload.data[26 + index];
+    }
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->window_id != 0 && out_request->surface_id != 0 ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_scene_geometry(
+    const GuiSceneGeometryRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_GEOMETRY_SIZE || !scene_geometry_valid(request)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u32(destination.data + 18, (u32)request->geometry.x);
+    put_u32(destination.data + 22, (u32)request->geometry.y);
+    put_u32(destination.data + 26, request->geometry.width);
+    put_u32(destination.data + 30, request->geometry.height);
+    put_u32(destination.data + 34, (u32)request->clip_x);
+    put_u32(destination.data + 38, (u32)request->clip_y);
+    put_u32(destination.data + 42, request->clip_width);
+    put_u32(destination.data + 46, request->clip_height);
+    *out_size = SCENE_GEOMETRY_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_geometry(
+    const IpcMessage *message, GuiSceneGeometryRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_SET_GEOMETRY ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SCENE_GEOMETRY_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->geometry.x = (i32)get_u32(message->payload.data + 18);
+    out_request->geometry.y = (i32)get_u32(message->payload.data + 22);
+    out_request->geometry.width = get_u32(message->payload.data + 26);
+    out_request->geometry.height = get_u32(message->payload.data + 30);
+    out_request->clip_x = (i32)get_u32(message->payload.data + 34);
+    out_request->clip_y = (i32)get_u32(message->payload.data + 38);
+    out_request->clip_width = get_u32(message->payload.data + 42);
+    out_request->clip_height = get_u32(message->payload.data + 46);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    return scene_geometry_valid(out_request) ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_scene_visibility(
+    const GuiSceneVisibilityRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_VISIBILITY_SIZE || request->window_id == 0 ||
+        request->visibility > GUI_SCENE_VISIBLE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u32(destination.data + 18, request->visibility);
+    *out_size = SCENE_VISIBILITY_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_visibility(
+    const IpcMessage *message, GuiSceneVisibilityRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_SET_VISIBILITY ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SCENE_VISIBILITY_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->visibility = get_u32(message->payload.data + 18);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->window_id != 0 &&
+           out_request->visibility <= GUI_SCENE_VISIBLE ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_scene_stack(
+    const GuiSceneStackRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_STACK_SIZE || request->window_id == 0 ||
+        request->layer < GUI_SCENE_LAYER_BACKGROUND ||
+        request->layer > GUI_SCENE_LAYER_LOCK ||
+        request->above_window_id == request->window_id) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u32(destination.data + 18, request->layer);
+    put_u64(destination.data + 22, request->above_window_id);
+    *out_size = SCENE_STACK_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_stack(
+    const IpcMessage *message, GuiSceneStackRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_SET_STACK ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SCENE_STACK_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->layer = get_u32(message->payload.data + 18);
+    out_request->above_window_id = get_u64(message->payload.data + 22);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    if (out_request->window_id == 0 ||
+        out_request->layer < GUI_SCENE_LAYER_BACKGROUND ||
+        out_request->layer > GUI_SCENE_LAYER_LOCK ||
+        out_request->above_window_id == out_request->window_id) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_scene_output(
+    const GuiSceneOutputRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_OUTPUT_SIZE || request->window_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->display_id);
+    *out_size = SCENE_OUTPUT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_output(
+    const IpcMessage *message, GuiSceneOutputRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_SET_OUTPUT ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SCENE_OUTPUT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->display_id = get_u64(message->payload.data + 18);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->window_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_scene_window(
+    const GuiSceneWindowRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_WINDOW_SIZE || request->window_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) {
+        return result;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    *out_size = SCENE_WINDOW_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_window(
+    const IpcMessage *message, GuiSceneWindowRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SCENE_REMOVE_WINDOW ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SCENE_WINDOW_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    if (result != CORE_OK) {
+        return result;
+    }
+    return out_request->window_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_scene_binding_lost(
+    const GuiSceneBindingLostEvent *event, Bytes destination,
+    usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SCENE_BINDING_LOST_SIZE ||
+        event->serial == 0 || event->window_id == 0 || event->surface_id == 0 ||
+        (event->reason != GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED &&
+         event->reason != GUI_SCENE_BINDING_LOST_CLIENT_DISCONNECTED)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->window_id);
+    put_u64(destination.data + 16, event->surface_id);
+    put_u32(destination.data + 24, event->reason);
+    *out_size = SCENE_BINDING_LOST_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_scene_binding_lost(
+    const IpcMessage *message, GuiSceneBindingLostEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_SCENE_BINDING_LOST ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != SCENE_BINDING_LOST_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    out_event->serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    out_event->surface_id = get_u64(message->payload.data + 16);
+    out_event->reason = get_u32(message->payload.data + 24);
+
+    if (out_event->serial == 0 || out_event->window_id == 0 ||
+        out_event->surface_id == 0 ||
+        (out_event->reason != GUI_SCENE_BINDING_LOST_SURFACE_DESTROYED &&
+         out_event->reason != GUI_SCENE_BINDING_LOST_CLIENT_DISCONNECTED)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
 }
