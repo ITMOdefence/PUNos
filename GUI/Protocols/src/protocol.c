@@ -28,6 +28,11 @@
 #define DISPLAY_INFO_FIXED_SIZE ((usize)44)
 #define DISPLAY_LIST_FIXED_SIZE ((usize)22)
 #define DISPLAY_REMOVED_SIZE ((usize)24)
+#define IO_SUBSCRIBE_SIZE ((usize)6)
+#define IO_RESULT_SIZE ((usize)4)
+#define IO_DEVICE_EVENT_SIZE ((usize)20)
+#define IO_INPUT_FRAME_BASE_SIZE ((usize)18)
+#define IO_INPUT_EVENT_SIZE ((usize)7)
 #define CONTROLLER_BIND_SIZE ((usize)42)
 #define SCENE_BIND_SIZE ((usize)42)
 #define SCENE_GEOMETRY_SIZE ((usize)50)
@@ -36,8 +41,38 @@
 #define SCENE_OUTPUT_SIZE ((usize)26)
 #define SCENE_WINDOW_SIZE ((usize)18)
 #define SCENE_BINDING_LOST_SIZE ((usize)28)
+#define WINDOW_CREATE_BASE_SIZE ((usize)49)
+#define WINDOW_CREATE_RESULT_SIZE ((usize)20)
+#define WINDOW_ID_REQUEST_SIZE ((usize)18)
+#define WINDOW_SET_TITLE_BASE_SIZE ((usize)20)
+#define WINDOW_ACK_CONFIGURE_SIZE ((usize)26)
+#define WINDOW_MODAL_SIZE ((usize)26)
+#define WINDOW_SURFACE_REBIND_SIZE ((usize)42)
+#define SHELL_BIND_SIZE ((usize)42)
+#define SHELL_ACTIVATE_SIZE ((usize)18)
+#define SHELL_INSETS_SIZE ((usize)34)
+#define SHELL_NAVIGATE_SIZE ((usize)19)
+#define WINDOW_CLOSE_RESPONSE_SIZE ((usize)27)
+#define WINDOW_CONFIGURE_SIZE ((usize)45)
+#define WINDOW_LIFECYCLE_SIZE ((usize)18)
+#define WINDOW_CLOSE_SIZE ((usize)16)
+#define WINDOW_VISIBILITY_SIZE ((usize)17)
+#define WINDOW_POINTER_SIZE ((usize)45)
+#define WINDOW_KEY_SIZE ((usize)33)
+#define WINDOW_TOUCH_SIZE ((usize)37)
+#define WINDOW_SERVICE_SIZE ((usize)17)
+#define WINDOW_NAVIGATION_SIZE ((usize)17)
 #define DISPLAY_FLAGS_KNOWN (GUI_DISPLAY_CONNECTED | GUI_DISPLAY_ENABLED | \
                              GUI_DISPLAY_PRIMARY)
+#define INPUT_DEVICE_CLASSES_KNOWN (GUI_INPUT_DEVICE_KEYBOARD | \
+                                    GUI_INPUT_DEVICE_POINTER | \
+                                    GUI_INPUT_DEVICE_TOUCH)
+#define WINDOW_FLAGS_KNOWN (GUI_WINDOW_FLAG_EDGE_TO_EDGE | \
+                            GUI_WINDOW_FLAG_ACCEPTS_KEYBOARD | \
+                            GUI_WINDOW_FLAG_HANDLES_BACK)
+#define MODIFIER_MASK_KNOWN (GUI_MODIFIER_SHIFT | GUI_MODIFIER_CONTROL | \
+                             GUI_MODIFIER_ALT | GUI_MODIFIER_SUPER | \
+                             GUI_MODIFIER_CAPS_LOCK | GUI_MODIFIER_NUM_LOCK)
 #define MAX_BUFFER_DIMENSION ((u32)16384)
 
 static void put_u16(u8 *data, u16 value)
@@ -1661,6 +1696,203 @@ ErrorCode gui_decode_display_removed(const IpcMessage *message,
            out_event->last_generation != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
 }
 
+static bool input_device_classes_valid(GuiInputDeviceClass classes)
+{
+    return classes != 0 && (classes & ~INPUT_DEVICE_CLASSES_KNOWN) == 0;
+}
+
+static bool io_input_kind_valid(GuiIoInputEventKind kind)
+{
+    return kind >= GUI_IO_INPUT_KEY && kind <= GUI_IO_INPUT_RAW;
+}
+
+static ErrorCode io_frame_size(u16 count, usize *out_size)
+{
+    usize event_bytes;
+    ErrorCode result = core_size_multiply((usize)count, IO_INPUT_EVENT_SIZE,
+                                          &event_bytes);
+    if (result != CORE_OK) return result;
+    return core_size_add(IO_INPUT_FRAME_BASE_SIZE, event_bytes, out_size);
+}
+
+ErrorCode gui_encode_io_subscribe(
+    const GuiIoSubscribeRequest *request, Bytes destination, usize *out_size)
+{
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < IO_SUBSCRIBE_SIZE ||
+        request->protocol_version != GUI_PROTOCOL_VERSION ||
+        !input_device_classes_valid(request->device_class_mask)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u16(destination.data, request->protocol_version);
+    put_u32(destination.data + 2, request->device_class_mask);
+    *out_size = IO_SUBSCRIBE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_io_subscribe(
+    const IpcMessage *message, GuiIoSubscribeRequest *out_request)
+{
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_IO_SUBSCRIBE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != IO_SUBSCRIBE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_request->protocol_version = get_u16(message->payload.data);
+    out_request->device_class_mask = get_u32(message->payload.data + 2);
+    if (out_request->protocol_version != GUI_PROTOCOL_VERSION) {
+        return CORE_UNSUPPORTED;
+    }
+    return input_device_classes_valid(out_request->device_class_mask) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_io_result(const GuiIoResult *result,
+                               Bytes destination, usize *out_size)
+{
+    if (result == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < IO_RESULT_SIZE || !error_is_known(result->error)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u32(destination.data, (u32)result->error);
+    *out_size = IO_RESULT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_io_result(const IpcMessage *message,
+                               IpcMessageType expected_type,
+                               GuiIoResult *out_result)
+{
+    if (message == NULL || out_result == NULL ||
+        message->type != expected_type ||
+        (expected_type != GUI_IO_SUBSCRIBE_RESULT &&
+         expected_type != GUI_IO_UNSUBSCRIBE_RESULT) ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != IO_RESULT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_result->error = (ErrorCode)get_u32(message->payload.data);
+    return error_is_known(out_result->error) ? CORE_OK :
+           CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_io_device_event(
+    const GuiIoDeviceEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < IO_DEVICE_EVENT_SIZE || event->device_id == 0 ||
+        !input_device_classes_valid(event->classes)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->device_id);
+    put_u16(destination.data + 8, event->bus);
+    put_u16(destination.data + 10, event->vendor);
+    put_u16(destination.data + 12, event->product);
+    put_u16(destination.data + 14, event->version);
+    put_u32(destination.data + 16, event->classes);
+    *out_size = IO_DEVICE_EVENT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_io_device_event(
+    const IpcMessage *message, IpcMessageType expected_type,
+    GuiIoDeviceEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != expected_type ||
+        (expected_type != GUI_IO_DEVICE_ADDED &&
+         expected_type != GUI_IO_DEVICE_REMOVED) ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != IO_DEVICE_EVENT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->device_id = get_u64(message->payload.data);
+    out_event->bus = get_u16(message->payload.data + 8);
+    out_event->vendor = get_u16(message->payload.data + 10);
+    out_event->product = get_u16(message->payload.data + 12);
+    out_event->version = get_u16(message->payload.data + 14);
+    out_event->classes = get_u32(message->payload.data + 16);
+    return out_event->device_id != 0 &&
+           input_device_classes_valid(out_event->classes) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_io_input_frame(
+    const GuiIoInputFrameEvent *event, Bytes destination, usize *out_size)
+{
+    usize size;
+    usize index;
+    ErrorCode result;
+
+    if (event == NULL || out_size == NULL || event->event_count == 0 ||
+        event->event_count > GUI_IO_INPUT_FRAME_MAX_EVENTS ||
+        event->device_id == 0 || event->sequence == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = io_frame_size(event->event_count, &size);
+    if (result != CORE_OK) return result;
+    if (destination.data == NULL || destination.size < size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->device_id);
+    put_u64(destination.data + 8, event->sequence);
+    put_u16(destination.data + 16, event->event_count);
+    for (index = 0; index < event->event_count; ++index) {
+        usize offset = IO_INPUT_FRAME_BASE_SIZE + index * IO_INPUT_EVENT_SIZE;
+        if (!io_input_kind_valid(event->events[index].kind)) {
+            return CORE_INVALID_ARGUMENT;
+        }
+        destination.data[offset] = event->events[index].kind;
+        put_u16(destination.data + offset + 1, event->events[index].code);
+        put_u32(destination.data + offset + 3, (u32)event->events[index].value);
+    }
+    *out_size = size;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_io_input_frame(
+    const IpcMessage *message, GuiIoInputFrameEvent *out_event)
+{
+    usize expected;
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_IO_INPUT_FRAME ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size < IO_INPUT_FRAME_BASE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->device_id = get_u64(message->payload.data);
+    out_event->sequence = get_u64(message->payload.data + 8);
+    out_event->event_count = get_u16(message->payload.data + 16);
+    if (out_event->event_count == 0 ||
+        out_event->event_count > GUI_IO_INPUT_FRAME_MAX_EVENTS ||
+        out_event->device_id == 0 || out_event->sequence == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = io_frame_size(out_event->event_count, &expected);
+    if (result != CORE_OK || expected != message->payload.size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    for (index = 0; index < out_event->event_count; ++index) {
+        usize offset = IO_INPUT_FRAME_BASE_SIZE + index * IO_INPUT_EVENT_SIZE;
+        out_event->events[index].kind = message->payload.data[offset];
+        out_event->events[index].code = get_u16(message->payload.data + offset + 1);
+        out_event->events[index].value =
+            (i32)get_u32(message->payload.data + offset + 3);
+        if (!io_input_kind_valid(out_event->events[index].kind)) {
+            return CORE_INVALID_ARGUMENT;
+        }
+    }
+    return CORE_OK;
+}
+
 static bool scene_geometry_valid(const GuiSceneGeometryRequest *request)
 {
     if (request->window_id == 0 ||
@@ -2080,4 +2312,968 @@ ErrorCode gui_decode_scene_binding_lost(
         return CORE_INVALID_ARGUMENT;
     }
     return CORE_OK;
+}
+
+static bool window_role_valid(GuiWindowRole role)
+{
+    return role >= GUI_WINDOW_ROLE_APP && role <= GUI_WINDOW_ROLE_IME;
+}
+
+static bool window_role_parent_valid(GuiWindowRole role, u64 parent_id)
+{
+    if (role == GUI_WINDOW_ROLE_DIALOG || role == GUI_WINDOW_ROLE_TRANSIENT) {
+        return parent_id != 0;
+    }
+    return parent_id == 0;
+}
+
+static bool window_flags_valid(GuiWindowFlags flags)
+{
+    return (flags & ~WINDOW_FLAGS_KNOWN) == 0;
+}
+
+static bool modifiers_valid(GuiModifierMask modifiers)
+{
+    return (modifiers & ~MODIFIER_MASK_KNOWN) == 0;
+}
+
+static bool lifecycle_valid(GuiWindowLifecycle lifecycle)
+{
+    return lifecycle >= GUI_WINDOW_LIFECYCLE_HIDDEN &&
+           lifecycle <= GUI_WINDOW_LIFECYCLE_CLOSING;
+}
+
+static bool lifecycle_reason_valid(GuiWindowLifecycleReason reason)
+{
+    return reason >= GUI_WINDOW_REASON_SHELL_ACTIVATION &&
+           reason <= GUI_WINDOW_REASON_CLIENT_REQUEST;
+}
+
+static bool navigation_action_valid(GuiNavigationAction action)
+{
+    return action >= GUI_NAVIGATION_BACK && action <= GUI_NAVIGATION_OVERVIEW;
+}
+
+static bool close_response_valid(GuiCloseResponse response)
+{
+    return response >= GUI_CLOSE_ALLOW && response <= GUI_CLOSE_DEFER;
+}
+
+static bool touch_phase_valid(GuiTouchPhase phase)
+{
+    return phase >= GUI_TOUCH_DOWN && phase <= GUI_TOUCH_CANCEL;
+}
+
+static bool pointer_phase_valid(GuiPointerPhase phase)
+{
+    return phase >= GUI_POINTER_MOVE && phase <= GUI_POINTER_CANCEL;
+}
+
+static bool key_phase_valid(GuiKeyPhase phase)
+{
+    return phase >= GUI_KEY_DOWN && phase <= GUI_KEY_REPEAT;
+}
+
+static ErrorCode string_payload_size(usize base, u16 length,
+                                     usize *out_size)
+{
+    return core_size_add(base, (usize)length, out_size);
+}
+
+static ErrorCode validate_window_create_request(
+    const GuiWindowCreateRequest *request)
+{
+    ErrorCode result = validate_prefix(request->prefix);
+
+    if (result != CORE_OK) return result;
+    if (request->surface_id == 0 || !window_role_valid(request->role) ||
+        !window_role_parent_valid(request->role, request->parent_id) ||
+        !window_flags_valid(request->flags) ||
+        request->title_length > GUI_WINDOW_TITLE_MAX ||
+        !utf8_is_valid(request->title, request->title_length)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_window_create(
+    const GuiWindowCreateRequest *request, Bytes destination, usize *out_size)
+{
+    usize index;
+    usize size;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_window_create_request(request);
+    if (result == CORE_OK) {
+        result = string_payload_size(WINDOW_CREATE_BASE_SIZE,
+                                     request->title_length, &size);
+    }
+    if (result != CORE_OK) return result;
+    if (destination.data == NULL || destination.size < size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->surface_id);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        destination.data[18 + index] = request->surface_bind_token[index];
+    }
+    destination.data[34] = request->role;
+    put_u64(destination.data + 35, request->parent_id);
+    put_u32(destination.data + 43, request->flags);
+    put_u16(destination.data + 47, request->title_length);
+    for (index = 0; index < request->title_length; ++index) {
+        destination.data[49 + index] = request->title[index];
+    }
+    *out_size = size;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_create(
+    const IpcMessage *message, GuiWindowCreateRequest *out_request)
+{
+    usize index;
+    usize expected;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_CREATE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size < WINDOW_CREATE_BASE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_request->title_length = get_u16(message->payload.data + 47);
+    if (out_request->title_length > GUI_WINDOW_TITLE_MAX) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = string_payload_size(WINDOW_CREATE_BASE_SIZE,
+                                 out_request->title_length, &expected);
+    if (result != CORE_OK || expected != message->payload.size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->surface_id = get_u64(message->payload.data + 10);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        out_request->surface_bind_token[index] = message->payload.data[18 + index];
+    }
+    out_request->role = message->payload.data[34];
+    out_request->parent_id = get_u64(message->payload.data + 35);
+    out_request->flags = get_u32(message->payload.data + 43);
+    for (index = 0; index < out_request->title_length; ++index) {
+        out_request->title[index] = message->payload.data[49 + index];
+    }
+    if (result != CORE_OK) return result;
+    return validate_window_create_request(out_request);
+}
+
+ErrorCode gui_encode_window_create_result(
+    const GuiWindowCreateResult *result, Bytes destination, usize *out_size)
+{
+    usize basic_size;
+    ErrorCode code;
+
+    if (result == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_CREATE_RESULT_SIZE ||
+        ((result->result.error == CORE_OK) != (result->window_id != 0))) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    code = gui_encode_basic_result(&result->result, destination, &basic_size);
+    if (code != CORE_OK) return code;
+    put_u64(destination.data + basic_size, result->window_id);
+    *out_size = WINDOW_CREATE_RESULT_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_create_result(
+    const IpcMessage *message, GuiWindowCreateResult *out_result)
+{
+    if (message == NULL || out_result == NULL ||
+        message->type != GUI_WINDOW_CREATE_RESULT ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_CREATE_RESULT_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_result->result.error = (ErrorCode)get_u32(message->payload.data);
+    out_result->result.request_id = get_u64(message->payload.data + 4);
+    out_result->window_id = get_u64(message->payload.data + 12);
+    if (!error_is_known(out_result->result.error) ||
+        out_result->result.request_id == 0 ||
+        ((out_result->result.error == CORE_OK) !=
+         (out_result->window_id != 0))) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_window_id_request(
+    const GuiWindowIdRequest *request, Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_ID_REQUEST_SIZE || request->window_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    *out_size = WINDOW_ID_REQUEST_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_id_request(
+    const IpcMessage *message, IpcMessageType expected_type,
+    GuiWindowIdRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL || message->type != expected_type ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_ID_REQUEST_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    if (result != CORE_OK) return result;
+    return out_request->window_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_set_title(
+    const GuiWindowSetTitleRequest *request, Bytes destination,
+    usize *out_size)
+{
+    usize index;
+    usize size;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL) return CORE_INVALID_ARGUMENT;
+    result = validate_prefix(request->prefix);
+    if (result == CORE_OK &&
+        (request->window_id == 0 ||
+         request->title_length > GUI_WINDOW_TITLE_MAX ||
+         !utf8_is_valid(request->title, request->title_length))) {
+        result = CORE_INVALID_ARGUMENT;
+    }
+    if (result == CORE_OK) {
+        result = string_payload_size(WINDOW_SET_TITLE_BASE_SIZE,
+                                     request->title_length, &size);
+    }
+    if (result != CORE_OK) return result;
+    if (destination.data == NULL || destination.size < size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u16(destination.data + 18, request->title_length);
+    for (index = 0; index < request->title_length; ++index) {
+        destination.data[20 + index] = request->title[index];
+    }
+    *out_size = size;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_set_title(
+    const IpcMessage *message, GuiWindowSetTitleRequest *out_request)
+{
+    usize index;
+    usize expected;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_SET_TITLE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size < WINDOW_SET_TITLE_BASE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_request->title_length = get_u16(message->payload.data + 18);
+    if (out_request->title_length > GUI_WINDOW_TITLE_MAX) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = string_payload_size(WINDOW_SET_TITLE_BASE_SIZE,
+                                 out_request->title_length, &expected);
+    if (result != CORE_OK || expected != message->payload.size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    for (index = 0; index < out_request->title_length; ++index) {
+        out_request->title[index] = message->payload.data[20 + index];
+    }
+    if (result != CORE_OK) return result;
+    if (out_request->window_id == 0 ||
+        out_request->title_length > GUI_WINDOW_TITLE_MAX ||
+        !utf8_is_valid(out_request->title, out_request->title_length)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_window_ack_configure(
+    const GuiWindowAckConfigureRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_ACK_CONFIGURE_SIZE ||
+        request->window_id == 0 || request->configure_serial == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->configure_serial);
+    *out_size = WINDOW_ACK_CONFIGURE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_ack_configure(
+    const IpcMessage *message, GuiWindowAckConfigureRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_ACK_CONFIGURE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_ACK_CONFIGURE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->configure_serial = get_u64(message->payload.data + 18);
+    if (result != CORE_OK) return result;
+    return out_request->window_id != 0 && out_request->configure_serial != 0 ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_modal(
+    const GuiWindowModalRequest *request, Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_MODAL_SIZE || request->window_id == 0 ||
+        request->parent_id == request->window_id) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->parent_id);
+    *out_size = WINDOW_MODAL_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_modal(
+    const IpcMessage *message, GuiWindowModalRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_SET_MODAL ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_MODAL_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->parent_id = get_u64(message->payload.data + 18);
+    if (result != CORE_OK) return result;
+    return out_request->window_id != 0 &&
+           out_request->parent_id != out_request->window_id ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_surface_rebind(
+    const GuiWindowSurfaceRebindRequest *request, Bytes destination,
+    usize *out_size)
+{
+    usize index;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_SURFACE_REBIND_SIZE ||
+        request->window_id == 0 || request->surface_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->surface_id);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        destination.data[26 + index] = request->surface_bind_token[index];
+    }
+    *out_size = WINDOW_SURFACE_REBIND_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_surface_rebind(
+    const IpcMessage *message, GuiWindowSurfaceRebindRequest *out_request)
+{
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_SURFACE_REBIND ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_SURFACE_REBIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->surface_id = get_u64(message->payload.data + 18);
+    for (index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index) {
+        out_request->surface_bind_token[index] = message->payload.data[26 + index];
+    }
+    if (result != CORE_OK) return result;
+    return out_request->window_id != 0 && out_request->surface_id != 0 ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_shell_bind(
+    const GuiShellBindRequest *request, Bytes destination, usize *out_size)
+{
+    usize index;
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SHELL_BIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    for (index = 0; index < GUI_SHELL_TOKEN_SIZE; ++index) {
+        destination.data[10 + index] = request->shell_token[index];
+    }
+    *out_size = SHELL_BIND_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_shell_bind(
+    const IpcMessage *message, GuiShellBindRequest *out_request)
+{
+    usize index;
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_BIND_SHELL ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SHELL_BIND_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    if (result != CORE_OK) return result;
+    for (index = 0; index < GUI_SHELL_TOKEN_SIZE; ++index) {
+        out_request->shell_token[index] = message->payload.data[10 + index];
+    }
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_shell_activate(
+    const GuiShellActivateRequest *request, Bytes destination, usize *out_size)
+{
+    GuiWindowIdRequest wrapped;
+
+    if (request == NULL) return CORE_INVALID_ARGUMENT;
+    wrapped.prefix = request->prefix;
+    wrapped.window_id = request->window_id;
+    return gui_encode_window_id_request(&wrapped, destination, out_size);
+}
+
+ErrorCode gui_decode_shell_activate(
+    const IpcMessage *message, GuiShellActivateRequest *out_request)
+{
+    GuiWindowIdRequest decoded;
+    ErrorCode result;
+
+    if (out_request == NULL) return CORE_INVALID_ARGUMENT;
+    result = gui_decode_window_id_request(message, GUI_SHELL_ACTIVATE, &decoded);
+    if (result != CORE_OK) return result;
+    out_request->prefix = decoded.prefix;
+    out_request->window_id = decoded.window_id;
+    return CORE_OK;
+}
+
+ErrorCode gui_encode_shell_insets(
+    const GuiShellInsetsRequest *request, Bytes destination, usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SHELL_INSETS_SIZE || request->display_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->display_id);
+    put_u32(destination.data + 18, request->insets.top);
+    put_u32(destination.data + 22, request->insets.right);
+    put_u32(destination.data + 26, request->insets.bottom);
+    put_u32(destination.data + 30, request->insets.left);
+    *out_size = SHELL_INSETS_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_shell_insets(
+    const IpcMessage *message, GuiShellInsetsRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SHELL_SET_INSETS ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SHELL_INSETS_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->display_id = get_u64(message->payload.data + 10);
+    out_request->insets.top = get_u32(message->payload.data + 18);
+    out_request->insets.right = get_u32(message->payload.data + 22);
+    out_request->insets.bottom = get_u32(message->payload.data + 26);
+    out_request->insets.left = get_u32(message->payload.data + 30);
+    if (result != CORE_OK) return result;
+    return out_request->display_id != 0 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_shell_navigate(
+    const GuiShellNavigateRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < SHELL_NAVIGATE_SIZE ||
+        !navigation_action_valid(request->action)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    destination.data[10] = request->action;
+    put_u64(destination.data + 11, request->target_id);
+    *out_size = SHELL_NAVIGATE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_shell_navigate(
+    const IpcMessage *message, GuiShellNavigateRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_SHELL_NAVIGATE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != SHELL_NAVIGATE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->action = message->payload.data[10];
+    out_request->target_id = get_u64(message->payload.data + 11);
+    if (result != CORE_OK) return result;
+    return navigation_action_valid(out_request->action) ? CORE_OK :
+           CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_close_response(
+    const GuiWindowCloseResponseRequest *request, Bytes destination,
+    usize *out_size)
+{
+    ErrorCode result;
+
+    if (request == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_CLOSE_RESPONSE_SIZE ||
+        request->window_id == 0 || request->close_serial == 0 ||
+        !close_response_valid(request->response)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = validate_prefix(request->prefix);
+    if (result != CORE_OK) return result;
+    encode_prefix(destination.data, request->prefix);
+    put_u64(destination.data + 10, request->window_id);
+    put_u64(destination.data + 18, request->close_serial);
+    destination.data[26] = request->response;
+    *out_size = WINDOW_CLOSE_RESPONSE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_close_response(
+    const IpcMessage *message, GuiWindowCloseResponseRequest *out_request)
+{
+    ErrorCode result;
+
+    if (message == NULL || out_request == NULL ||
+        message->type != GUI_WINDOW_RESPOND_CLOSE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_CLOSE_RESPONSE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = decode_prefix(message->payload.data, &out_request->prefix);
+    out_request->window_id = get_u64(message->payload.data + 10);
+    out_request->close_serial = get_u64(message->payload.data + 18);
+    out_request->response = message->payload.data[26];
+    if (result != CORE_OK) return result;
+    return out_request->window_id != 0 && out_request->close_serial != 0 &&
+           close_response_valid(out_request->response) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_configure(
+    const GuiWindowConfigureEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_CONFIGURE_SIZE || event->window_id == 0 ||
+        event->configure_serial == 0 || event->width == 0 ||
+        event->height == 0 || event->scale == 0 ||
+        event->orientation > GUI_ORIENTATION_LEFT) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->window_id);
+    put_u64(destination.data + 8, event->configure_serial);
+    put_u32(destination.data + 16, event->width);
+    put_u32(destination.data + 20, event->height);
+    put_u32(destination.data + 24, event->scale);
+    destination.data[28] = event->orientation;
+    put_u32(destination.data + 29, event->safe_insets.top);
+    put_u32(destination.data + 33, event->safe_insets.right);
+    put_u32(destination.data + 37, event->safe_insets.bottom);
+    put_u32(destination.data + 41, event->safe_insets.left);
+    *out_size = WINDOW_CONFIGURE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_configure(
+    const IpcMessage *message, GuiWindowConfigureEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_CONFIGURE ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_CONFIGURE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->window_id = get_u64(message->payload.data);
+    out_event->configure_serial = get_u64(message->payload.data + 8);
+    out_event->width = get_u32(message->payload.data + 16);
+    out_event->height = get_u32(message->payload.data + 20);
+    out_event->scale = get_u32(message->payload.data + 24);
+    out_event->orientation = message->payload.data[28];
+    out_event->safe_insets.top = get_u32(message->payload.data + 29);
+    out_event->safe_insets.right = get_u32(message->payload.data + 33);
+    out_event->safe_insets.bottom = get_u32(message->payload.data + 37);
+    out_event->safe_insets.left = get_u32(message->payload.data + 41);
+    return out_event->window_id != 0 && out_event->configure_serial != 0 &&
+           out_event->width != 0 && out_event->height != 0 &&
+           out_event->scale != 0 &&
+           out_event->orientation <= GUI_ORIENTATION_LEFT ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_lifecycle(
+    const GuiWindowLifecycleEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_LIFECYCLE_SIZE || event->serial == 0 ||
+        event->window_id == 0 || !lifecycle_valid(event->lifecycle) ||
+        !lifecycle_reason_valid(event->reason)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->window_id);
+    destination.data[16] = event->lifecycle;
+    destination.data[17] = event->reason;
+    *out_size = WINDOW_LIFECYCLE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_lifecycle(
+    const IpcMessage *message, GuiWindowLifecycleEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_LIFECYCLE_CHANGED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_LIFECYCLE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    out_event->lifecycle = message->payload.data[16];
+    out_event->reason = message->payload.data[17];
+    return out_event->serial != 0 && out_event->window_id != 0 &&
+           lifecycle_valid(out_event->lifecycle) &&
+           lifecycle_reason_valid(out_event->reason) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_close_event(
+    const GuiWindowCloseEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_CLOSE_SIZE || event->close_serial == 0 ||
+        event->window_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->close_serial);
+    put_u64(destination.data + 8, event->window_id);
+    *out_size = WINDOW_CLOSE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_close_event(
+    const IpcMessage *message, GuiWindowCloseEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_CLOSE_REQUESTED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != WINDOW_CLOSE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->close_serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    return out_event->close_serial != 0 && out_event->window_id != 0 ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_visibility(
+    const GuiWindowVisibilityEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_VISIBILITY_SIZE || event->serial == 0 ||
+        event->window_id == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->window_id);
+    destination.data[16] = event->visible ? 1 : 0;
+    *out_size = WINDOW_VISIBILITY_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_visibility(
+    const IpcMessage *message, GuiWindowVisibilityEvent *out_event)
+{
+    u8 visible;
+
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_VISIBILITY_CHANGED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_VISIBILITY_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    visible = message->payload.data[16];
+    out_event->visible = visible == 1;
+    return out_event->serial != 0 && out_event->window_id != 0 &&
+           visible <= 1 ? CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_pointer(
+    const GuiWindowPointerEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_POINTER_SIZE || event->window_id == 0 ||
+        event->input_serial == 0 || !pointer_phase_valid(event->phase) ||
+        !modifiers_valid(event->modifiers)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->window_id);
+    put_u64(destination.data + 8, event->input_serial);
+    put_u64(destination.data + 16, event->timestamp_ms);
+    put_u32(destination.data + 24, event->pointer_id);
+    destination.data[28] = event->phase;
+    put_u32(destination.data + 29, event->buttons);
+    put_u32(destination.data + 33, event->modifiers);
+    put_u32(destination.data + 37, (u32)event->x);
+    put_u32(destination.data + 41, (u32)event->y);
+    *out_size = WINDOW_POINTER_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_pointer(
+    const IpcMessage *message, GuiWindowPointerEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_POINTER ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != WINDOW_POINTER_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->window_id = get_u64(message->payload.data);
+    out_event->input_serial = get_u64(message->payload.data + 8);
+    out_event->timestamp_ms = get_u64(message->payload.data + 16);
+    out_event->pointer_id = get_u32(message->payload.data + 24);
+    out_event->phase = message->payload.data[28];
+    out_event->buttons = get_u32(message->payload.data + 29);
+    out_event->modifiers = get_u32(message->payload.data + 33);
+    out_event->x = (i32)get_u32(message->payload.data + 37);
+    out_event->y = (i32)get_u32(message->payload.data + 41);
+    return out_event->window_id != 0 && out_event->input_serial != 0 &&
+           pointer_phase_valid(out_event->phase) &&
+           modifiers_valid(out_event->modifiers) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_key(
+    const GuiWindowKeyEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_KEY_SIZE || event->window_id == 0 ||
+        event->input_serial == 0 || !key_phase_valid(event->phase) ||
+        !modifiers_valid(event->modifiers)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->window_id);
+    put_u64(destination.data + 8, event->input_serial);
+    put_u64(destination.data + 16, event->timestamp_ms);
+    put_u32(destination.data + 24, event->key_code);
+    destination.data[28] = event->phase;
+    put_u32(destination.data + 29, event->modifiers);
+    *out_size = WINDOW_KEY_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_key(
+    const IpcMessage *message, GuiWindowKeyEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_KEY ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != WINDOW_KEY_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->window_id = get_u64(message->payload.data);
+    out_event->input_serial = get_u64(message->payload.data + 8);
+    out_event->timestamp_ms = get_u64(message->payload.data + 16);
+    out_event->key_code = get_u32(message->payload.data + 24);
+    out_event->phase = message->payload.data[28];
+    out_event->modifiers = get_u32(message->payload.data + 29);
+    return out_event->window_id != 0 && out_event->input_serial != 0 &&
+           key_phase_valid(out_event->phase) &&
+           modifiers_valid(out_event->modifiers) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_touch(
+    const GuiWindowTouchEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_TOUCH_SIZE || event->window_id == 0 ||
+        event->input_serial == 0 || !touch_phase_valid(event->phase)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->window_id);
+    put_u64(destination.data + 8, event->input_serial);
+    put_u64(destination.data + 16, event->timestamp_ms);
+    put_u32(destination.data + 24, event->touch_id);
+    destination.data[28] = event->phase;
+    put_u32(destination.data + 29, (u32)event->x);
+    put_u32(destination.data + 33, (u32)event->y);
+    *out_size = WINDOW_TOUCH_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_touch(
+    const IpcMessage *message, GuiWindowTouchEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_TOUCH ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != WINDOW_TOUCH_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->window_id = get_u64(message->payload.data);
+    out_event->input_serial = get_u64(message->payload.data + 8);
+    out_event->timestamp_ms = get_u64(message->payload.data + 16);
+    out_event->touch_id = get_u32(message->payload.data + 24);
+    out_event->phase = message->payload.data[28];
+    out_event->x = (i32)get_u32(message->payload.data + 29);
+    out_event->y = (i32)get_u32(message->payload.data + 33);
+    return out_event->window_id != 0 && out_event->input_serial != 0 &&
+           touch_phase_valid(out_event->phase) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_service_event(
+    const GuiWindowServiceEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_SERVICE_SIZE || event->serial == 0 ||
+        event->window_id == 0 || !lifecycle_reason_valid(event->reason)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->window_id);
+    destination.data[16] = event->reason;
+    *out_size = WINDOW_SERVICE_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_service_event(
+    const IpcMessage *message, GuiWindowServiceEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_RENDERING_SUSPENDED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL || message->payload.size != WINDOW_SERVICE_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    out_event->reason = message->payload.data[16];
+    return out_event->serial != 0 && out_event->window_id != 0 &&
+           lifecycle_reason_valid(out_event->reason) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
+}
+
+ErrorCode gui_encode_window_navigation(
+    const GuiWindowNavigationEvent *event, Bytes destination, usize *out_size)
+{
+    if (event == NULL || out_size == NULL || destination.data == NULL ||
+        destination.size < WINDOW_NAVIGATION_SIZE || event->serial == 0 ||
+        event->window_id == 0 || !navigation_action_valid(event->action)) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    put_u64(destination.data, event->serial);
+    put_u64(destination.data + 8, event->window_id);
+    destination.data[16] = event->action;
+    *out_size = WINDOW_NAVIGATION_SIZE;
+    return CORE_OK;
+}
+
+ErrorCode gui_decode_window_navigation(
+    const IpcMessage *message, GuiWindowNavigationEvent *out_event)
+{
+    if (message == NULL || out_event == NULL ||
+        message->type != GUI_WINDOW_NAVIGATION_REQUESTED ||
+        message->descriptor != IPC_NO_DESCRIPTOR ||
+        message->payload.data == NULL ||
+        message->payload.size != WINDOW_NAVIGATION_SIZE) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    out_event->serial = get_u64(message->payload.data);
+    out_event->window_id = get_u64(message->payload.data + 8);
+    out_event->action = message->payload.data[16];
+    return out_event->serial != 0 && out_event->window_id != 0 &&
+           navigation_action_valid(out_event->action) ?
+           CORE_OK : CORE_INVALID_ARGUMENT;
 }

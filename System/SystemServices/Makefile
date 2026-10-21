@@ -1,4 +1,4 @@
-SERVICES := displayserv
+SERVICES := displayserv compositorserv windowserv
 
 .PHONY: all check clean runtime-test
 
