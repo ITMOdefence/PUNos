@@ -2932,6 +2932,23 @@ static void remove_client(WindowServiceHandle service, WindowClient *client)
         service->io_touch_device_id = 0;
         service->io_pointer_buttons = 0;
         service->io_modifiers = 0;
+        service->active_window_id = 0;
+        for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
+            WindowRecord *window = &service->windows[index];
+
+            if (!window->active || window->owner == client ||
+                window->lifecycle == GUI_WINDOW_LIFECYCLE_CLOSING ||
+                window->lifecycle == GUI_WINDOW_LIFECYCLE_SUSPENDED) {
+                continue;
+            }
+            if (window->lifecycle == GUI_WINDOW_LIFECYCLE_FOREGROUND) {
+                window->lifecycle = GUI_WINDOW_LIFECYCLE_BACKGROUND;
+                (void)send_lifecycle(service, window,
+                                     GUI_WINDOW_REASON_LOCK);
+            }
+            (void)send_visibility(service, window);
+            (void)apply_scene_policy(service, window);
+        }
     }
     for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
         if (service->windows[index].active &&
