@@ -903,7 +903,7 @@ static void test_scene_update_error_suspends_and_removes(void)
                scene_remove.window_id == created.window_id);
     EXPECT(51, ipc_message_destroy(&message) == CORE_OK);
     EXPECT(52, send_basic_message(compositor_peer, GUI_SCENE_RESULT,
-                                  CORE_OK,
+                                  CORE_NOT_FOUND,
                                   scene_remove.prefix.request_id) == CORE_OK);
     EXPECT(53, window_service_poll(service, 0) == CORE_OK);
     EXPECT(54, ipc_connection_receive(compositor_peer, &status, &message) ==

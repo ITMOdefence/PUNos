@@ -40,6 +40,8 @@ SELF_TESTS=(
 
 SERVICES=(
     "SystemServices/displayserv/build/displayserv:displayserv"
+    "SystemServices/compositorserv/build/compositorserv:compositorserv"
+    "SystemServices/windowserv/build/windowserv:windowserv"
 )
 
 verify_elf() {

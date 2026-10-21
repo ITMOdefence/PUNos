@@ -448,8 +448,7 @@ static ErrorCode send_service_event(WindowServiceHandle service,
     result = gui_encode_window_service_event(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, window->owner, type, payload, size);
-    return CORE_OK;
+    return queue_payload(service, window->owner, type, payload, size);
 }
 
 static ErrorCode send_close_request(WindowServiceHandle service,
@@ -470,9 +469,10 @@ static ErrorCode send_close_request(WindowServiceHandle service,
     result = gui_encode_window_close_event(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, window->owner, GUI_WINDOW_CLOSE_REQUESTED,
-                        payload, size);
-    return CORE_OK;
+    result = queue_payload(service, window->owner,
+                           GUI_WINDOW_CLOSE_REQUESTED, payload, size);
+    if (result != CORE_OK) window->pending_close_serial = 0;
+    return result;
 }
 
 static u64 next_scene_request_id(WindowServiceHandle service)
@@ -540,20 +540,20 @@ static GuiSceneRect scene_geometry_for_window(WindowServiceHandle service,
             geometry.height = inset;
         } else if (service->safe_insets.bottom != 0) {
             inset = inset_limit(service->safe_insets.bottom, height);
-            geometry.y = height - inset;
+            geometry.y = (i32)((height - inset) << 8);
             geometry.height = inset;
         } else if (service->safe_insets.left != 0) {
             inset = inset_limit(service->safe_insets.left, width);
             geometry.width = inset;
         } else if (service->safe_insets.right != 0) {
             inset = inset_limit(service->safe_insets.right, width);
-            geometry.x = width - inset;
+            geometry.x = (i32)((width - inset) << 8);
             geometry.width = inset;
         }
     } else if (window->role == GUI_WINDOW_ROLE_IME &&
                service->safe_insets.bottom != 0) {
         inset = inset_limit(service->safe_insets.bottom, height);
-        geometry.y = height - inset;
+        geometry.y = (i32)((height - inset) << 8);
         geometry.height = inset;
     }
     return geometry;
@@ -698,9 +698,8 @@ static ErrorCode send_lifecycle(WindowServiceHandle service,
     result = gui_encode_window_lifecycle(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, window->owner,
-                        GUI_WINDOW_LIFECYCLE_CHANGED, payload, size);
-    return CORE_OK;
+    return queue_payload(service, window->owner,
+                         GUI_WINDOW_LIFECYCLE_CHANGED, payload, size);
 }
 
 static ErrorCode send_configure(WindowServiceHandle service,
@@ -726,9 +725,10 @@ static ErrorCode send_configure(WindowServiceHandle service,
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
     window->pending_configure_serial = event.configure_serial;
-    (void)queue_payload(service, window->owner, GUI_WINDOW_CONFIGURE,
-                        payload, size);
-    return CORE_OK;
+    result = queue_payload(service, window->owner, GUI_WINDOW_CONFIGURE,
+                           payload, size);
+    if (result != CORE_OK) window->pending_configure_serial = 0;
+    return result;
 }
 
 static ErrorCode send_visibility(WindowServiceHandle service,
@@ -749,9 +749,8 @@ static ErrorCode send_visibility(WindowServiceHandle service,
     result = gui_encode_window_visibility(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, window->owner,
-                        GUI_WINDOW_VISIBILITY_CHANGED, payload, size);
-    return CORE_OK;
+    return queue_payload(service, window->owner,
+                         GUI_WINDOW_VISIBILITY_CHANGED, payload, size);
 }
 
 static ErrorCode publish_window_update(WindowServiceHandle service,
@@ -1506,9 +1505,8 @@ static ErrorCode send_navigation_event(WindowServiceHandle service,
     result = gui_encode_window_navigation(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, target->owner,
-                        GUI_WINDOW_NAVIGATION_REQUESTED, payload, size);
-    return CORE_OK;
+    return queue_payload(service, target->owner,
+                         GUI_WINDOW_NAVIGATION_REQUESTED, payload, size);
 }
 
 static ErrorCode handle_shell_insets(WindowServiceHandle service,
@@ -1956,6 +1954,16 @@ static ErrorCode scene_handle_result(WindowServiceHandle service,
     window->pending_scene_step = WINDOW_SCENE_STEP_NONE;
     window->pending_scene_request_id = 0;
 
+    /* A missing node already satisfies remove and must not be retried. */
+    if (completed == WINDOW_SCENE_STEP_REMOVE &&
+        result->error == CORE_NOT_FOUND) {
+        goto scene_step_completed;
+    }
+    if (completed == WINDOW_SCENE_STEP_REMOVE && result->error != CORE_OK) {
+        /* Reconnect and rebuild the scene instead of spinning on remove. */
+        return result->error;
+    }
+
     if (result->error != CORE_OK) {
         if (window->destroy_pending) {
             if (completed != WINDOW_SCENE_STEP_REMOVE && window->scene_bound) {
@@ -1968,23 +1976,10 @@ static ErrorCode scene_handle_result(WindowServiceHandle service,
             }
             return fail_destroy(service, window, result->error);
         }
-        if (completed == WINDOW_SCENE_STEP_REMOVE) {
-            if (window->create_failed_pending_remove) {
-                return scene_queue_step(service, window,
-                                        WINDOW_SCENE_STEP_REMOVE);
-            }
-            if (window->rebind_failed_pending_remove) {
-                return scene_queue_step(service, window,
-                                        WINDOW_SCENE_STEP_REMOVE);
-            }
-            if (window->scene_failed_pending_remove) {
-                return scene_queue_step(service, window,
-                                        WINDOW_SCENE_STEP_REMOVE);
-            }
-        }
         return scene_fail_window(service, window, result->error);
     }
 
+scene_step_completed:
     if (completed == WINDOW_SCENE_STEP_BIND) {
         window->scene_bound = true;
         next = WINDOW_SCENE_STEP_GEOMETRY;
@@ -2456,8 +2451,8 @@ static ErrorCode send_shell_key(WindowServiceHandle service, u16 code,
     result = gui_encode_window_key(
         &event, (Bytes){ payload, sizeof(payload) }, &size);
     if (result != CORE_OK) return result;
-    (void)queue_payload(service, target->owner, GUI_WINDOW_KEY, payload, size);
-    return CORE_OK;
+    return queue_payload(service, target->owner, GUI_WINDOW_KEY, payload,
+                         size);
 }
 
 static ErrorCode route_io_key(WindowServiceHandle service, u16 code, i32 value)
@@ -2927,8 +2922,17 @@ static ErrorCode handle_client_event(WindowServiceHandle service,
 static void remove_client(WindowServiceHandle service, WindowClient *client)
 {
     usize index;
+    bool was_shell;
 
     if (client == NULL || client->connection == NULL) return;
+    was_shell = service->shell_client == client;
+    if (was_shell) {
+        (void)cancel_active_touch(service);
+        service->io_touch_down = false;
+        service->io_touch_device_id = 0;
+        service->io_pointer_buttons = 0;
+        service->io_modifiers = 0;
+    }
     for (index = 0; index < WINDOW_SERVICE_WINDOW_MAX; ++index) {
         if (service->windows[index].active &&
             service->windows[index].owner == client) {
@@ -2943,7 +2947,7 @@ static void remove_client(WindowServiceHandle service, WindowClient *client)
             }
         }
     }
-    if (service->shell_client == client) service->shell_client = NULL;
+    if (was_shell) service->shell_client = NULL;
     (void)eventloop_remove_source(service->loop, client->source);
     (void)ipc_connection_close(&client->connection);
     client->source = 0;
