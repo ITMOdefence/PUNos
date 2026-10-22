@@ -68,7 +68,7 @@ def finish(process):
             process.kill();process.wait();raise AssertionError('SIGTERM did not terminate child')
 
 def compile_binary(module,output,definitions,registry=None,metadata=None,extra=None,wrap=None):
-    libs=['core','mem','str','file','process','time','thread','sync','eventloop']
+    libs=['core','mem','str','file','process','time','thread','sync','eventloop','random']
     flags=['-std=c11','-ffreestanding','-nostdinc','-fno-builtin','-fno-stack-protector','-fno-pic','-m64','-Wall','-Wextra','-Werror','-fno-tree-loop-distribute-patterns']
     includes=[module_dir(module)/'include',module_dir(module)/'src',ROOT/'System/NativeRuntime/include',ROOT/'System/NativeRuntime/SyscallWrappers/include']
     includes += [ROOT/f'System/SystemLibs/lib{lib}/include' for lib in libs]
