@@ -261,6 +261,8 @@ def main():
         if args.service in ('all','initserv'):
             registry=directory/'registry.json';metadata=directory/'metadata.json'
             value=json.loads((HERE/'platform_registry.json').read_text())
+            for service in value['services']:
+                service['enabled'] = service['service_id'] in ('logserv', 'appserv')
             value['services'][0].update(executable=str(log_binary),arguments=['--log-path='+str(directory/'supervised.log')])
             value['services'][1].update(executable=str(app_binary))
             value['services'].append(dict(service_id='disabled',executable=str(directory/'not-installed'),arguments=[],environment=[],enabled=False,critical=False,restart='never',terminates_on_sigterm=True))
