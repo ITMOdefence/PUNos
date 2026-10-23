@@ -60,6 +60,8 @@ struct UiViewHandle {
     u64 configure_serial;
     u64 commit_serial;
     u64 pending_commit_request;
+    GuiWindowConfigureEvent latest_configure;
+    bool has_configure;
     u16 damage_count;
     GuiRect damage[GUI_MAX_DAMAGE_RECTS];
     struct UiBufferHandle buffers[UI_BUFFER_COUNT_MAX];
@@ -443,6 +445,8 @@ static ErrorCode dispatch_window(struct UiContextHandle *context,
         if (result != CORE_OK) return result;
         view = find_window(context, value.window_id);
         if (view != NULL) {
+            view->latest_configure = value;
+            view->has_configure = true;
             if (!view->configured) {
                 view->width = value.width;
                 view->height = value.height;
@@ -454,6 +458,57 @@ static ErrorCode dispatch_window(struct UiContextHandle *context,
                                   .error = result,
                                   .configure = value });
         }
+        return CORE_OK;
+    }
+    if (message->type == GUI_WINDOW_CLOSE_REQUESTED) {
+        GuiWindowCloseEvent value;
+        ErrorCode result = gui_decode_window_close_event(message, &value);
+        struct UiViewHandle *view;
+        if (result != CORE_OK) return result;
+        view = find_window(context, value.window_id);
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_CLOSE_REQUESTED,
+                                               .error = CORE_OK, .close = value });
+        return CORE_OK;
+    }
+    if (message->type == GUI_WINDOW_TOUCH) {
+        GuiWindowTouchEvent value;
+        ErrorCode result = gui_decode_window_touch(message, &value);
+        struct UiViewHandle *view;
+        if (result != CORE_OK) return result;
+        view = find_window(context, value.window_id);
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_TOUCH,
+                                               .error = CORE_OK, .touch = value });
+        return CORE_OK;
+    }
+    if (message->type == GUI_WINDOW_POINTER) {
+        GuiWindowPointerEvent value;
+        ErrorCode result = gui_decode_window_pointer(message, &value);
+        struct UiViewHandle *view;
+        if (result != CORE_OK) return result;
+        view = find_window(context, value.window_id);
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_POINTER,
+                                               .error = CORE_OK, .pointer = value });
+        return CORE_OK;
+    }
+    if (message->type == GUI_WINDOW_KEY) {
+        GuiWindowKeyEvent value;
+        ErrorCode result = gui_decode_window_key(message, &value);
+        struct UiViewHandle *view;
+        if (result != CORE_OK) return result;
+        view = find_window(context, value.window_id);
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_KEY,
+                                               .error = CORE_OK, .key = value });
+        return CORE_OK;
+    }
+    if (message->type == GUI_WINDOW_VISIBILITY_CHANGED) {
+        GuiWindowVisibilityEvent value;
+        ErrorCode result = gui_decode_window_visibility(message, &value);
+        struct UiViewHandle *view;
+        if (result != CORE_OK) return result;
+        view = find_window(context, value.window_id);
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_VISIBILITY,
+                                               .error = CORE_OK,
+                                               .visibility = value });
         return CORE_OK;
     }
     if (message->type == GUI_WINDOW_LIFECYCLE_CHANGED) {
@@ -769,6 +824,90 @@ ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer)
         view->damage_count = 0;
     }
     return result;
+}
+
+static ErrorCode window_id_operation(UiViewHandle view, IpcMessageType type)
+{
+    u8 payload[32];
+    usize size;
+    GuiWindowIdRequest request;
+    ErrorCode result;
+
+    if (view == NULL || view->state != UI_VIEW_READY || view->window_id == 0)
+        return CORE_INVALID_STATE;
+    request = (GuiWindowIdRequest){
+        { GUI_PROTOCOL_VERSION, next_request(view->context) }, view->window_id
+    };
+    result = gui_encode_window_id_request(&request,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(
+        &view->context->window, type, payload, size);
+    return result;
+}
+
+ErrorCode ui_view_publish(UiViewHandle view)
+{
+    return window_id_operation(view, GUI_WINDOW_SHOW);
+}
+
+ErrorCode ui_view_hide(UiViewHandle view)
+{
+    return window_id_operation(view, GUI_WINDOW_HIDE);
+}
+
+ErrorCode ui_view_set_title(UiViewHandle view, const char *title)
+{
+    u8 payload[GUI_WINDOW_TITLE_MAX + 32];
+    usize size;
+    u16 length;
+    GuiWindowSetTitleRequest request = { 0 };
+    ErrorCode result;
+
+    if (view == NULL || view->state != UI_VIEW_READY) return CORE_INVALID_STATE;
+    result = title_length(title, &length);
+    if (result != CORE_OK) return result;
+    request.prefix = (GuiRequestPrefix){ GUI_PROTOCOL_VERSION,
+                                        next_request(view->context) };
+    request.window_id = view->window_id;
+    request.title_length = length;
+    result = memory_copy((Bytes){ request.title, length },
+                         (Bytes){ (u8 *)title, length });
+    if (result == CORE_OK) result = gui_encode_window_set_title(
+        &request, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(
+        &view->context->window, GUI_WINDOW_SET_TITLE, payload, size);
+    return result;
+}
+
+ErrorCode ui_view_respond_close(UiViewHandle view, u64 close_serial,
+                                GuiCloseResponse response)
+{
+    u8 payload[40];
+    usize size;
+    GuiWindowCloseResponseRequest request;
+    ErrorCode result;
+
+    if (view == NULL || view->state != UI_VIEW_READY || close_serial == 0 ||
+        (response != GUI_CLOSE_ALLOW && response != GUI_CLOSE_DENY &&
+         response != GUI_CLOSE_DEFER)) return CORE_INVALID_ARGUMENT;
+    request = (GuiWindowCloseResponseRequest){
+        { GUI_PROTOCOL_VERSION, next_request(view->context) },
+        view->window_id, close_serial, response
+    };
+    result = gui_encode_window_close_response(
+        &request, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(
+        &view->context->window, GUI_WINDOW_RESPOND_CLOSE, payload, size);
+    return result;
+}
+
+ErrorCode ui_get_latest_configure(UiViewHandle view,
+                                  GuiWindowConfigureEvent *out_configure)
+{
+    if (view == NULL || out_configure == NULL) return CORE_INVALID_ARGUMENT;
+    if (!view->has_configure) return CORE_NOT_FOUND;
+    *out_configure = view->latest_configure;
+    return CORE_OK;
 }
 
 ErrorCode ui_view_destroy(UiViewHandle *view)

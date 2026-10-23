@@ -28,7 +28,12 @@ typedef enum UiEventKind {
     UI_EVENT_NAVIGATION = 4,
     UI_EVENT_SERVICE_ERROR = 5,
     UI_EVENT_FRAME_DONE = 6,
-    UI_EVENT_REDRAW = 7
+    UI_EVENT_REDRAW = 7,
+    UI_EVENT_CLOSE_REQUESTED = 8,
+    UI_EVENT_TOUCH = 9,
+    UI_EVENT_POINTER = 10,
+    UI_EVENT_KEY = 11,
+    UI_EVENT_VISIBILITY = 12
 } UiEventKind;
 
 typedef struct UiEvent {
@@ -40,6 +45,11 @@ typedef struct UiEvent {
         GuiWindowNavigationEvent navigation;
         GuiSurfaceFrameDoneEvent frame;
         GuiSurfaceRedrawEvent redraw;
+        GuiWindowCloseEvent close;
+        GuiWindowTouchEvent touch;
+        GuiWindowPointerEvent pointer;
+        GuiWindowKeyEvent key;
+        GuiWindowVisibilityEvent visibility;
     };
 } UiEvent;
 
@@ -87,6 +97,13 @@ ErrorCode ui_view_acquire_buffer(UiViewHandle view,
 ErrorCode ui_view_damage(UiViewHandle view, const GuiRect *rects,
                          usize count);
 ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer);
+ErrorCode ui_view_publish(UiViewHandle view);
+ErrorCode ui_view_hide(UiViewHandle view);
+ErrorCode ui_view_set_title(UiViewHandle view, const char *title);
+ErrorCode ui_view_respond_close(UiViewHandle view, u64 close_serial,
+                                GuiCloseResponse response);
+ErrorCode ui_get_latest_configure(UiViewHandle view,
+                                  GuiWindowConfigureEvent *out_configure);
 
 /* Removes event sources, closes both GUI connections and clears the handle. */
 ErrorCode ui_shutdown(UiContextHandle *context);

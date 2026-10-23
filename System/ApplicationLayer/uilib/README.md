@@ -7,7 +7,8 @@ descriptors in the `appframework` event loop.
 Current implementation covers context initialization, connection event
 dispatch, asynchronous surface/window creation, configure/lifecycle/navigation
 delivery, shared-memory buffer pools, damage/present, frame completion and
-deterministic shutdown.
+deterministic shutdown. Applications receive close, touch, pointer, key and
+visibility events and can publish, hide, retitle or answer close requests.
 
 ```sh
 make -C System/ApplicationLayer/uilib check
