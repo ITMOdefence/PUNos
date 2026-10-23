@@ -10,7 +10,8 @@ EVENT := $(ROOT)/System/SystemLibs/libeventloop
 TIME := $(ROOT)/System/SystemLibs/libtime
 IPC := $(ROOT)/System/SpecialLibs/ipclib
 NATIVE := $(ROOT)/System/NativeRuntime
-CPPFLAGS := -Iinclude -I$(APPFRAMEWORK)/include -I$(CORE)/include \
+PROTOCOL := $(ROOT)/GUI/Protocols
+CPPFLAGS := -Iinclude -I$(APPFRAMEWORK)/include -I$(PROTOCOL)/include -I$(CORE)/include \
             -I$(MEM)/include -I$(STR)/include -I$(EVENT)/include -I$(TIME)/include \
             -I$(IPC)/include -I$(NATIVE)/SyscallWrappers/include \
             -I$(NATIVE)/include
