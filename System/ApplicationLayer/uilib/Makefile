@@ -23,7 +23,7 @@ LIBRARY := $(BUILD)/libuilib.a
 
 .PHONY: all check clean
 all: $(LIBRARY)
-check: $(LIBRARY) $(BUILD)/abi_compile.o
+check: $(LIBRARY) $(BUILD)/abi_compile.o $(BUILD)/hello_ui.o
 	@echo "uilib ABI compile checks passed."
 
 $(BUILD):
@@ -31,6 +31,8 @@ $(BUILD):
 $(BUILD)/ui.o: src/ui.c include/uilib/ui.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 $(BUILD)/abi_compile.o: tests/abi_compile.c include/uilib/ui.h | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(BUILD)/hello_ui.o: examples/hello_ui.c include/uilib/ui.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 $(LIBRARY): $(BUILD)/ui.o
 	rm -f $@

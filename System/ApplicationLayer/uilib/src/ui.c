@@ -188,6 +188,13 @@ static struct UiBufferHandle *find_buffer_id(struct UiContextHandle *context,
     return NULL;
 }
 
+static bool view_has_free_buffer(struct UiViewHandle *view)
+{
+    for (u32 index = 0; index < view->context->buffer_count; ++index)
+        if (view->buffers[index].state == UI_BUFFER_FREE) return true;
+    return false;
+}
+
 static ErrorCode import_buffer(struct UiViewHandle *view,
                                struct UiBufferHandle *buffer)
 {
@@ -413,6 +420,9 @@ static ErrorCode dispatch_compositor(struct UiContextHandle *context,
         } else {
             buffer->buffer_id = response.buffer_id;
             buffer->state = UI_BUFFER_FREE;
+            if (view_has_free_buffer(buffer->view))
+                emit(buffer->view, (UiEvent){ .kind = UI_EVENT_BUFFER_AVAILABLE,
+                                              .error = CORE_OK });
         }
         return CORE_OK;
     }
@@ -422,8 +432,11 @@ static ErrorCode dispatch_compositor(struct UiContextHandle *context,
         ErrorCode result = gui_decode_buffer_released(message, &event);
         if (result != CORE_OK) return result;
         buffer = find_buffer_id(context, event.buffer_id);
-        if (buffer != NULL && buffer->state == UI_BUFFER_SUBMITTED)
+        if (buffer != NULL && buffer->state == UI_BUFFER_SUBMITTED) {
             buffer->state = UI_BUFFER_FREE;
+            emit(buffer->view, (UiEvent){ .kind = UI_EVENT_BUFFER_AVAILABLE,
+                                          .error = CORE_OK });
+        }
         return CORE_OK;
     }
     if (message->type == GUI_SURFACE_FRAME_DONE) {

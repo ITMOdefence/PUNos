@@ -33,7 +33,8 @@ typedef enum UiEventKind {
     UI_EVENT_TOUCH = 9,
     UI_EVENT_POINTER = 10,
     UI_EVENT_KEY = 11,
-    UI_EVENT_VISIBILITY = 12
+    UI_EVENT_VISIBILITY = 12,
+    UI_EVENT_BUFFER_AVAILABLE = 13
 } UiEventKind;
 
 typedef struct UiEvent {
