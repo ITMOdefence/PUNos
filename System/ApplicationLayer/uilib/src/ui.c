@@ -21,6 +21,22 @@ typedef enum UiViewState {
     UI_VIEW_FAILED = 4
 } UiViewState;
 
+typedef enum UiBufferState {
+    UI_BUFFER_EMPTY = 0,
+    UI_BUFFER_IMPORTING = 1,
+    UI_BUFFER_FREE = 2,
+    UI_BUFFER_ACQUIRED = 3,
+    UI_BUFFER_SUBMITTED = 4
+} UiBufferState;
+
+struct UiBufferHandle {
+    struct UiViewHandle *view;
+    SharedMemory memory;
+    UiBufferState state;
+    u64 request_id;
+    u64 buffer_id;
+};
+
 struct UiViewHandle {
     MemoryBlock block;
     struct UiContextHandle *context;
@@ -37,6 +53,16 @@ struct UiViewHandle {
     u64 surface_id;
     u8 surface_token[GUI_SURFACE_BIND_TOKEN_SIZE];
     u64 window_id;
+    bool configured;
+    u32 width;
+    u32 height;
+    u32 stride;
+    u64 configure_serial;
+    u64 commit_serial;
+    u64 pending_commit_request;
+    u16 damage_count;
+    GuiRect damage[GUI_MAX_DAMAGE_RECTS];
+    struct UiBufferHandle buffers[UI_BUFFER_COUNT_MAX];
 };
 
 struct UiContextHandle {
@@ -108,6 +134,104 @@ static ErrorCode queue_message(UiConnection *connection, IpcMessageType type,
             EVENT_READABLE | (pending ? EVENT_WRITABLE : 0));
     }
     return result;
+}
+
+static ErrorCode queue_descriptor(UiConnection *connection,
+                                  IpcMessageType type, u8 *payload,
+                                  usize payload_size, i32 descriptor)
+{
+    IpcMessage message = { type, { payload, payload_size } };
+    bool pending;
+    ErrorCode result;
+
+    if (!connection->open) return CORE_WOULD_BLOCK;
+    result = ipc_connection_send_with_descriptor(connection->ipc, &message,
+                                                 descriptor);
+    if (result == CORE_OK) result = ipc_connection_flush(connection->ipc, &pending);
+    if (result == CORE_OK) {
+        result = app_event_update_fd(connection->context->app, connection->source,
+            EVENT_READABLE | (pending ? EVENT_WRITABLE : 0));
+    }
+    return result;
+}
+
+static struct UiBufferHandle *find_buffer_request(
+    struct UiContextHandle *context, u64 request_id)
+{
+    for (struct UiViewHandle *view = context->views; view != NULL;
+         view = view->next) {
+        for (u32 index = 0; index < context->buffer_count; ++index) {
+            struct UiBufferHandle *buffer = &view->buffers[index];
+            if (buffer->state == UI_BUFFER_IMPORTING &&
+                buffer->request_id == request_id) return buffer;
+        }
+    }
+    return NULL;
+}
+
+static struct UiBufferHandle *find_buffer_id(struct UiContextHandle *context,
+                                              u64 buffer_id)
+{
+    for (struct UiViewHandle *view = context->views; view != NULL;
+         view = view->next) {
+        for (u32 index = 0; index < context->buffer_count; ++index) {
+            struct UiBufferHandle *buffer = &view->buffers[index];
+            if (buffer->buffer_id == buffer_id && buffer_id != 0) return buffer;
+        }
+    }
+    return NULL;
+}
+
+static ErrorCode import_buffer(struct UiViewHandle *view,
+                               struct UiBufferHandle *buffer)
+{
+    u8 payload[64];
+    usize payload_size = 0;
+    usize byte_size;
+    GuiBufferImportRequest request = { 0 };
+    ErrorCode result = core_size_multiply(view->stride, view->height, &byte_size);
+
+    if (result != CORE_OK) return result;
+    result = memory_shared_create(byte_size, &buffer->memory);
+    if (result != CORE_OK) return result;
+    buffer->view = view;
+    request.prefix = (GuiRequestPrefix){ GUI_PROTOCOL_VERSION,
+                                        next_request(view->context) };
+    request.width = view->width;
+    request.height = view->height;
+    request.stride = view->stride;
+    request.pixel_format = GUI_PIXEL_ARGB8888;
+    request.byte_size = byte_size;
+    result = gui_encode_buffer_import(&request,
+        (Bytes){ payload, sizeof(payload) }, &payload_size);
+    if (result == CORE_OK) result = queue_descriptor(
+        &view->context->compositor, GUI_SURFACE_BUFFER_IMPORT,
+        payload, payload_size, buffer->memory.fd);
+    if (result != CORE_OK) {
+        (void)memory_shared_close(&buffer->memory);
+        return result;
+    }
+    buffer->request_id = request.prefix.request_id;
+    buffer->state = UI_BUFFER_IMPORTING;
+    return CORE_OK;
+}
+
+static ErrorCode create_buffer_pool(struct UiViewHandle *view)
+{
+    usize stride;
+    ErrorCode result;
+
+    if (view->configured) return CORE_OK;
+    result = core_size_multiply(view->width, 4, &stride);
+    if (result != CORE_OK || stride > (usize)(~(u32)0))
+        return result != CORE_OK ? result : CORE_OVERFLOW;
+    view->stride = (u32)stride;
+    for (u32 index = 0; index < view->context->buffer_count; ++index) {
+        result = import_buffer(view, &view->buffers[index]);
+        if (result != CORE_OK) return result;
+    }
+    view->configured = true;
+    return CORE_OK;
 }
 
 static ErrorCode begin_surface(struct UiViewHandle *view)
@@ -186,6 +310,90 @@ static ErrorCode start_waiting_views(struct UiContextHandle *context)
 static ErrorCode dispatch_compositor(struct UiContextHandle *context,
                                      const IpcMessage *message)
 {
+    if (message->type == GUI_SURFACE_COMMIT_RESULT) {
+        GuiBasicResult response;
+        ErrorCode result = gui_decode_basic_result(
+            message, GUI_SURFACE_COMMIT_RESULT, &response);
+        if (result != CORE_OK) return result;
+        for (struct UiViewHandle *view = context->views; view != NULL;
+             view = view->next) {
+            if (view->pending_commit_request != response.request_id) continue;
+            view->pending_commit_request = 0;
+            if (response.error != CORE_OK) {
+                fail_view(view, response.error);
+                return CORE_OK;
+            }
+            if (view->configure_serial != 0 && context->window.open) {
+                u8 payload[32];
+                usize size;
+                GuiWindowAckConfigureRequest ack = {
+                    { GUI_PROTOCOL_VERSION, next_request(context) },
+                    view->window_id, view->configure_serial
+                };
+                result = gui_encode_window_ack_configure(
+                    &ack, (Bytes){ payload, sizeof(payload) }, &size);
+                if (result == CORE_OK) result = queue_message(
+                    &context->window, GUI_WINDOW_ACK_CONFIGURE, payload, size);
+                if (result == CORE_OK) view->configure_serial = 0;
+                return result;
+            }
+            return CORE_OK;
+        }
+        return CORE_OK;
+    }
+    if (message->type == GUI_SURFACE_BUFFER_IMPORT_RESULT) {
+        GuiBufferImportResult response;
+        struct UiBufferHandle *buffer;
+        ErrorCode result = gui_decode_buffer_import_result(message, &response);
+        if (result != CORE_OK) return result;
+        buffer = find_buffer_request(context, response.result.request_id);
+        if (buffer == NULL) return CORE_OK;
+        if (response.result.error != CORE_OK) {
+            buffer->state = UI_BUFFER_EMPTY;
+            (void)memory_shared_close(&buffer->memory);
+            fail_view(buffer->view, response.result.error);
+        } else {
+            buffer->buffer_id = response.buffer_id;
+            buffer->state = UI_BUFFER_FREE;
+        }
+        return CORE_OK;
+    }
+    if (message->type == GUI_SURFACE_BUFFER_RELEASED) {
+        GuiBufferReleasedEvent event;
+        struct UiBufferHandle *buffer;
+        ErrorCode result = gui_decode_buffer_released(message, &event);
+        if (result != CORE_OK) return result;
+        buffer = find_buffer_id(context, event.buffer_id);
+        if (buffer != NULL && buffer->state == UI_BUFFER_SUBMITTED)
+            buffer->state = UI_BUFFER_FREE;
+        return CORE_OK;
+    }
+    if (message->type == GUI_SURFACE_FRAME_DONE) {
+        GuiSurfaceFrameDoneEvent event;
+        struct UiViewHandle *view;
+        ErrorCode result = gui_decode_surface_frame_done(message, &event);
+        if (result != CORE_OK) return result;
+        view = context->views;
+        while (view != NULL && view->surface_id != event.surface_id)
+            view = view->next;
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_FRAME_DONE,
+                                               .error = CORE_OK,
+                                               .frame = event });
+        return CORE_OK;
+    }
+    if (message->type == GUI_SURFACE_FULL_REDRAW) {
+        GuiSurfaceRedrawEvent event;
+        struct UiViewHandle *view;
+        ErrorCode result = gui_decode_surface_redraw(message, &event);
+        if (result != CORE_OK) return result;
+        view = context->views;
+        while (view != NULL && view->surface_id != event.surface_id)
+            view = view->next;
+        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_REDRAW,
+                                               .error = CORE_OK,
+                                               .redraw = event });
+        return CORE_OK;
+    }
     GuiSurfaceCreateResult response;
     struct UiViewHandle *view;
     ErrorCode result;
@@ -234,9 +442,18 @@ static ErrorCode dispatch_window(struct UiContextHandle *context,
         struct UiViewHandle *view;
         if (result != CORE_OK) return result;
         view = find_window(context, value.window_id);
-        if (view != NULL) emit(view, (UiEvent){ .kind = UI_EVENT_CONFIGURE,
-                                               .error = CORE_OK,
-                                               .configure = value });
+        if (view != NULL) {
+            if (!view->configured) {
+                view->width = value.width;
+                view->height = value.height;
+                view->configure_serial = value.configure_serial;
+                result = create_buffer_pool(view);
+                if (result != CORE_OK) fail_view(view, result);
+            }
+            emit(view, (UiEvent){ .kind = UI_EVENT_CONFIGURE,
+                                  .error = result,
+                                  .configure = value });
+        }
         return CORE_OK;
     }
     if (message->type == GUI_WINDOW_LIFECYCLE_CHANGED) {
@@ -453,6 +670,107 @@ ErrorCode ui_view_create(UiContextHandle context, const UiViewConfig *config,
     return result == CORE_WOULD_BLOCK ? CORE_OK : result;
 }
 
+ErrorCode ui_view_acquire_buffer(UiViewHandle view,
+                                 UiMappedBuffer *out_mapping)
+{
+    if (view == NULL || out_mapping == NULL || view->state != UI_VIEW_READY ||
+        !view->configured) return CORE_INVALID_STATE;
+    for (u32 index = 0; index < view->context->buffer_count; ++index) {
+        struct UiBufferHandle *buffer = &view->buffers[index];
+        if (buffer->state == UI_BUFFER_FREE) {
+            buffer->state = UI_BUFFER_ACQUIRED;
+            *out_mapping = (UiMappedBuffer){
+                .buffer = buffer,
+                .data = buffer->memory.data,
+                .size = buffer->memory.size,
+                .width = view->width,
+                .height = view->height,
+                .stride = view->stride,
+                .pixel_format = GUI_PIXEL_ARGB8888
+            };
+            return CORE_OK;
+        }
+    }
+    return CORE_WOULD_BLOCK;
+}
+
+ErrorCode ui_view_damage(UiViewHandle view, const GuiRect *rects,
+                         usize count)
+{
+    if (view == NULL || rects == NULL || count == 0 ||
+        count > GUI_MAX_DAMAGE_RECTS ||
+        view->damage_count + count > GUI_MAX_DAMAGE_RECTS)
+        return CORE_INVALID_ARGUMENT;
+    for (usize index = 0; index < count; ++index) {
+        const GuiRect *rect = &rects[index];
+        if (rect->width == 0 || rect->height == 0 || rect->x < 0 || rect->y < 0 ||
+            (u32)rect->x > view->width || rect->width > view->width - (u32)rect->x ||
+            (u32)rect->y > view->height || rect->height > view->height - (u32)rect->y)
+            return CORE_INVALID_ARGUMENT;
+    }
+    for (usize index = 0; index < count; ++index)
+        view->damage[view->damage_count++] = rects[index];
+    return CORE_OK;
+}
+
+ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer)
+{
+    u8 payload[20 + GUI_MAX_DAMAGE_RECTS * 16];
+    usize size = 0;
+    ErrorCode result;
+    GuiRequestPrefix prefix;
+
+    if (view == NULL || buffer == NULL || buffer->view != view ||
+        buffer->state != UI_BUFFER_ACQUIRED || view->state != UI_VIEW_READY ||
+        !view->configured) return CORE_INVALID_STATE;
+
+    prefix = (GuiRequestPrefix){ GUI_PROTOCOL_VERSION, next_request(view->context) };
+    GuiSurfaceAttachRequest attach = { prefix, view->surface_id, buffer->buffer_id };
+    result = gui_encode_surface_attach(&attach,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(&view->context->compositor,
+        GUI_SURFACE_ATTACH, payload, size);
+
+    GuiSurfaceDamageRequest damage = { 0 };
+    damage.prefix = (GuiRequestPrefix){ GUI_PROTOCOL_VERSION,
+                                       next_request(view->context) };
+    damage.surface_id = view->surface_id;
+    damage.flags = view->damage_count == 0 ? GUI_FULL_DAMAGE : 0;
+    damage.rect_count = view->damage_count;
+    for (u16 index = 0; index < damage.rect_count; ++index)
+        damage.rects[index] = view->damage[index];
+    if (result == CORE_OK) result = gui_encode_surface_damage(&damage,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(&view->context->compositor,
+        GUI_SURFACE_DAMAGE, payload, size);
+
+    GuiSurfaceFrameRequest frame = {
+        { GUI_PROTOCOL_VERSION, next_request(view->context) }, view->surface_id
+    };
+    if (result == CORE_OK) result = gui_encode_surface_frame_request(&frame,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(&view->context->compositor,
+        GUI_SURFACE_REQUEST_FRAME, payload, size);
+
+    view->commit_serial++;
+    if (view->commit_serial == 0) view->commit_serial++;
+    GuiSurfaceCommitRequest commit = {
+        { GUI_PROTOCOL_VERSION, next_request(view->context) },
+        view->surface_id, view->commit_serial
+    };
+    if (result == CORE_OK) result = gui_encode_surface_commit(&commit,
+        (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(&view->context->compositor,
+        GUI_SURFACE_COMMIT, payload, size);
+
+    if (result == CORE_OK) {
+        view->pending_commit_request = commit.prefix.request_id;
+        buffer->state = UI_BUFFER_SUBMITTED;
+        view->damage_count = 0;
+    }
+    return result;
+}
+
 ErrorCode ui_view_destroy(UiViewHandle *view)
 {
     struct UiViewHandle *handle;
@@ -472,6 +790,21 @@ ErrorCode ui_view_destroy(UiViewHandle *view)
     for (struct UiViewHandle *child = context->views; child != NULL;
          child = child->next) {
         if (child->parent == handle) return CORE_INVALID_STATE;
+    }
+    for (u32 index = 0; index < context->buffer_count; ++index) {
+        struct UiBufferHandle *buffer = &handle->buffers[index];
+        if (buffer->buffer_id != 0 && context->compositor.open) {
+            GuiBufferIdRequest request = {
+                { GUI_PROTOCOL_VERSION, next_request(context) }, buffer->buffer_id
+            };
+            ErrorCode error = gui_encode_buffer_id_request(
+                &request, (Bytes){ payload, sizeof(payload) }, &size);
+            if (error == CORE_OK) error = queue_message(
+                &context->compositor, GUI_SURFACE_BUFFER_DESTROY, payload, size);
+            keep_first(&result, error);
+        }
+        if (buffer->memory.size != 0)
+            keep_first(&result, memory_shared_close(&buffer->memory));
     }
     if (handle->window_id != 0 && context->window.open) {
         GuiWindowIdRequest request = {

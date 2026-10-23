@@ -6,7 +6,8 @@ descriptors in the `appframework` event loop.
 
 Current implementation covers context initialization, connection event
 dispatch, asynchronous surface/window creation, configure/lifecycle/navigation
-delivery and deterministic shutdown. Buffer pools are the next layer.
+delivery, shared-memory buffer pools, damage/present, frame completion and
+deterministic shutdown.
 
 ```sh
 make -C System/ApplicationLayer/uilib check

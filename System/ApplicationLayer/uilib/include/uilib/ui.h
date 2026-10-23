@@ -9,6 +9,7 @@
 
 typedef struct UiContextHandle *UiContextHandle;
 typedef struct UiViewHandle *UiViewHandle;
+typedef struct UiBufferHandle *UiBufferHandle;
 
 typedef GuiWindowRole UiViewRole;
 #define UI_VIEW_ROLE_APP GUI_WINDOW_ROLE_APP
@@ -25,7 +26,9 @@ typedef enum UiEventKind {
     UI_EVENT_CONFIGURE = 2,
     UI_EVENT_LIFECYCLE = 3,
     UI_EVENT_NAVIGATION = 4,
-    UI_EVENT_SERVICE_ERROR = 5
+    UI_EVENT_SERVICE_ERROR = 5,
+    UI_EVENT_FRAME_DONE = 6,
+    UI_EVENT_REDRAW = 7
 } UiEventKind;
 
 typedef struct UiEvent {
@@ -35,6 +38,8 @@ typedef struct UiEvent {
         GuiWindowConfigureEvent configure;
         GuiWindowLifecycleEvent lifecycle;
         GuiWindowNavigationEvent navigation;
+        GuiSurfaceFrameDoneEvent frame;
+        GuiSurfaceRedrawEvent redraw;
     };
 } UiEvent;
 
@@ -54,6 +59,16 @@ typedef struct UiViewConfig {
     void *context;
 } UiViewConfig;
 
+typedef struct UiMappedBuffer {
+    UiBufferHandle buffer;
+    u8 *data;
+    usize size;
+    u32 width;
+    u32 height;
+    u32 stride;
+    GuiPixelFormat pixel_format;
+} UiMappedBuffer;
+
 /*
  * Attaches the GUI clients to app's event loop. The returned context owns its
  * IPC connections, but not AppHandle. One context may exist for an AppHandle.
@@ -66,6 +81,12 @@ ErrorCode ui_view_create(UiContextHandle context, const UiViewConfig *config,
                          UiViewHandle *out_view);
 
 ErrorCode ui_view_destroy(UiViewHandle *view);
+
+ErrorCode ui_view_acquire_buffer(UiViewHandle view,
+                                 UiMappedBuffer *out_mapping);
+ErrorCode ui_view_damage(UiViewHandle view, const GuiRect *rects,
+                         usize count);
+ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer);
 
 /* Removes event sources, closes both GUI connections and clears the handle. */
 ErrorCode ui_shutdown(UiContextHandle *context);
