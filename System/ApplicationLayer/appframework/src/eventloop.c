@@ -177,6 +177,24 @@ ErrorCode app_event_create_timer(AppHandle app, DurationMs delay_ms, DurationMs 
     return CORE_OK;
 }
 
+ErrorCode app_event_update_fd(AppHandle app, AppEventSourceId source, EventMask mask)
+{
+    AppSource *entry;
+    ErrorCode result = libappframework_internal_enter(app, APP_OPERATION_EVENT_REMOVE);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    if (source == 0 || mask == 0 || (mask & ~USER_FD_MASK) != 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    entry = libappframework_internal_source_find(app, source);
+    if (entry == NULL || entry->internal) {
+        return CORE_NOT_FOUND;
+    }
+    return libappframework_internal_update_fd(app, source, mask);
+}
+
 ErrorCode app_event_remove(AppHandle app, AppEventSourceId source)
 {
     AppSource *entry;

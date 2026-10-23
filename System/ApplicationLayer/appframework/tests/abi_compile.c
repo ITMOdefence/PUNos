@@ -112,6 +112,8 @@ ErrorCode (*const abi_app_event_add_fd)(AppHandle, i32, EventMask, AppEventHandl
 ErrorCode (*const abi_app_event_create_timer)(AppHandle, DurationMs, DurationMs,
                                               AppEventHandler, void *,
                                               AppEventSourceId *) = app_event_create_timer;
+ErrorCode (*const abi_app_event_update_fd)(AppHandle, AppEventSourceId,
+                                           EventMask) = app_event_update_fd;
 ErrorCode (*const abi_app_event_remove)(AppHandle, AppEventSourceId) = app_event_remove;
 ErrorCode (*const abi_app_log)(AppHandle, AppLogLevel, const char *) = app_log;
 ErrorCode (*const abi_app_apps_list)(AppHandle, AppAppsCallback, void *,
