@@ -189,7 +189,10 @@ ErrorCode app_event_update_fd(AppHandle app, AppEventSourceId source, EventMask 
         return CORE_INVALID_ARGUMENT;
     }
     entry = libappframework_internal_source_find(app, source);
-    if (entry == NULL || entry->internal) {
+    if (entry == NULL) {
+        return CORE_NOT_FOUND;
+    }
+    if (entry->internal) {
         return CORE_NOT_FOUND;
     }
     return libappframework_internal_update_fd(app, source, mask);
