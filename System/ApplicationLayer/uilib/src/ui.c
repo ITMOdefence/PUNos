@@ -5,6 +5,7 @@
 
 #define COMPOSITOR_ENDPOINT "/run/punos/compositorserv.sock"
 #define WINDOW_ENDPOINT "/run/punos/windowserv.sock"
+#define RECONNECT_INTERVAL_MS ((DurationMs)250)
 
 typedef struct UiConnection {
     struct UiContextHandle *context;
@@ -18,7 +19,8 @@ typedef enum UiViewState {
     UI_VIEW_CREATING_SURFACE = 1,
     UI_VIEW_CREATING_WINDOW = 2,
     UI_VIEW_READY = 3,
-    UI_VIEW_FAILED = 4
+    UI_VIEW_REBINDING = 4,
+    UI_VIEW_FAILED = 5
 } UiViewState;
 
 typedef enum UiBufferState {
@@ -73,6 +75,7 @@ struct UiContextHandle {
     u32 buffer_count;
     bool stopping;
     u64 next_request_id;
+    AppEventSourceId reconnect_source;
     struct UiViewHandle *views;
     UiConnection compositor;
     UiConnection window;
@@ -81,6 +84,7 @@ struct UiContextHandle {
 static ErrorCode start_waiting_views(struct UiContextHandle *context);
 static ErrorCode dispatch_message(UiConnection *connection,
                                   const IpcMessage *message);
+static void suspend_connection(UiConnection *connection);
 
 static void keep_first(ErrorCode *result, ErrorCode error)
 {
@@ -236,6 +240,31 @@ static ErrorCode create_buffer_pool(struct UiViewHandle *view)
     return CORE_OK;
 }
 
+static void destroy_buffer_pool(struct UiViewHandle *view, bool notify_service)
+{
+    for (u32 index = 0; index < view->context->buffer_count; ++index) {
+        struct UiBufferHandle *buffer = &view->buffers[index];
+        if (notify_service && buffer->buffer_id != 0 &&
+            view->context->compositor.open) {
+            u8 payload[32];
+            usize size;
+            GuiBufferIdRequest request = {
+                { GUI_PROTOCOL_VERSION, next_request(view->context) },
+                buffer->buffer_id
+            };
+            if (gui_encode_buffer_id_request(
+                    &request, (Bytes){ payload, sizeof(payload) }, &size) == CORE_OK)
+                (void)queue_message(&view->context->compositor,
+                    GUI_SURFACE_BUFFER_DESTROY, payload, size);
+        }
+        if (buffer->memory.size != 0) (void)memory_shared_close(&buffer->memory);
+        *buffer = (struct UiBufferHandle){ 0 };
+    }
+    view->configured = false;
+    view->damage_count = 0;
+    view->pending_commit_request = 0;
+}
+
 static ErrorCode begin_surface(struct UiViewHandle *view)
 {
     u8 payload[16];
@@ -288,6 +317,30 @@ static ErrorCode begin_window(struct UiViewHandle *view)
     return result;
 }
 
+static ErrorCode begin_rebind(struct UiViewHandle *view)
+{
+    u8 payload[64];
+    usize size;
+    GuiWindowSurfaceRebindRequest request = { 0 };
+    ErrorCode result;
+
+    request.prefix = (GuiRequestPrefix){ GUI_PROTOCOL_VERSION,
+                                        next_request(view->context) };
+    request.window_id = view->window_id;
+    request.surface_id = view->surface_id;
+    for (usize index = 0; index < GUI_SURFACE_BIND_TOKEN_SIZE; ++index)
+        request.surface_bind_token[index] = view->surface_token[index];
+    result = gui_encode_window_surface_rebind(
+        &request, (Bytes){ payload, sizeof(payload) }, &size);
+    if (result == CORE_OK) result = queue_message(
+        &view->context->window, GUI_WINDOW_SURFACE_REBIND, payload, size);
+    if (result == CORE_OK) {
+        view->request_id = request.prefix.request_id;
+        view->state = UI_VIEW_REBINDING;
+    }
+    return result;
+}
+
 static void fail_view(struct UiViewHandle *view, ErrorCode error)
 {
     view->state = UI_VIEW_FAILED;
@@ -301,7 +354,10 @@ static ErrorCode start_waiting_views(struct UiContextHandle *context)
     if (!context->compositor.open || !context->window.open) return CORE_OK;
     for (view = context->views; view != NULL; view = view->next) {
         if (view->state == UI_VIEW_WAITING_CONNECTIONS) {
-            ErrorCode error = begin_surface(view);
+            ErrorCode error;
+            if (view->surface_id == 0) error = begin_surface(view);
+            else if (view->window_id == 0) error = begin_window(view);
+            else error = begin_rebind(view);
             if (error != CORE_OK && error != CORE_WOULD_BLOCK) fail_view(view, error);
             if (result == CORE_OK && error != CORE_WOULD_BLOCK) result = error;
         }
@@ -413,7 +469,7 @@ static ErrorCode dispatch_compositor(struct UiContextHandle *context,
     view->surface_id = response.surface_id;
     for (usize i = 0; i < GUI_SURFACE_BIND_TOKEN_SIZE; ++i)
         view->surface_token[i] = response.surface_bind_token[i];
-    result = begin_window(view);
+    result = view->window_id == 0 ? begin_window(view) : begin_rebind(view);
     if (result != CORE_OK) fail_view(view, result);
     return result;
 }
@@ -421,6 +477,32 @@ static ErrorCode dispatch_compositor(struct UiContextHandle *context,
 static ErrorCode dispatch_window(struct UiContextHandle *context,
                                  const IpcMessage *message)
 {
+    if (message->type == GUI_WINDOW_OPERATION_RESULT) {
+        GuiBasicResult response;
+        struct UiViewHandle *view;
+        ErrorCode result = gui_decode_basic_result(
+            message, GUI_WINDOW_OPERATION_RESULT, &response);
+        if (result != CORE_OK) return result;
+        view = find_request(context, response.request_id, UI_VIEW_REBINDING);
+        if (view == NULL) return CORE_OK;
+        if (response.error != CORE_OK) fail_view(view, response.error);
+        else {
+            view->state = UI_VIEW_READY;
+            if (view->has_configure && !view->configured) {
+                view->width = view->latest_configure.width;
+                view->height = view->latest_configure.height;
+                view->configure_serial = view->latest_configure.configure_serial;
+                result = create_buffer_pool(view);
+                if (result != CORE_OK) {
+                    fail_view(view, result);
+                    return CORE_OK;
+                }
+            }
+            emit(view, (UiEvent){ .kind = UI_EVENT_REDRAW, .error = CORE_OK,
+                .redraw = { .surface_id = view->surface_id, .reason = 3 } });
+        }
+        return CORE_OK;
+    }
     if (message->type == GUI_WINDOW_CREATE_RESULT) {
         GuiWindowCreateResult response;
         struct UiViewHandle *view;
@@ -447,6 +529,9 @@ static ErrorCode dispatch_window(struct UiContextHandle *context,
         if (view != NULL) {
             view->latest_configure = value;
             view->has_configure = true;
+            if (view->configured &&
+                (view->width != value.width || view->height != value.height))
+                destroy_buffer_pool(view, true);
             if (!view->configured) {
                 view->width = value.width;
                 view->height = value.height;
@@ -547,6 +632,8 @@ static ErrorCode connection_close(UiConnection *connection)
 {
     ErrorCode result = CORE_OK;
 
+    if (!connection->context->stopping && connection->open)
+        suspend_connection(connection);
     if (connection->source != 0) {
         keep_first(&result, app_event_remove(connection->context->app,
                                              connection->source));
@@ -557,6 +644,32 @@ static ErrorCode connection_close(UiConnection *connection)
     }
     connection->open = false;
     return result;
+}
+
+static void reset_buffers(struct UiViewHandle *view)
+{
+    destroy_buffer_pool(view, false);
+}
+
+static void suspend_connection(UiConnection *connection)
+{
+    struct UiContextHandle *context = connection->context;
+    bool compositor = connection == &context->compositor;
+
+    for (struct UiViewHandle *view = context->views; view != NULL;
+         view = view->next) {
+        if (view->state == UI_VIEW_FAILED) continue;
+        if (compositor) {
+            reset_buffers(view);
+            view->surface_id = 0;
+        } else {
+            view->window_id = 0;
+        }
+        view->request_id = 0;
+        view->state = UI_VIEW_WAITING_CONNECTIONS;
+        emit(view, (UiEvent){ .kind = UI_EVENT_SERVICE_ERROR,
+                              .error = CORE_IO_ERROR });
+    }
 }
 
 static void connection_event(AppHandle app, AppEventSourceId source,
@@ -633,6 +746,26 @@ static ErrorCode connection_open(struct UiContextHandle *context,
     return result;
 }
 
+static void reconnect_event(AppHandle app, AppEventSourceId source,
+                            EventMask mask, void *opaque)
+{
+    struct UiContextHandle *context = opaque;
+    (void)app;
+    (void)source;
+    (void)mask;
+    if (context->stopping) return;
+    if (context->compositor.ipc == NULL) {
+        (void)connection_open(context, &context->compositor,
+                              COMPOSITOR_ENDPOINT,
+                              sizeof(COMPOSITOR_ENDPOINT) - 1);
+    }
+    if (context->window.ipc == NULL) {
+        (void)connection_open(context, &context->window,
+                              WINDOW_ENDPOINT,
+                              sizeof(WINDOW_ENDPOINT) - 1);
+    }
+}
+
 ErrorCode ui_initialize(AppHandle app, const UiConfig *config,
                         UiContextHandle *out_context)
 {
@@ -652,21 +785,17 @@ ErrorCode ui_initialize(AppHandle app, const UiConfig *config,
     context->app = app;
     context->buffer_count = count;
     context->next_request_id = 0;
-    result = connection_open(context, &context->compositor,
-                             COMPOSITOR_ENDPOINT,
-                             sizeof(COMPOSITOR_ENDPOINT) - 1);
-    if (result == CORE_OK) {
-        result = connection_open(context, &context->window,
-                                 WINDOW_ENDPOINT,
-                                 sizeof(WINDOW_ENDPOINT) - 1);
-    }
+    context->compositor.context = context;
+    context->window.context = context;
+    result = app_event_create_timer(app, 0, RECONNECT_INTERVAL_MS,
+                                    reconnect_event, context,
+                                    &context->reconnect_source);
     if (result != CORE_OK) {
         context->stopping = true;
-        (void)connection_close(&context->window);
-        (void)connection_close(&context->compositor);
         (void)memory_free(&block);
         return result;
     }
+    reconnect_event(app, context->reconnect_source, EVENT_READABLE, context);
     *out_context = context;
     return CORE_OK;
 }
@@ -982,6 +1111,11 @@ ErrorCode ui_shutdown(UiContextHandle *context)
     handle = *context;
     if (handle->views != NULL) return CORE_INVALID_STATE;
     handle->stopping = true;
+    if (handle->reconnect_source != 0) {
+        keep_first(&result, app_event_remove(handle->app,
+                                             handle->reconnect_source));
+        handle->reconnect_source = 0;
+    }
     keep_first(&result, connection_close(&handle->window));
     keep_first(&result, connection_close(&handle->compositor));
     block = handle->block;
