@@ -117,6 +117,7 @@ ErrorCode app_destroy(AppHandle *app)
 
     handle->destroying = true;
     handle->state = APP_LIFECYCLE_STOPPING;
+    libappframework_internal_msg_shutdown(handle);       /* callbacks: CORE_INVALID_STATE */
     libappframework_internal_apps_shutdown(handle);      /* callbacks: CORE_INVALID_STATE */
     (void)libappframework_internal_log(handle, APP_LOG_LEVEL_INFO, "AppHandle destroyed");
     libappframework_internal_logging_shutdown(handle);

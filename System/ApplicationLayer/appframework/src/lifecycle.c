@@ -11,7 +11,7 @@ static const bool transitions[5][5] = {
 };
 
 /* Operation table: row = operation, column = state (Created..Failed). */
-static const bool allowed[7][4] = {
+static const bool allowed[8][4] = {
     /* state:                 Created Running Stopping Failed */
     /* RUN           */ {     true,   false,  false,   false },
     /* REQUEST_QUIT  */ {     true,   true,   true,    true  },
@@ -20,6 +20,7 @@ static const bool allowed[7][4] = {
     /* EVENT_REMOVE  */ {     true,   true,   true,    true  },
     /* LOG           */ {     true,   true,   false,   false },
     /* APPS          */ {     true,   true,   false,   false },
+    /* MSG           */ {     true,   true,   false,   false },
 };
 
 bool libappframework_internal_transition_allowed(AppLifecycleState from,
@@ -35,7 +36,7 @@ bool libappframework_internal_transition_allowed(AppLifecycleState from,
 ErrorCode libappframework_internal_operation_allowed(AppOperationKind operation,
                                                      AppLifecycleState state)
 {
-    if ((u32)operation > (u32)APP_OPERATION_APPS ||
+    if ((u32)operation > (u32)APP_OPERATION_MSG ||
         (u32)state > (u32)APP_LIFECYCLE_DESTROYED) {
         return CORE_INVALID_ARGUMENT;
     }

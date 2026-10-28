@@ -6,7 +6,8 @@
  * Specification: DevDoc/ApplicationLayer/appframework.md (the contract).
  *
  * One AppHandle owns the main event loop of an application, a non-blocking
- * client of logserv, a non-blocking client of appserv and the SIGTERM handler.
+ * client of logserv, a non-blocking client of appserv, a non-blocking client
+ * of msgserv and the SIGTERM handler.
  * Everything except app_request_quit() runs on the thread that called
  * app_create(). All operations return ErrorCode; CORE_OK is the only success.
  *
@@ -35,8 +36,31 @@
 #define APP_APPS_MAX_PENDING ((usize)256)
 /* Log records that may wait to be sent or acknowledged at the same time. */
 #define APP_LOG_MAX_PENDING ((usize)256)
-/* Version of the appserv and logserv protocols that framework speaks. */
+/* Version of the appserv, logserv and msgserv protocols that framework speaks. */
 #define APP_PROTOCOL_VERSION ((u16)1)
+
+/* ---- messaging (msgserv) ------------------------------------------------- */
+
+/*
+ * Environment variable that carries the application's msgserv secret. appserv
+ * puts it there from applications.json; the application passes its envp to
+ * app_msg_start(), because a PUNos process reaches its environment only
+ * through main() - there is no global environ.
+ */
+#define APP_MSG_SECRET_VARIABLE "PUNOS_MSG_SECRET"
+
+/* Longest secret, topic, method and payload; equal to the limits of msgserv. */
+#define APP_MSG_SECRET_MAX_LENGTH ((usize)128)
+#define APP_MSG_TOPIC_MAX_LENGTH ((usize)128)
+#define APP_MSG_METHOD_MAX_LENGTH ((usize)64)
+#define APP_MSG_PAYLOAD_MAX_SIZE ((usize)65536)
+
+/* Requests to msgserv that may wait for an answer at the same time. */
+#define APP_MSG_MAX_PENDING ((usize)256)
+
+/* Subscriptions one connection may hold; the framework remembers them and
+ * restores them after a reconnect. */
+#define APP_MSG_SUBSCRIPTIONS_MAX ((usize)32)
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
@@ -140,6 +164,115 @@ typedef void (*AppAppsCallback)(AppHandle app, AppRequestId request,
                                 void *context);
 
 /* ------------------------------------------------------------------------ */
+/* Messaging: the client of msgserv                                          */
+/* ------------------------------------------------------------------------ */
+
+/* Non-zero identifier of one connection to msgserv, given by the broker at
+ * bind. It names a connection, not an application and not an instance. */
+typedef u64 AppMsgClientId;
+
+/* Non-zero identifier of one request that waits for an answer. */
+typedef u64 AppMsgCorrelationId;
+
+typedef enum AppMsgOperation {
+    APP_MSG_OPERATION_SUBSCRIBE = 0,
+    APP_MSG_OPERATION_UNSUBSCRIBE = 1,
+    APP_MSG_OPERATION_PUBLISH = 2,
+    APP_MSG_OPERATION_REQUEST = 3,
+    APP_MSG_OPERATION_RESPOND = 4
+} AppMsgOperation;
+
+/*
+ * Who sent an event or a request. Both fields are filled by the broker from
+ * the identity it confirmed at bind, never from the sender's frame, so they
+ * cannot be forged. application_id is NUL-terminated and valid only during
+ * the handler.
+ */
+typedef struct AppMsgSender {
+    AppMsgClientId client;
+    const char *application_id;
+} AppMsgSender;
+
+/* An unsolicited event. sequence counts events of this topic for this
+ * connection: a gap means events were dropped and state must be re-read. */
+typedef struct AppMsgEvent {
+    AppMsgSender sender;
+    const char *topic;
+    u64 sequence;
+    Bytes payload;
+} AppMsgEvent;
+
+/* An unsolicited request addressed to this connection. The handler answers
+ * with app_msg_respond(), not necessarily from inside the handler. */
+typedef struct AppMsgIncoming {
+    AppMsgCorrelationId correlation;
+    AppMsgSender sender;
+    const char *method;
+    Bytes payload;
+} AppMsgIncoming;
+
+/*
+ * The outcome of a request this connection sent. error is the transport
+ * result (CORE_OK, CORE_TIMEOUT when nobody answered in time, CORE_NOT_FOUND
+ * when the target disconnected); status is whatever the answering application
+ * put there and is defined only when error is CORE_OK.
+ */
+typedef struct AppMsgAnswer {
+    AppMsgCorrelationId correlation;
+    ErrorCode error;
+    u32 status;
+    Bytes payload;
+} AppMsgAnswer;
+
+/* Successful result of one request to msgserv, valid only during the
+ * callback. Which member is defined depends on operation. */
+typedef struct AppMsgResult {
+    AppMsgOperation operation;
+    u16 delivered_count;             /* APP_MSG_OPERATION_PUBLISH */
+    u16 dropped_count;               /* APP_MSG_OPERATION_PUBLISH */
+    AppMsgCorrelationId correlation; /* APP_MSG_OPERATION_REQUEST */
+} AppMsgResult;
+
+/*
+ * Called once for every request accepted by app_msg_*(), in request order.
+ * Same contract as AppAppsCallback: result is NULL unless error is CORE_OK,
+ * and app_destroy() ends what is left with CORE_INVALID_STATE.
+ */
+typedef void (*AppMsgCallback)(AppHandle app, AppRequestId request, ErrorCode error,
+                               const AppMsgResult *result, void *context);
+
+/*
+ * Handlers of unsolicited frames. They are not callbacks of this
+ * application's requests: a frame may arrive at any moment, including between
+ * a request and its answer. Confusing the two is the most likely mistake when
+ * using this module, which is why they are different types.
+ */
+typedef void (*AppMsgEventHandler)(AppHandle app, const AppMsgEvent *event, void *context);
+typedef void (*AppMsgRequestHandler)(AppHandle app, const AppMsgIncoming *request,
+                                     void *context);
+typedef void (*AppMsgResponseHandler)(AppHandle app, const AppMsgAnswer *answer,
+                                      void *context);
+
+/*
+ * Reports the state of the link to msgserv. error is CORE_OK when bind
+ * succeeded (client is the identifier the broker gave) and the reason
+ * otherwise (client is 0). The framework reconnects with a growing backoff by
+ * itself: msgserv starts after appserv, so an application launched right
+ * after boot does not find the broker on its first attempt.
+ */
+typedef void (*AppMsgLinkHandler)(AppHandle app, ErrorCode error, AppMsgClientId client,
+                                  void *context);
+
+/* NULL handlers are allowed; the matching frames are then dropped. */
+typedef struct AppMsgHandlers {
+    AppMsgEventHandler event;
+    AppMsgRequestHandler request;
+    AppMsgResponseHandler response;
+    AppMsgLinkHandler link;
+    void *context;
+} AppMsgHandlers;
+
+/* ------------------------------------------------------------------------ */
 /* Operations                                                                */
 /* ------------------------------------------------------------------------ */
 
@@ -208,5 +341,52 @@ ErrorCode app_apps_stop(AppHandle app, AppInstanceId instance,
 ErrorCode app_apps_get_status(AppHandle app, AppInstanceId instance,
                               AppAppsCallback callback, void *context,
                               AppRequestId *out_request);
+
+/*
+ * Starts the msgserv client: reads APP_MSG_SECRET_VARIABLE out of envp,
+ * installs the handlers and connects. envp is the third argument of main();
+ * the framework copies the secret and never keeps a pointer into envp.
+ *
+ * CORE_UNSUPPORTED if envp has no APP_MSG_SECRET_VARIABLE or its value is
+ * empty or too long: an application that was not given a secret cannot take
+ * part in the exchange. CORE_ALREADY_EXISTS on a second call.
+ *
+ * CORE_OK means "connecting". Whether bind succeeded arrives in the link
+ * handler, and requests made before it are queued.
+ */
+ErrorCode app_msg_start(AppHandle app, char **envp, const AppMsgHandlers *handlers);
+
+/*
+ * Requests to msgserv. CORE_OK means "queued"; the outcome, including the
+ * ErrorCode of the broker, arrives in the callback. out_request may be NULL.
+ * payload may be { NULL, 0 }.
+ */
+ErrorCode app_msg_subscribe(AppHandle app, const char *topic, AppMsgCallback callback,
+                            void *context, AppRequestId *out_request);
+ErrorCode app_msg_unsubscribe(AppHandle app, const char *topic, AppMsgCallback callback,
+                              void *context, AppRequestId *out_request);
+ErrorCode app_msg_publish(AppHandle app, const char *topic, Bytes payload,
+                          AppMsgCallback callback, void *context,
+                          AppRequestId *out_request);
+
+/* Addresses one connection. This is the reliable form: the identifier comes
+ * from the sender field of a received event or request. */
+ErrorCode app_msg_request(AppHandle app, AppMsgClientId target, const char *method,
+                          Bytes payload, AppMsgCallback callback, void *context,
+                          AppRequestId *out_request);
+
+/* Addresses an application. A convenience for "exactly one instance is
+ * connected": the broker answers CORE_NOT_FOUND for none and
+ * CORE_ALREADY_EXISTS for several. */
+ErrorCode app_msg_request_application(AppHandle app, const char *application_id,
+                                      const char *method, Bytes payload,
+                                      AppMsgCallback callback, void *context,
+                                      AppRequestId *out_request);
+
+/* Answers a request delivered to this connection. May be called long after
+ * the request handler returned, for example from a timer. */
+ErrorCode app_msg_respond(AppHandle app, AppMsgCorrelationId correlation, u32 status,
+                          Bytes payload, AppMsgCallback callback, void *context,
+                          AppRequestId *out_request);
 
 #endif

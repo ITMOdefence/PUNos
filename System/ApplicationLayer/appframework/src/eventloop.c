@@ -80,6 +80,26 @@ ErrorCode libappframework_internal_register_fd(AppHandle app, i32 fd, EventMask 
     return CORE_OK;
 }
 
+ErrorCode libappframework_internal_register_timer(AppHandle app, DurationMs delay_ms,
+                                                  DurationMs period_ms,
+                                                  AppEventHandler handler, void *context,
+                                                  AppEventSourceId *out_source)
+{
+    AppEventSourceId id;
+    ErrorCode result = eventloop_create_timer(app->loop, delay_ms, period_ms, &id);
+
+    if (result != CORE_OK) {
+        return result;
+    }
+    result = table_add(app, id, handler, context, true);
+    if (result != CORE_OK) {
+        (void)eventloop_remove_source(app->loop, id);
+        return result;
+    }
+    *out_source = id;
+    return CORE_OK;
+}
+
 ErrorCode libappframework_internal_update_fd(AppHandle app, AppEventSourceId source,
                                              EventMask mask)
 {
@@ -109,6 +129,7 @@ void libappframework_internal_dispatch(AppHandle app, const Event *events, usize
     /* Requests of a connection whose write failed end here, not in the call that failed. */
     if (!libappframework_internal_quit_requested(app)) {
         libappframework_internal_apps_deferred(app);
+        libappframework_internal_msg_deferred(app);
     }
     for (usize i = 0; i < count; ++i) {
         AppSource *entry;

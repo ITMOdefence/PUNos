@@ -33,7 +33,8 @@ typedef enum AppOperationKind {
     APP_OPERATION_EVENT_ADD = 3,    /* app_event_add_fd, app_event_create_timer */
     APP_OPERATION_EVENT_REMOVE = 4,
     APP_OPERATION_LOG = 5,
-    APP_OPERATION_APPS = 6          /* app_apps_* */
+    APP_OPERATION_APPS = 6,         /* app_apps_* */
+    APP_OPERATION_MSG = 7           /* app_msg_* */
 } AppOperationKind;
 
 /* True if the lifecycle table allows the move from one state to the other. */
@@ -102,6 +103,53 @@ typedef struct AppAppsClient {
     AppRequestId last_request;       /* last identifier handed out */
 } AppAppsClient;
 
+/* One request to msgserv, from app_msg_*() until its callback. */
+typedef struct AppMsgRequest {
+    AppRequestId id;
+    AppMsgOperation operation;
+    AppMsgCallback callback;
+    void *context;
+    MemoryBlock payload; /* encoded request; released once it is sent */
+    bool sent;
+} AppMsgRequest;
+
+/* One remembered subscription, re-sent after a reconnect. */
+typedef struct AppMsgTopic {
+    u8 topic[APP_MSG_TOPIC_MAX_LENGTH];
+    usize length;
+    bool used;
+} AppMsgTopic;
+
+/*
+ * The connection to msgserv. It differs from the logserv and appserv clients
+ * in two ways: it must bind before anything else may be sent, and frames
+ * arrive unsolicited at any moment, including between a request and its
+ * answer. Both are handled here, not in the application.
+ */
+typedef struct AppMsgClient {
+    IpcConnectionHandle connection;  /* NULL: not connected */
+    bool started;                    /* app_msg_start() succeeded */
+    bool open;                       /* connection is Open (else Connecting) */
+    bool bound;                      /* bind_result with CORE_OK arrived */
+    bool write_interest;
+    bool failed;                     /* a write failed; the event loop ends the requests */
+    bool permanent;                  /* bind was refused for good: no reconnect */
+    AppEventSourceId source;         /* 0: not registered */
+    AppEventSourceId retry;          /* 0: no reconnect timer armed */
+    DurationMs backoff_ms;           /* next reconnect delay */
+    AppMsgClientId client_id;        /* 0 until bind succeeded */
+    AppMsgHandlers handlers;
+    MemoryBlock secret_block;        /* a copy of the secret, never a pointer into envp */
+    usize secret_length;
+    AppMsgTopic topics[APP_MSG_SUBSCRIPTIONS_MAX];
+    MemoryBlock block;               /* APP_MSG_MAX_PENDING requests */
+    AppMsgRequest *requests;
+    usize head;
+    usize count;
+    usize ending;                    /* taken out of the queue, callbacks still due */
+    AppRequestId last_request;
+} AppMsgClient;
+
 struct AppHandle {
     MemoryBlock block;          /* the allocation that holds this structure */
     AppLifecycleState state;    /* owner thread only */
@@ -122,6 +170,7 @@ struct AppHandle {
     usize log_component_length;
     AppLogClient logserv;
     AppAppsClient appserv;
+    AppMsgClient msgserv;
 };
 
 /*
@@ -160,6 +209,14 @@ ErrorCode libappframework_internal_register_fd(AppHandle app, i32 fd, EventMask 
 
 ErrorCode libappframework_internal_update_fd(AppHandle app, AppEventSourceId source,
                                              EventMask mask);
+
+/* Creates a timer owned by the library: the application can neither see it
+ * through app_event_remove() nor remove it. Used by the msgserv client for
+ * its reconnect backoff. */
+ErrorCode libappframework_internal_register_timer(AppHandle app, DurationMs delay_ms,
+                                                  DurationMs period_ms,
+                                                  AppEventHandler handler, void *context,
+                                                  AppEventSourceId *out_source);
 
 /* Removes a source from the event loop and the table. */
 ErrorCode libappframework_internal_unregister(AppHandle app, AppEventSourceId source);
@@ -234,5 +291,38 @@ void libappframework_internal_apps_deferred(AppHandle app);
 
 /* One non-blocking attempt to pass queued records on, then closes. */
 void libappframework_internal_logging_shutdown(AppHandle app);
+
+/* ------------------------------------------------------------------------ */
+/* Messaging (module messaging)                                              */
+/* ------------------------------------------------------------------------ */
+
+extern const char *libappframework_internal_msgserv_endpoint;
+
+/* First reconnect delay, doubled on every failure up to the cap. msgserv
+ * starts after appserv, so the first attempt of an application launched at
+ * boot normally fails. */
+#define APP_MSG_BACKOFF_FIRST_MS ((DurationMs)50)
+#define APP_MSG_BACKOFF_MAX_MS ((DurationMs)3200)
+
+/* The value of name in envp, or NULL. Pure: exposed so a test can check the
+ * parsing on exact strings without an environment. */
+const char *libappframework_internal_env_lookup(char **envp, const char *name,
+                                                usize *out_length);
+
+/* Builds the payload of one msgserv request. target is a client_id for
+ * APP_MSG_OPERATION_REQUEST with application_id == NULL, and correlation is
+ * used by APP_MSG_OPERATION_RESPOND. */
+ErrorCode libappframework_internal_msg_encode(AppMsgOperation operation, const char *text,
+                                              usize text_length, const char *application_id,
+                                              usize application_id_length,
+                                              AppMsgClientId target,
+                                              AppMsgCorrelationId correlation, u32 status,
+                                              Bytes payload, MemoryBlock *out_payload,
+                                              IpcMessageType *out_type);
+
+/* Ends pending requests with CORE_INVALID_STATE and closes the connection. */
+void libappframework_internal_msg_shutdown(AppHandle app);
+/* Ends the requests of a connection whose write failed (called by the event loop). */
+void libappframework_internal_msg_deferred(AppHandle app);
 
 #endif

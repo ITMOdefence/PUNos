@@ -60,6 +60,7 @@ static bool spec_allowed(AppOperationKind operation, AppLifecycleState state)
     case APP_OPERATION_EVENT_ADD:
     case APP_OPERATION_LOG:
     case APP_OPERATION_APPS:
+    case APP_OPERATION_MSG:
         return state == APP_LIFECYCLE_CREATED || state == APP_LIFECYCLE_RUNNING;
     }
     return false;
@@ -107,6 +108,7 @@ int main(void)
     EXPECT(14, operation_row_matches(APP_OPERATION_EVENT_REMOVE));
     EXPECT(15, operation_row_matches(APP_OPERATION_LOG));
     EXPECT(16, operation_row_matches(APP_OPERATION_APPS));
+    EXPECT(24, operation_row_matches(APP_OPERATION_MSG));
 
     /* Spot checks of the cells that matter most for the contract. */
     EXPECT(17, libappframework_internal_operation_allowed(APP_OPERATION_RUN,
@@ -119,7 +121,7 @@ int main(void)
                                                           APP_LIFECYCLE_CREATED) == CORE_OK);
 
     /* 20-23: values outside the enumerations. */
-    EXPECT(20, libappframework_internal_operation_allowed((AppOperationKind)7,
+    EXPECT(20, libappframework_internal_operation_allowed((AppOperationKind)8,
                                                           APP_LIFECYCLE_CREATED) ==
                    CORE_INVALID_ARGUMENT);
     EXPECT(21, libappframework_internal_operation_allowed(APP_OPERATION_LOG,
@@ -133,7 +135,7 @@ int main(void)
                    CORE_INVALID_ARGUMENT);
 
     /* 30: Destroyed refuses everything, quitting included. */
-    for (u32 operation = 0; operation <= (u32)APP_OPERATION_APPS; ++operation) {
+    for (u32 operation = 0; operation <= (u32)APP_OPERATION_MSG; ++operation) {
         EXPECT(30, libappframework_internal_operation_allowed((AppOperationKind)operation,
                                                               APP_LIFECYCLE_DESTROYED) ==
                        CORE_INVALID_STATE);

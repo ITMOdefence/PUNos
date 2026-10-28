@@ -1,5 +1,5 @@
 LIBRARY_NAME := appframework
-RUNTIME_TESTS := lifecycle_runtime create_runtime run_runtime fault_runtime logserv_runtime apps_wire_runtime apps_runtime
+RUNTIME_TESTS := lifecycle_runtime create_runtime run_runtime fault_runtime logserv_runtime apps_wire_runtime apps_runtime messaging_runtime
 DEPENDENCIES := libcore libmem libstr libtime libeventloop
 SPECIAL_DEPENDENCIES := ipclib
 # Linked into the tests only: threads for the owner-thread checks.
