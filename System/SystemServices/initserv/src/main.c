@@ -1,5 +1,6 @@
 #include <initserv.h>
 #include <special/ipc.h>
+#include <sys/random.h>
 #include <sys/thread.h>
 #include <punos/syscall/syscall.h>
 #include "wire.h"
@@ -15,12 +16,79 @@ typedef struct ServiceState {
 } ServiceState;
 static volatile i32 stopping;
 static bool finishing_log;
+static char presenter_argument[96];
+static char controller_argument[96];
+static char shell_argument[96];
+static String presenter_argument_string;
+static String controller_argument_string;
+static String shell_argument_string;
 static void stop_signal(i32 number) { (void)number; stopping = 1; }
 static bool equal(const String *text, const char *literal)
 {
     usize i = 0;
     while (literal[i] != '\0' && i < text->length && text->data[i] == literal[i]) ++i;
     return i == text->length && literal[i] == '\0';
+}
+static ErrorCode make_token_argument(const char *prefix, char output[96],
+                                     String *out_string)
+{
+    static const char hexadecimal[] = "0123456789abcdef";
+    u8 token[32];
+    usize length = 0;
+    ErrorCode error = random_fill((Bytes){ token, sizeof(token) });
+
+    if (error != CORE_OK) return error;
+    while (prefix[length] != '\0') {
+        if (length + sizeof(token) * 2 + 1 > 96) return CORE_OVERFLOW;
+        output[length] = prefix[length];
+        ++length;
+    }
+    for (usize index = 0; index < sizeof(token); ++index) {
+        output[length++] = hexadecimal[token[index] >> 4];
+        output[length++] = hexadecimal[token[index] & 15];
+    }
+    output[length] = '\0';
+    *out_string = (String){ output, length };
+    return CORE_OK;
+}
+static ErrorCode initialize_gui_tokens(void)
+{
+    ErrorCode error = make_token_argument(
+        "--presenter-token=", presenter_argument, &presenter_argument_string);
+    if (error == CORE_OK) error = make_token_argument(
+        "--controller-token=", controller_argument,
+        &controller_argument_string);
+    if (error == CORE_OK) error = make_token_argument(
+        "--shell-token=", shell_argument, &shell_argument_string);
+    return error;
+}
+static const String *expanded_argument(const String *argument)
+{
+    if (equal(argument, "--presenter-token=@PUNOS_PRESENTER_TOKEN@")) {
+        return &presenter_argument_string;
+    }
+    if (equal(argument, "--controller-token=@PUNOS_CONTROLLER_TOKEN@")) {
+        return &controller_argument_string;
+    }
+    if (equal(argument, "--shell-token=@PUNOS_SHELL_TOKEN@")) {
+        return &shell_argument_string;
+    }
+    return argument;
+}
+static ErrorCode start_service(const ServiceSpec *spec,
+                               ProcessHandle *out_process)
+{
+    String arguments[32];
+    ProcessLaunch launch;
+
+    if (spec == NULL || out_process == NULL ||
+        spec->launch.argument_count > 32) return CORE_INVALID_ARGUMENT;
+    launch = spec->launch;
+    for (usize index = 0; index < launch.argument_count; ++index) {
+        arguments[index] = *expanded_argument(&launch.arguments[index]);
+    }
+    if (launch.argument_count != 0) launch.arguments = arguments;
+    return process_start(&launch, out_process);
 }
 static ErrorCode valid_text(const String *text, bool nonempty)
 {
@@ -205,6 +273,8 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     if (argc != 1) return PROCESS_EXIT_INVALID_ARGUMENT;
     if (validate_registry() != CORE_OK) return PROCESS_EXIT_INITIALIZATION_FAILED;
+    if (initialize_gui_tokens() != CORE_OK)
+        return PROCESS_EXIT_INITIALIZATION_FAILED;
     ServiceState states[64] = { 0 };
     EventLoopHandle loop = NULL;
     EventSourceId monitor = 0;
@@ -215,7 +285,7 @@ int main(int argc, char **argv, char **envp)
     if (eventloop_create(&loop) != CORE_OK) return result;
     if (eventloop_create_timer(loop, INIT_MONITOR_MS, INIT_MONITOR_MS, &monitor) != CORE_OK) goto cleanup;
     for (usize i=0; i<init_registry.count; ++i) states[i].delay=INIT_MONITOR_MS;
-    if (process_start(&init_registry.services[0].launch, &states[0].process) != CORE_OK) goto cleanup;
+    if (start_service(&init_registry.services[0], &states[0].process) != CORE_OK) goto cleanup;
     if (log_ready(loop, &states[0]) != CORE_OK) goto cleanup;
     journal_ready = true;
     if (trace(loop, "started", &init_registry.services[0], NULL, CORE_OK) != CORE_OK) goto cleanup;
@@ -223,7 +293,7 @@ int main(int argc, char **argv, char **envp)
     for (usize i=1; i<init_registry.count && !stopping; ++i) {
         const ServiceSpec *spec=&init_registry.services[i];
         if (!spec->enabled) continue;
-        ErrorCode error=process_start(&spec->launch, &states[i].process);
+        ErrorCode error=start_service(spec, &states[i].process);
         (void)trace(loop, error==CORE_OK?"started":"start failed", spec, NULL, error);
         if (error!=CORE_OK && spec->restart && schedule(loop,&states[i])!=CORE_OK) goto cleanup;
     }
@@ -265,7 +335,7 @@ int main(int argc, char **argv, char **envp)
             if (!due || (i!=0 && (states[0].process==NULL || states[0].pending))) continue;
             states[i].pending=false;
             (void)eventloop_remove_source(loop,states[i].restart_timer); states[i].restart_timer=0;
-            error=process_start(&init_registry.services[i].launch,&states[i].process);
+            error=start_service(&init_registry.services[i],&states[i].process);
             if (error==CORE_OK) {
                 states[i].delay=INIT_MONITOR_MS;
                 if (i==0 && log_ready(loop,&states[0])!=CORE_OK) {

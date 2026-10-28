@@ -24,14 +24,14 @@ done
 
 make --directory "${BOOT_DIR}" REGISTRY="${REGISTRY}" all
 
-ACTIVE_DEVICE_SERVICES="$(python3 - "${REGISTRY}" <<'PY'
+ACTIVE_EXTRA_SERVICES="$(python3 - "${REGISTRY}" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding='utf-8') as source:
     registry = json.load(source)
 for item in registry['services']:
-    if item['service_id'] in ('IOserv', 'camserv') and item['enabled']:
+    if item['service_id'] not in ('logserv', 'appserv') and item['enabled']:
         if item['executable'] != '/punos/bin/' + item['service_id']:
-            raise SystemExit('enabled device service requires /punos/bin executable')
+            raise SystemExit('enabled service requires /punos/bin executable')
         print(item['service_id'])
 PY
 )"
@@ -42,6 +42,8 @@ SELF_TESTS=(
     "SystemLibs/libcore/build/core_runtime:libcore-selftest"
     "SystemLibs/libmath/build/math_runtime:libmath-selftest"
     "SystemLibs/libmem/build/memory_runtime:libmem-selftest"
+    "SystemLibs/librandom/build/random_runtime:librandom-selftest"
+    "SystemLibs/libgraphics/build/graphics_runtime:libgraphics-selftest"
     "SystemLibs/libstr/build/string_runtime:libstr-selftest"
     "SystemLibs/libfile/build/file_runtime:libfile-selftest"
     "SystemLibs/libtime/build/time_runtime:libtime-selftest"
@@ -55,6 +57,7 @@ SELF_TESTS=(
     "SpecialLibs/loglib/build/log_runtime:log-selftest"
     "SpecialLibs/inputlib/build/input_runtime:input-selftest"
     "SpecialLibs/camlib/build/camera_runtime:camera-selftest"
+    "SpecialLibs/displaylib/build/display_runtime:display-selftest"
     "ApplicationLayer/appframework/build/lifecycle_runtime:appfw-lifecycle-selftest"
     "ApplicationLayer/appframework/build/create_runtime:appfw-create-selftest"
     "ApplicationLayer/appframework/build/run_runtime:appfw-run-selftest"
@@ -65,6 +68,9 @@ SELF_TESTS=(
     "SystemServices/appserv/build/service_test:appserv-selftest"
     "SystemServices/logserv/build/queue_test:logserv-selftest"
     "SystemServices/initserv/build/policy_test:initserv-selftest"
+    "SystemServices/displayserv/build/displayserv_runtime:displayserv-selftest"
+    "SystemServices/compositorserv/build/compositorserv_runtime:compositorserv-selftest"
+    "SystemServices/windowserv/build/windowserv_runtime:windowserv-selftest"
 )
 
 verify_elf() {
@@ -89,7 +95,7 @@ verify_elf "${BOOT_DIR}/build/init"
 verify_elf "${SYSTEM_DIR}/SystemServices/initserv/build/initserv"
 verify_elf "${SYSTEM_DIR}/SystemServices/logserv/build/logserv"
 verify_elf "${SYSTEM_DIR}/SystemServices/appserv/build/appserv"
-for service in ${ACTIVE_DEVICE_SERVICES}; do
+for service in ${ACTIVE_EXTRA_SERVICES}; do
     verify_elf "${SYSTEM_DIR}/SystemServices/${service}/build/${service}"
 done
 if [[ "${IMAGE_MODE}" == smoke ]]; then
@@ -122,7 +128,7 @@ install -m 0755 "${SYSTEM_DIR}/SystemServices/initserv/build/initserv" "${ROOTFS
 install -m 0755 "${SYSTEM_DIR}/SystemServices/logserv/build/logserv" "${ROOTFS_DIR}/punos/bin/logserv"
 install -m 0755 "${SYSTEM_DIR}/SystemServices/appserv/build/appserv" \
     "${ROOTFS_DIR}/punos/bin/appserv"
-for service in ${ACTIVE_DEVICE_SERVICES}; do
+for service in ${ACTIVE_EXTRA_SERVICES}; do
     install -m 0755 "${SYSTEM_DIR}/SystemServices/${service}/build/${service}" \
         "${ROOTFS_DIR}/punos/bin/${service}"
 done

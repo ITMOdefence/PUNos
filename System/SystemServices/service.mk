@@ -1,7 +1,7 @@
 CC ?= cc
 PUNOS_DIR ?= ../../..
 ROOT := $(abspath $(PUNOS_DIR))
-LIBS := core mem str file process time thread sync eventloop
+LIBS := core mem str file process time thread sync eventloop $(EXTRA_SYS_LIBS)
 LIBS += $(DEVICE_SYS_LIB)
 CPPFLAGS += -Iinclude -Isrc -Ibuild/generated -I$(ROOT)/System/NativeRuntime/include -I$(ROOT)/System/NativeRuntime/SyscallWrappers/include $(foreach lib,$(LIBS),-I$(ROOT)/System/SystemLibs/lib$(lib)/include) -I$(ROOT)/System/SpecialLibs/ipclib/include -I$(ROOT)/System/SpecialLibs/loglib/include $(if $(DEVICE_LIB_DIR),-I$(ROOT)/System/SpecialLibs/$(DEVICE_LIB_DIR)/include)
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin -fno-stack-protector -fno-pic -m64 -Wall -Wextra -Werror -fno-tree-loop-distribute-patterns

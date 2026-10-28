@@ -36,6 +36,23 @@ typedef struct MemoryBlock {
     usize size;
 } MemoryBlock;
 
+/*
+ * Owning shared-memory object. fd and mapping are released together by
+ * memory_shared_close(). The fd is suitable for SCM_RIGHTS transfer.
+ */
+typedef struct SharedMemory {
+    i32 fd;
+    u32 reserved;
+    u8 *data;
+    usize size;
+} SharedMemory;
+
+/* Read-only imported mapping. It does not own the fd used to create it. */
+typedef struct SharedMemoryMapping {
+    const u8 *data;
+    usize size;
+} SharedMemoryMapping;
+
 /* Bit mask of MEM_* flags. */
 typedef u32 MemoryProtection;
 
@@ -52,6 +69,9 @@ typedef enum MemoryCompareResult {
 } MemoryCompareResult;
 
 _Static_assert(sizeof(MemoryBlock) == 16, "MemoryBlock ABI mismatch");
+_Static_assert(sizeof(SharedMemory) == 24, "SharedMemory ABI mismatch");
+_Static_assert(sizeof(SharedMemoryMapping) == 16,
+               "SharedMemoryMapping ABI mismatch");
 _Static_assert(sizeof(MemoryCompareResult) == 4, "MemoryCompareResult ABI mismatch");
 
 /*
@@ -104,6 +124,29 @@ ErrorCode memory_free(MemoryBlock *block);
  * if mprotect() fails.
  */
 ErrorCode memory_protect(MemoryBlock *block, MemoryProtection protection);
+
+/*
+ * Creates a CLOEXEC memfd of exactly size bytes and maps it read-write with
+ * MAP_SHARED. size must be non-zero. On success *out_memory owns both fd and
+ * mapping; close it exactly once with memory_shared_close().
+ */
+ErrorCode memory_shared_create(usize size, SharedMemory *out_memory);
+
+/* Returns the exact current size of a regular shared-memory fd. */
+ErrorCode memory_shared_get_size(i32 fd, usize *out_size);
+
+/*
+ * Maps an imported shared-memory fd read-only after verifying that its exact
+ * size equals expected_size. The returned mapping does not own fd.
+ */
+ErrorCode memory_shared_map_readonly(i32 fd, usize expected_size,
+                                     SharedMemoryMapping *out_mapping);
+
+/* Unmaps an imported mapping and resets it to { NULL, 0 }. */
+ErrorCode memory_shared_unmap(SharedMemoryMapping *mapping);
+
+/* Unmaps and closes an owned object, then resets it to an invalid value. */
+ErrorCode memory_shared_close(SharedMemory *memory);
 
 /*
  * Copies source.size bytes from source to the start of destination.

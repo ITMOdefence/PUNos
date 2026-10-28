@@ -175,6 +175,10 @@ ErrorCode app_event_add_fd(AppHandle app, i32 fd, EventMask mask,
                            AppEventHandler handler, void *context,
                            AppEventSourceId *out_source);
 
+/* Changes the interests of an existing application-owned fd source. */
+ErrorCode app_event_update_fd(AppHandle app, AppEventSourceId source,
+                              EventMask mask);
+
 /* period_ms == 0 makes a one-shot timer; delay_ms == 0 fires at once. */
 ErrorCode app_event_create_timer(AppHandle app, DurationMs delay_ms,
                                  DurationMs period_ms, AppEventHandler handler,

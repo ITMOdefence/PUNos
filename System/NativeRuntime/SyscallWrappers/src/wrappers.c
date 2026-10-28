@@ -82,6 +82,12 @@ i32 fstat(i32 fd, struct stat *info)
         PUNOS_SYS_FSTAT, (unsigned long)fd, (unsigned long)info));
 }
 
+i32 ftruncate(i32 fd, off_t length)
+{
+    return (i32)__punos_syscall_result(__punos_syscall2(
+        PUNOS_SYS_FTRUNCATE, (unsigned long)fd, (unsigned long)length));
+}
+
 void *mmap(void *address, size_t length, i32 protection, i32 flags, i32 fd,
            off_t offset)
 {
@@ -112,6 +118,19 @@ i32 mprotect(void *address, size_t length, i32 protection)
     return (i32)__punos_syscall_result(__punos_syscall3(
         PUNOS_SYS_MPROTECT, (unsigned long)address, (unsigned long)length,
         (unsigned long)protection));
+}
+
+i32 memfd_create(const char *name, u32 flags)
+{
+    return (i32)__punos_syscall_result(__punos_syscall2(
+        PUNOS_SYS_MEMFD_CREATE, (unsigned long)name, (unsigned long)flags));
+}
+
+ssize_t getrandom(void *buffer, size_t length, u32 flags)
+{
+    return (ssize_t)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_GETRANDOM, (unsigned long)buffer, (unsigned long)length,
+        (unsigned long)flags));
 }
 
 i32 sigaction(i32 signal, const struct sigaction *action,
@@ -298,6 +317,26 @@ ssize_t recv(i32 fd, void *buffer, size_t length, i32 flags)
     return (ssize_t)__punos_syscall_result(__punos_syscall6(
         PUNOS_SYS_RECVFROM, (unsigned long)fd, (unsigned long)buffer,
         (unsigned long)length, (unsigned long)flags, 0, 0));
+}
+
+i32 fcntl(i32 fd, i32 command, unsigned long argument)
+{
+    return (i32)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_FCNTL, (unsigned long)fd, (unsigned long)command, argument));
+}
+
+ssize_t sendmsg(i32 fd, const struct msghdr *message, i32 flags)
+{
+    return (ssize_t)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_SENDMSG, (unsigned long)fd, (unsigned long)message,
+        (unsigned long)flags));
+}
+
+ssize_t recvmsg(i32 fd, struct msghdr *message, i32 flags)
+{
+    return (ssize_t)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_RECVMSG, (unsigned long)fd, (unsigned long)message,
+        (unsigned long)flags));
 }
 
 i32 shutdown(i32 fd, i32 how)

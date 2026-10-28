@@ -170,6 +170,9 @@ _Noreturn void __punos_raw_exit_group(int status);
 | `struct sockaddr_in` | `u16 sin_family; u16 sin_port; struct in_addr sin_addr; u8 sin_zero[8];` | IPv4 socket-адрес |
 | `struct in6_addr` | `u8 s6_addr[16];` | IPv6-адрес |
 | `struct sockaddr_in6` | `u16 sin6_family; u16 sin6_port; u32 sin6_flowinfo; struct in6_addr sin6_addr; u32 sin6_scope_id;` | IPv6 socket-адрес |
+| `struct iovec` | `void *iov_base; size_t iov_len;` | Один сегмент данных для `sendmsg()` и `recvmsg()` |
+| `struct msghdr` | Linux x86_64 kernel ABI, 56 байт | Данные, адрес и ancillary data одного socket-сообщения |
+| `struct cmsghdr` | `size_t cmsg_len; i32 cmsg_level; i32 cmsg_type;` | Заголовок ancillary data; используется с `SCM_RIGHTS` |
 | `epoll_data_t` | Объединение `void *ptr`, `i32 fd`, `u32 u32`, `u64 u64` | Пользовательские данные epoll |
 | `struct epoll_event` | Упакованная структура `u32 events; epoll_data_t data;` | Kernel ABI события epoll x86_64 |
 | `clone_entry_t` | `i32 (*)(void *argument)` | Начальная функция нового потока |
@@ -243,10 +246,19 @@ assembly-trampoline `__restore_rt` в `sa_restorer`. Trampoline выполняе
 | `write()` | `i32 fd`, `const void *buffer`, `size_t count` | `write` (`1`) | Число байтов или `-1` |
 | `lseek()` | `i32 fd`, `off_t offset`, `i32 origin` | `lseek` (`8`) | Новая позиция или `-1` |
 | `fstat()` | `i32 fd`, `struct stat *info` | `fstat` (`5`) | `0` или `-1` |
+| `ftruncate()` | `i32 fd`, `off_t length` | `ftruncate` (`77`) | `0` или `-1` |
+| `fcntl()` | `i32 fd`, `i32 command`, `unsigned long argument` | `fcntl` (`72`) | Результат команды или `-1`; v1 публикует `F_DUPFD_CLOEXEC` |
 | `mkdir()` | `const char *path`, `mode_t mode` | `mkdir` (`83`) | `0` или `-1` |
 | `unlink()` | `const char *path` | `unlink` (`87`) | `0` или `-1` |
 | `rename()` | `const char *old_path`, `const char *new_path` | `rename` (`82`) | `0` или `-1` |
 | `fsync()` | `i32 fd` | `fsync` (`74`) | `0` или `-1` |
+
+## Общая память и случайные данные
+
+| Wrapper | Публичные аргументы | Реальный syscall x86_64 | Результат |
+| --- | --- | --- | --- |
+| `memfd_create()` | `const char *name`, `u32 flags` | `memfd_create` (`319`) | Новый анонимный fd или `-1` |
+| `getrandom()` | `void *buffer`, `size_t length`, `u32 flags` | `getrandom` (`318`) | Число заполненных байтов или `-1` |
 
 `open()`, `mkdir()`, `unlink()` и `rename()` намеренно используют доступные в
 x86_64 legacy syscalls. Переход на семейство `*at` является отдельным
@@ -340,6 +352,8 @@ wrapper недопустим. Trampoline вызывает `entry(argument)` и �
 | `setsockopt()` | `i32 fd`, `i32 level`, `i32 option`, `const void *value`, `socklen_t length` | `setsockopt` (`54`) | `0` или `-1` |
 | `send()` | `i32 fd`, `const void *buffer`, `size_t length`, `i32 flags` | `sendto` (`44`) | Передаёт `NULL, 0` как адрес назначения |
 | `recv()` | `i32 fd`, `void *buffer`, `size_t length`, `i32 flags` | `recvfrom` (`45`) | Передаёт `NULL, NULL` как адрес отправителя |
+| `sendmsg()` | `i32 fd`, `const struct msghdr *message`, `i32 flags` | `sendmsg` (`46`) | Передаёт данные и optional ancillary data, включая `SCM_RIGHTS` |
+| `recvmsg()` | `i32 fd`, `struct msghdr *message`, `i32 flags` | `recvmsg` (`47`) | Принимает данные и ancillary data; `MSG_CMSG_CLOEXEC` закрывает утечку через `execve()` |
 | `shutdown()` | `i32 fd`, `i32 how` | `shutdown` (`48`) | `0` или `-1` |
 
 Один набор wrappers используется для `AF_UNIX`, `AF_INET` и `AF_INET6`.

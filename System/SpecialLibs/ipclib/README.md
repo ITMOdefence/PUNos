@@ -43,8 +43,10 @@ string_destroy(&endpoint);
   `ipc_server_accept`, `ipc_server_close`.
 - **Connection operations.** `ipc_connection_begin_connect`,
   `ipc_connection_finish_connect`, `ipc_connection_get_fd`,
-  `ipc_connection_send`, `ipc_connection_flush`, `ipc_connection_receive`,
-  `ipc_message_destroy`, `ipc_connection_close`.
+  `ipc_connection_send`, `ipc_connection_send_with_descriptor`,
+  `ipc_connection_flush`, `ipc_connection_receive`,
+  `ipc_connection_receive_with_descriptor`, `ipc_message_destroy`,
+  `ipc_connection_close`.
 - **Frame format.** 8-byte header: `payload_size` (u32), `message_type` (u32),
   followed by payload bytes.
 - **States.** Connecting → Open → PeerClosed.
@@ -52,8 +54,8 @@ string_destroy(&endpoint);
 ## Implementation decisions
 
 - **Frame header is 8 bytes.** `payload_size` (u32) + `message_type` (u32).
-- **Outgoing queue is a simple byte buffer.** Messages are copied into a
-  contiguous buffer and flushed with send().
+- **The ordinary frame ABI is unchanged.** Descriptor-bearing frames use
+  separate send/receive APIs and `SCM_RIGHTS`; `IpcMessage` remains compatible.
 - **Incoming buffer grows as needed.** Received bytes are accumulated until
   a complete frame is available.
 - **All sockets are non-blocking.** SOCK_NONBLOCK | SOCK_CLOEXEC.

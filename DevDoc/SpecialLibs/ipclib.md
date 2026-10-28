@@ -18,8 +18,10 @@
    вызывающим кодом через `libeventloop`.
 3. До появления отдельной SystemLib для socket-операций библиотека использует
    только следующие Syscall Wrappers: `socket()`, `bind()`, `listen()`,
-   `accept4()`, `connect()`, `getsockopt()`, `send()`, `recv()`, `shutdown()`,
-   `close()` и `unlink()`. Другие Syscall Wrappers библиотеке недоступны.
+   `accept4()`, `connect()`, `getsockopt()`, `sendmsg()`, `recvmsg()`,
+   `fcntl()`, `shutdown()`, `close()` и `unlink()`. Другие Syscall Wrappers
+   библиотеке недоступны. `fcntl(F_DUPFD_CLOEXEC)` используется только для
+   независимого владения дескриптором, поставленным в исходящую очередь.
 4. Все операции возвращают `ErrorCode` из `libcore`. `CORE_OK` — единственный
    успешный результат.
 5. Значения параметров с префиксом `out_` определены только при возврате
@@ -53,10 +55,16 @@
 13. Payload, переданный в `ipc_connection_send()`, копируется во внутреннюю
     очередь библиотеки до возврата из функции. Вызывающий код сохраняет
     владение исходным `Bytes`.
-14. Payload, полученный через `ipc_connection_receive()`, принадлежит
-    вызывающему коду и должен быть освобождён ровно один раз через
-    `ipc_message_destroy()`.
-15. `ipc_connection_close()` отбрасывает непереданные исходящие сообщения и
+14. Один кадр содержит не более одного файлового дескриптора. Значение
+    `IPC_NO_DESCRIPTOR` означает отсутствие дескриптора. При постановке кадра
+    в очередь библиотека создаёт собственную `CLOEXEC`-копию исходного fd;
+    отправитель сохраняет владение оригиналом.
+15. Payload, полученный через `ipc_connection_receive()` или
+    `ipc_connection_receive_with_descriptor()`, освобождается через
+    `ipc_message_destroy()`. Дескриптор, возвращённый отдельным параметром
+    `ipc_connection_receive_with_descriptor()`, принадлежит вызывающему коду и
+    должен быть закрыт отдельно.
+16. `ipc_connection_close()` отбрасывает непереданные исходящие сообщения и
     неполный входящий кадр. Для штатного завершения вызывающий код обязан
     вызвать `ipc_connection_flush()` до закрытия.
 
@@ -81,6 +89,9 @@
 | `4` | `message_type` | `u32` | Тип сообщения, определяемый протоколом сервиса |
 | `8` | `payload` | `u8[payload_size]` | Непрозрачные данные сообщения |
 
+Optional FD передаётся ancillary-данными `SCM_RIGHTS` вместе с первым байтом
+кадра и не изменяет формат заголовка.
+
 ### Состояния соединения
 
 | Состояние | Допустимые операции | Назначение |
@@ -100,7 +111,7 @@
 | `IpcServerHandle` | Непрозрачный указатель: `struct IpcServerHandle *` | `NULL` или открытый сервер | Сервер, ожидающий локальные подключения |
 | `IpcConnectionHandle` | Непрозрачный указатель: `struct IpcConnectionHandle *` | `NULL` или открытое/подключающееся соединение | Двунаправленное IPC-соединение |
 | `IpcMessageType` | `u32` из `libcore` | Определяется протоколом конкретного сервиса | Идентификатор смысла сообщения |
-| `IpcMessage` | Структура: `IpcMessageType type`, `Bytes payload` | Корректный кадр с payload не больше `IPC_MESSAGE_MAX_SIZE` | Полученное или отправляемое сообщение |
+| `IpcMessage` | Структура: `IpcMessageType type`, `Bytes payload` | Payload не больше `IPC_MESSAGE_MAX_SIZE` | Полученное или отправляемое сообщение; FD передаётся отдельным параметром расширенного API |
 | `IpcConnectionState` | Перечисление | `Connecting`, `Open`, `PeerClosed` | Текущее состояние соединения |
 | `IpcReceiveStatus` | Перечисление | `NoMessage`, `Message`, `PeerClosed` | Результат неблокирующей попытки приёма |
 
@@ -110,6 +121,7 @@
 | --- | --- | --- |
 | `IPC_ENDPOINT_MAX_LENGTH` | `107` | Максимальная длина endpoint в байтах без завершающего `NUL` |
 | `IPC_FRAME_HEADER_SIZE` | `8` | Размер заголовка IPC-кадра в байтах |
+| `IPC_NO_DESCRIPTOR` | `-1` | В сообщении нет файлового дескриптора |
 | `IPC_MESSAGE_MAX_SIZE` | `1048576` | Максимальный размер payload одного сообщения в байтах |
 | `IPC_OUTGOING_QUEUE_MAX_SIZE` | `4194304` | Максимальный суммарный размер очереди исходящих кадров одного соединения в байтах |
 
@@ -124,10 +136,12 @@
 | `ipc_connection_begin_connect(endpoint, out_connection)` | `const IpcEndpoint *endpoint`, `IpcConnectionHandle *out_connection` | `ErrorCode` | Создаёт неблокирующее клиентское соединение в состоянии `Connecting` |
 | `ipc_connection_finish_connect(connection, out_state)` | `IpcConnectionHandle connection`, `IpcConnectionState *out_state` | `ErrorCode` | Проверяет `SOL_SOCKET`/`SO_ERROR` через `getsockopt()`; записывает `Open`, если соединение установлено, либо `Connecting`, если ядро ещё не завершило подключение |
 | `ipc_connection_get_fd(connection, out_fd)` | `IpcConnectionHandle connection`, `i32 *out_fd` | `ErrorCode` | Возвращает невладеющий файловый дескриптор соединения для регистрации в event loop |
-| `ipc_connection_send(connection, message)` | `IpcConnectionHandle connection`, `const IpcMessage *message` | `ErrorCode` | Проверяет размер, копирует кадр во внутреннюю исходящую очередь и не передаёт его в сокет непосредственно |
+| `ipc_connection_send(connection, message)` | `IpcConnectionHandle connection`, `const IpcMessage *message` | `ErrorCode` | Ставит обычный кадр без FD в очередь |
+| `ipc_connection_send_with_descriptor(connection, message, descriptor)` | `IpcConnectionHandle connection`, `const IpcMessage *message`, `i32 descriptor` | `ErrorCode` | Ставит кадр и собственную `CLOEXEC`-копию одного FD в очередь |
 | `ipc_connection_flush(connection, out_has_pending)` | `IpcConnectionHandle connection`, `bool *out_has_pending` | `ErrorCode` | Передаёт максимальное доступное число исходящих байтов без блокировки; записывает `true`, если часть очереди ещё ожидает передачи |
-| `ipc_connection_receive(connection, out_status, out_message)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message` | `ErrorCode` | Читает доступные байты, собирает не более одного полного кадра и передаёт его вызывающему коду; при `NoMessage` и `PeerClosed` значение `out_message` не определено |
-| `ipc_message_destroy(message)` | `IpcMessage *message` | `ErrorCode` | Освобождает payload сообщения через `libmem` и делает структуру недействительной |
+| `ipc_connection_receive(connection, out_status, out_message)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message` | `ErrorCode` | Принимает кадр без выдачи FD; случайно полученный FD безопасно закрывается |
+| `ipc_connection_receive_with_descriptor(connection, out_status, out_message, out_descriptor)` | `IpcConnectionHandle connection`, `IpcReceiveStatus *out_status`, `IpcMessage *out_message`, `i32 *out_descriptor` | `ErrorCode` | Принимает кадр и передаёт владение optional FD вызывающему коду |
+| `ipc_message_destroy(message)` | `IpcMessage *message` | `ErrorCode` | Освобождает payload и обнуляет сообщение; descriptor закрывается его владельцем отдельно |
 | `ipc_connection_close(connection)` | `IpcConnectionHandle *connection` | `ErrorCode` | Закрывает соединение, освобождает внутренние буферы и записывает `NULL` |
 
 Если `bind()` выполнен, а `listen()` завершился ошибкой, операция удаляет

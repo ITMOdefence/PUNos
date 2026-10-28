@@ -20,6 +20,10 @@ python3 System/ApplicationLayer/appframework/tests/check_mutations.py
 
 Output: `System/ApplicationLayer/appframework/build/libappframework.a`.
 
+External event-loop clients register non-owned descriptors with
+`app_event_add_fd()`, change read/write interest with `app_event_update_fd()`,
+and unregister them with `app_event_remove()`.
+
 ## Test levels
 
 | Level | What | Where |

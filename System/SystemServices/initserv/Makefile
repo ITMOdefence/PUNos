@@ -1,4 +1,5 @@
 SERVICE := initserv
+EXTRA_SYS_LIBS := random
 REGISTRY ?= ../platform_registry.json
 METADATA ?= ../applications.json
 EXTRA_OBJECTS := build/registry.o

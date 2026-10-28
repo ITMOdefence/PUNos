@@ -11,15 +11,25 @@ struct IpcServerHandle {
     usize endpoint_length;
 };
 
+typedef struct IpcQueuedDescriptor {
+    struct IpcQueuedDescriptor *next;
+    MemoryBlock allocation;
+    usize offset;
+    i32 fd;
+} IpcQueuedDescriptor;
+
 struct IpcConnectionHandle {
     i32 fd;
     IpcConnectionState state;
     u8 *outgoing_buffer;
     usize outgoing_size;
     usize outgoing_capacity;
+    IpcQueuedDescriptor *outgoing_descriptors;
+    IpcQueuedDescriptor *outgoing_descriptors_tail;
     u8 *incoming_buffer;
     usize incoming_size;
     usize incoming_capacity;
+    i32 incoming_descriptor;
     /* Terminal connect() error, cached. Reading SO_ERROR clears the kernel's
      * copy, so it has to be remembered to stay repeatable. */
     i32 connect_error;
@@ -185,9 +195,12 @@ ErrorCode ipc_server_accept(IpcServerHandle server, IpcConnectionHandle *out_con
     conn->outgoing_buffer = NULL;
     conn->outgoing_size = 0;
     conn->outgoing_capacity = 0;
+    conn->outgoing_descriptors = NULL;
+    conn->outgoing_descriptors_tail = NULL;
     conn->incoming_buffer = NULL;
     conn->incoming_size = 0;
     conn->incoming_capacity = 0;
+    conn->incoming_descriptor = IPC_NO_DESCRIPTOR;
     conn->connect_error = 0;
 
     *out_connection = conn;
@@ -259,9 +272,12 @@ ErrorCode ipc_connection_begin_connect(const String *endpoint, IpcConnectionHand
     conn->outgoing_buffer = NULL;
     conn->outgoing_size = 0;
     conn->outgoing_capacity = 0;
+    conn->outgoing_descriptors = NULL;
+    conn->outgoing_descriptors_tail = NULL;
     conn->incoming_buffer = NULL;
     conn->incoming_size = 0;
     conn->incoming_capacity = 0;
+    conn->incoming_descriptor = IPC_NO_DESCRIPTOR;
     conn->connect_error = 0;
 
     MemoryBlock name_block;
@@ -386,7 +402,9 @@ static ErrorCode ipc_ensure_outgoing_capacity(IpcConnectionHandle connection, us
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message)
+static ErrorCode ipc_queue_message(IpcConnectionHandle connection,
+                                   const IpcMessage *message,
+                                   i32 descriptor)
 {
     if (connection == NULL || message == NULL) {
         return CORE_INVALID_ARGUMENT;
@@ -398,6 +416,9 @@ ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *
         return CORE_OVERFLOW;
     }
     if (message->payload.size != 0 && message->payload.data == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (descriptor < IPC_NO_DESCRIPTOR) {
         return CORE_INVALID_ARGUMENT;
     }
     usize payload_end;
@@ -413,6 +434,26 @@ ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *
     ErrorCode result = ipc_ensure_outgoing_capacity(connection, connection->outgoing_size + frame_size);
     if (result != CORE_OK) {
         return result;
+    }
+
+    IpcQueuedDescriptor *queued = NULL;
+    if (descriptor != IPC_NO_DESCRIPTOR) {
+        MemoryBlock block;
+        i32 duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
+
+        if (duplicate < 0) {
+            return core_error_from_errno(errno);
+        }
+        result = memory_allocate(sizeof(IpcQueuedDescriptor), &block);
+        if (result != CORE_OK) {
+            (void)close(duplicate);
+            return result;
+        }
+        queued = (IpcQueuedDescriptor *)block.data;
+        queued->next = NULL;
+        queued->allocation = block;
+        queued->offset = connection->outgoing_size;
+        queued->fd = duplicate;
     }
 
     u8 *frame = connection->outgoing_buffer + connection->outgoing_size;
@@ -432,7 +473,62 @@ ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *
     }
 
     connection->outgoing_size += frame_size;
+    if (queued != NULL) {
+        if (connection->outgoing_descriptors_tail == NULL) {
+            connection->outgoing_descriptors = queued;
+        } else {
+            connection->outgoing_descriptors_tail->next = queued;
+        }
+        connection->outgoing_descriptors_tail = queued;
+    }
     return CORE_OK;
+}
+
+ErrorCode ipc_connection_send(IpcConnectionHandle connection,
+                              const IpcMessage *message)
+{
+    return ipc_queue_message(connection, message, IPC_NO_DESCRIPTOR);
+}
+
+ErrorCode ipc_connection_send_with_descriptor(IpcConnectionHandle connection,
+                                              const IpcMessage *message,
+                                              i32 descriptor)
+{
+    if (descriptor < 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    return ipc_queue_message(connection, message, descriptor);
+}
+
+typedef union IpcControlBuffer {
+    struct cmsghdr alignment;
+    u8 bytes[24];
+} IpcControlBuffer;
+
+static ssize_t ipc_send_descriptor(i32 socket_fd, const u8 *data, usize size,
+                                   i32 descriptor)
+{
+    struct iovec vector;
+    struct msghdr message;
+    IpcControlBuffer control;
+    struct cmsghdr *header = (struct cmsghdr *)control.bytes;
+    i32 *payload = (i32 *)(control.bytes + sizeof(struct cmsghdr));
+
+    memory_set((Bytes){ control.bytes, sizeof(control.bytes) }, 0);
+    vector.iov_base = (void *)data;
+    vector.iov_len = size;
+    message.msg_name = NULL;
+    message.msg_namelen = 0;
+    message.msg_iov = &vector;
+    message.msg_iovlen = 1;
+    message.msg_control = control.bytes;
+    message.msg_controllen = sizeof(control.bytes);
+    message.msg_flags = 0;
+    header->cmsg_len = sizeof(struct cmsghdr) + sizeof(i32);
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    *payload = descriptor;
+    return sendmsg(socket_fd, &message, MSG_NOSIGNAL);
 }
 
 ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pending)
@@ -449,7 +545,23 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pen
         return CORE_OK;
     }
 
-    ssize_t sent = send(connection->fd, connection->outgoing_buffer, connection->outgoing_size, MSG_NOSIGNAL);
+    IpcQueuedDescriptor *queued = connection->outgoing_descriptors;
+    usize send_size = connection->outgoing_size;
+    ssize_t sent;
+
+    if (queued != NULL && queued->offset != 0 && send_size > queued->offset) {
+        send_size = queued->offset;
+    }
+    if (queued != NULL && queued->offset == 0) {
+        if (queued->next != NULL && send_size > queued->next->offset) {
+            send_size = queued->next->offset;
+        }
+        sent = ipc_send_descriptor(connection->fd, connection->outgoing_buffer,
+                                   send_size, queued->fd);
+    } else {
+        sent = send(connection->fd, connection->outgoing_buffer, send_size,
+                    MSG_NOSIGNAL);
+    }
     if (sent < 0) {
         i32 err = errno;
         if (err == EAGAIN || err == EWOULDBLOCK) {
@@ -465,6 +577,24 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pen
     }
 
     usize sent_size = (usize)sent;
+    if (sent_size == 0) {
+        *out_has_pending = true;
+        return CORE_OK;
+    }
+    if (queued != NULL && queued->offset == 0) {
+        MemoryBlock allocation = queued->allocation;
+
+        (void)close(queued->fd);
+        connection->outgoing_descriptors = queued->next;
+        if (connection->outgoing_descriptors == NULL) {
+            connection->outgoing_descriptors_tail = NULL;
+        }
+        (void)memory_free(&allocation);
+    }
+    for (queued = connection->outgoing_descriptors; queued != NULL;
+         queued = queued->next) {
+        queued->offset -= sent_size;
+    }
     if (sent_size < connection->outgoing_size) {
         /* The ranges overlap: memory_move() is the only libmem call that
          * allows it, memory_copy() would reject the call. */
@@ -581,16 +711,84 @@ static ErrorCode ipc_take_buffered_frame(IpcConnectionHandle connection, bool *o
     return CORE_OK;
 }
 
-ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatus *out_status, IpcMessage *out_message)
+static ErrorCode ipc_receive_chunk(IpcConnectionHandle connection, usize size,
+                                   ssize_t *out_received)
 {
-    if (connection == NULL || out_status == NULL || out_message == NULL) {
+    struct iovec vector;
+    struct msghdr message;
+    IpcControlBuffer control;
+    struct cmsghdr *header;
+    i32 received_descriptor = IPC_NO_DESCRIPTOR;
+    ssize_t received;
+
+    memory_set((Bytes){ control.bytes, sizeof(control.bytes) }, 0);
+    vector.iov_base = connection->incoming_buffer + connection->incoming_size;
+    vector.iov_len = size;
+    message.msg_name = NULL;
+    message.msg_namelen = 0;
+    message.msg_iov = &vector;
+    message.msg_iovlen = 1;
+    message.msg_control = control.bytes;
+    message.msg_controllen = sizeof(control.bytes);
+    message.msg_flags = 0;
+    received = recvmsg(connection->fd, &message, MSG_CMSG_CLOEXEC);
+    if (received <= 0) {
+        *out_received = received;
+        return CORE_OK;
+    }
+    header = (struct cmsghdr *)control.bytes;
+    if (message.msg_controllen != 0) {
+        if ((message.msg_flags & MSG_CTRUNC) != 0 ||
+            header->cmsg_level != SOL_SOCKET ||
+            header->cmsg_type != SCM_RIGHTS ||
+            header->cmsg_len != sizeof(struct cmsghdr) + sizeof(i32)) {
+            if (header->cmsg_level == SOL_SOCKET &&
+                header->cmsg_type == SCM_RIGHTS &&
+                header->cmsg_len >= sizeof(struct cmsghdr) + sizeof(i32)) {
+                usize available = message.msg_controllen;
+                usize declared = header->cmsg_len;
+                usize header_size = sizeof(struct cmsghdr);
+                usize descriptor_bytes;
+
+                if (available > sizeof(control.bytes)) {
+                    available = sizeof(control.bytes);
+                }
+                if (declared < available) available = declared;
+                descriptor_bytes = available - header_size;
+                for (usize offset = 0; offset + sizeof(i32) <= descriptor_bytes;
+                     offset += sizeof(i32)) {
+                    received_descriptor = *(i32 *)(control.bytes + header_size +
+                                                    offset);
+                    (void)close(received_descriptor);
+                }
+            }
+            return CORE_INVALID_ARGUMENT;
+        }
+        received_descriptor = *(i32 *)(control.bytes + sizeof(struct cmsghdr));
+        if (connection->incoming_size != 0 ||
+            connection->incoming_descriptor != IPC_NO_DESCRIPTOR) {
+            (void)close(received_descriptor);
+            return CORE_INVALID_ARGUMENT;
+        }
+        connection->incoming_descriptor = received_descriptor;
+    }
+    *out_received = received;
+    return CORE_OK;
+}
+
+ErrorCode ipc_connection_receive_with_descriptor(
+    IpcConnectionHandle connection, IpcReceiveStatus *out_status,
+    IpcMessage *out_message, i32 *out_descriptor)
+{
+    if (connection == NULL || out_status == NULL || out_message == NULL ||
+        out_descriptor == NULL) {
         return CORE_INVALID_ARGUMENT;
     }
     if (connection->state != IPC_CONNECTION_STATE_OPEN) {
         return CORE_INVALID_STATE;
     }
 
-    u8 recv_buffer[4096];
+    *out_descriptor = IPC_NO_DESCRIPTOR;
 
     for (;;) {
         /* A frame may already be complete in the buffer from an earlier call
@@ -601,16 +799,34 @@ ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatu
             return result;
         }
         if (extracted) {
+            *out_descriptor = connection->incoming_descriptor;
+            connection->incoming_descriptor = IPC_NO_DESCRIPTOR;
             *out_status = IPC_RECEIVE_STATUS_MESSAGE;
             return CORE_OK;
         }
 
-        result = ipc_ensure_incoming_capacity(connection, connection->incoming_size + sizeof(recv_buffer));
+        usize target = IPC_FRAME_HEADER_SIZE;
+        if (connection->incoming_size >= IPC_FRAME_HEADER_SIZE) {
+            u32 payload_size = (u32)connection->incoming_buffer[0] |
+                ((u32)connection->incoming_buffer[1] << 8) |
+                ((u32)connection->incoming_buffer[2] << 16) |
+                ((u32)connection->incoming_buffer[3] << 24);
+            if (payload_size > IPC_MESSAGE_MAX_SIZE) {
+                return CORE_OVERFLOW;
+            }
+            target += (usize)payload_size;
+        }
+        result = ipc_ensure_incoming_capacity(connection, target);
         if (result != CORE_OK) {
             return result;
         }
 
-        ssize_t received = recv(connection->fd, recv_buffer, sizeof(recv_buffer), 0);
+        ssize_t received;
+        result = ipc_receive_chunk(connection, target - connection->incoming_size,
+                                   &received);
+        if (result != CORE_OK) {
+            return result;
+        }
 
         if (received < 0) {
             i32 err = errno;
@@ -627,15 +843,30 @@ ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatu
         }
 
         if (received == 0) {
+            if (connection->incoming_descriptor != IPC_NO_DESCRIPTOR) {
+                (void)close(connection->incoming_descriptor);
+                connection->incoming_descriptor = IPC_NO_DESCRIPTOR;
+            }
             connection->state = IPC_CONNECTION_STATE_PEER_CLOSED;
             *out_status = IPC_RECEIVE_STATUS_PEER_CLOSED;
             return CORE_OK;
         }
-
-        memory_copy((Bytes){ connection->incoming_buffer + connection->incoming_size, (usize)received },
-                     (Bytes){ recv_buffer, (usize)received });
         connection->incoming_size += (usize)received;
     }
+}
+
+ErrorCode ipc_connection_receive(IpcConnectionHandle connection,
+                                 IpcReceiveStatus *out_status,
+                                 IpcMessage *out_message)
+{
+    i32 descriptor = IPC_NO_DESCRIPTOR;
+    ErrorCode result = ipc_connection_receive_with_descriptor(
+        connection, out_status, out_message, &descriptor);
+
+    if (descriptor != IPC_NO_DESCRIPTOR) {
+        (void)close(descriptor);
+    }
+    return result;
 }
 
 ErrorCode ipc_message_destroy(IpcMessage *message)
@@ -682,6 +913,17 @@ ErrorCode ipc_connection_close(IpcConnectionHandle *connection)
         block.data = conn->incoming_buffer;
         block.size = conn->incoming_capacity;
         memory_free(&block);
+    }
+    while (conn->outgoing_descriptors != NULL) {
+        IpcQueuedDescriptor *queued = conn->outgoing_descriptors;
+        MemoryBlock allocation = queued->allocation;
+
+        conn->outgoing_descriptors = queued->next;
+        (void)close(queued->fd);
+        (void)memory_free(&allocation);
+    }
+    if (conn->incoming_descriptor != IPC_NO_DESCRIPTOR) {
+        (void)close(conn->incoming_descriptor);
     }
 
     MemoryBlock conn_block;

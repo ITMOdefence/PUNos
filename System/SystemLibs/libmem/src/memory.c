@@ -8,6 +8,8 @@
 #define MEMORY_KNOWN_PROTECTION (MEM_READ | MEM_WRITE | MEM_EXECUTE)
 
 static const MemoryBlock empty_block = { NULL, 0 };
+static const SharedMemory invalid_shared_memory = { -1, 0, NULL, 0 };
+static const SharedMemoryMapping empty_shared_mapping = { NULL, 0 };
 
 /* ------------------------------------------------------------------------ */
 /* Helpers                                                                  */
@@ -269,6 +271,117 @@ ErrorCode memory_protect(MemoryBlock *block, MemoryProtection protection)
         return last_error();
     }
     return CORE_OK;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Shared memory                                                            */
+/* ------------------------------------------------------------------------ */
+
+ErrorCode memory_shared_get_size(i32 fd, usize *out_size)
+{
+    struct stat info;
+
+    if (fd < 0 || out_size == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (fstat(fd, &info) != 0) {
+        return last_error();
+    }
+    if ((info.st_mode & S_IFMT) != S_IFREG || info.st_size <= 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    *out_size = (usize)info.st_size;
+    return CORE_OK;
+}
+
+ErrorCode memory_shared_create(usize size, SharedMemory *out_memory)
+{
+    static const char name[] = "punos-shared-memory";
+    void *mapping;
+    i32 fd;
+
+    if (size == 0 || size > (usize)ISIZE_MAX || out_memory == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+
+    fd = memfd_create(name, MFD_CLOEXEC);
+    if (fd < 0) {
+        return last_error();
+    }
+    if (ftruncate(fd, (off_t)size) != 0) {
+        ErrorCode result = last_error();
+        (void)close(fd);
+        return result;
+    }
+    mapping = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapping == MAP_FAILED) {
+        ErrorCode result = last_error();
+        (void)close(fd);
+        return result;
+    }
+
+    out_memory->fd = fd;
+    out_memory->reserved = 0;
+    out_memory->data = mapping;
+    out_memory->size = size;
+    return CORE_OK;
+}
+
+ErrorCode memory_shared_map_readonly(i32 fd, usize expected_size,
+                                     SharedMemoryMapping *out_mapping)
+{
+    ErrorCode result;
+    usize actual_size;
+    void *mapping;
+
+    if (expected_size == 0 || out_mapping == NULL) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    result = memory_shared_get_size(fd, &actual_size);
+    if (result != CORE_OK) {
+        return result;
+    }
+    if (actual_size != expected_size) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    mapping = mmap(NULL, expected_size, PROT_READ, MAP_SHARED, fd, 0);
+    if (mapping == MAP_FAILED) {
+        return last_error();
+    }
+    out_mapping->data = mapping;
+    out_mapping->size = expected_size;
+    return CORE_OK;
+}
+
+ErrorCode memory_shared_unmap(SharedMemoryMapping *mapping)
+{
+    if (mapping == NULL || mapping->data == NULL || mapping->size == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (munmap((void *)mapping->data, mapping->size) != 0) {
+        return last_error();
+    }
+    *mapping = empty_shared_mapping;
+    return CORE_OK;
+}
+
+ErrorCode memory_shared_close(SharedMemory *memory)
+{
+    ErrorCode result = CORE_OK;
+
+    if (memory == NULL || memory->fd < 0 || memory->reserved != 0 ||
+        memory->data == NULL || memory->size == 0) {
+        return CORE_INVALID_ARGUMENT;
+    }
+    if (munmap(memory->data, memory->size) != 0) {
+        result = last_error();
+    }
+    if (close(memory->fd) != 0 && result == CORE_OK) {
+        result = last_error();
+    }
+    /* Cleanup is best-effort and the handle is never reusable after close. */
+    *memory = invalid_shared_memory;
+    return result;
 }
 
 /* ------------------------------------------------------------------------ */

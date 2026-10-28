@@ -12,6 +12,8 @@ SYSTEM_LIBS_DIR := ../SystemLibs
 SYSTEM_LIBS_SELFTESTS := $(SYSTEM_LIBS_DIR)/libcore/build/core_runtime \
                          $(SYSTEM_LIBS_DIR)/libmath/build/math_runtime \
                          $(SYSTEM_LIBS_DIR)/libmem/build/memory_runtime \
+                         $(SYSTEM_LIBS_DIR)/librandom/build/random_runtime \
+                         $(SYSTEM_LIBS_DIR)/libgraphics/build/graphics_runtime \
                          $(SYSTEM_LIBS_DIR)/libstr/build/string_runtime \
                          $(SYSTEM_LIBS_DIR)/libfile/build/file_runtime \
                          $(SYSTEM_LIBS_DIR)/libtime/build/time_runtime \
@@ -29,7 +31,8 @@ REGISTRY ?= $(abspath $(SYSTEM_SERVICES_DIR)/platform_registry.json)
 SPECIAL_LIBS_SELFTESTS := $(SPECIAL_LIBS_DIR)/ipclib/build/ipc_runtime \
                          $(SPECIAL_LIBS_DIR)/loglib/build/log_runtime \
                          $(SPECIAL_LIBS_DIR)/inputlib/build/input_runtime \
-                         $(SPECIAL_LIBS_DIR)/camlib/build/camera_runtime
+                         $(SPECIAL_LIBS_DIR)/camlib/build/camera_runtime \
+                         $(SPECIAL_LIBS_DIR)/displaylib/build/display_runtime
 
 # Runtime tests of appframework, packaged as /punos/bin/appfw-<name>-selftest.
 APPFRAMEWORK_SELFTESTS := $(APPLICATION_LAYER_DIR)/appframework/build/lifecycle_runtime \
