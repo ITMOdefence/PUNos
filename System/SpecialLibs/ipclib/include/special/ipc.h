@@ -21,6 +21,7 @@
 #define IPC_FRAME_HEADER_SIZE ((usize)8)
 #define IPC_MESSAGE_MAX_SIZE ((usize)1048576)
 #define IPC_OUTGOING_QUEUE_MAX_SIZE ((usize)4194304)
+#define IPC_NO_DESCRIPTOR (-1)
 
 typedef struct IpcServerHandle *IpcServerHandle;
 typedef struct IpcConnectionHandle *IpcConnectionHandle;
@@ -120,6 +121,16 @@ ErrorCode ipc_connection_get_fd(IpcConnectionHandle connection, i32 *out_fd);
 ErrorCode ipc_connection_send(IpcConnectionHandle connection, const IpcMessage *message);
 
 /*
+ * Copies one message and one descriptor into the outgoing queue. The library
+ * duplicates descriptor with CLOEXEC, so the caller retains ownership of the
+ * descriptor passed here. Existing descriptor-free clients keep using
+ * ipc_connection_send() and the same IpcMessage ABI.
+ */
+ErrorCode ipc_connection_send_with_descriptor(IpcConnectionHandle connection,
+                                              const IpcMessage *message,
+                                              i32 descriptor);
+
+/*
  * Sends as many queued bytes as possible without blocking.
  *
  * Errors: CORE_INVALID_ARGUMENT if connection or out_has_pending is NULL;
@@ -136,6 +147,15 @@ ErrorCode ipc_connection_flush(IpcConnectionHandle connection, bool *out_has_pen
  * core_error_from_errno() for recv failures; errors of libmem.
  */
 ErrorCode ipc_connection_receive(IpcConnectionHandle connection, IpcReceiveStatus *out_status, IpcMessage *out_message);
+
+/*
+ * Receives one message and optionally transfers ownership of its descriptor
+ * to the caller. *out_descriptor is IPC_NO_DESCRIPTOR when the frame did not
+ * carry one. The caller must close a returned descriptor.
+ */
+ErrorCode ipc_connection_receive_with_descriptor(
+    IpcConnectionHandle connection, IpcReceiveStatus *out_status,
+    IpcMessage *out_message, i32 *out_descriptor);
 
 /*
  * Releases message's payload and sets it to { 0, { NULL, 0 } }.

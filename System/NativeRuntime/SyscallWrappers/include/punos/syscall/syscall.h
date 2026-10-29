@@ -17,15 +17,19 @@ ssize_t read(i32 fd, void *buffer, size_t count);
 ssize_t write(i32 fd, const void *buffer, size_t count);
 i64 lseek(i32 fd, off_t offset, i32 origin);
 i32 fstat(i32 fd, struct stat *info);
+i32 ftruncate(i32 fd, off_t length);
 i32 mkdir(const char *path, mode_t mode);
 i32 unlink(const char *path);
 i32 rename(const char *old_path, const char *new_path);
 i32 fsync(i32 fd);
+i32 fcntl(i32 fd, i32 command, unsigned long argument);
 
 void *mmap(void *address, size_t length, i32 protection, i32 flags, i32 fd,
            off_t offset);
 i32 mprotect(void *address, size_t length, i32 protection);
 i32 munmap(void *address, size_t length);
+i32 memfd_create(const char *name, u32 flags);
+ssize_t getrandom(void *buffer, size_t length, u32 flags);
 
 i32 sigaction(i32 signal, const struct sigaction *action,
               struct sigaction *old_action);
@@ -60,6 +64,8 @@ i32 setsockopt(i32 fd, i32 level, i32 option, const void *value,
                socklen_t length);
 ssize_t send(i32 fd, const void *buffer, size_t length, i32 flags);
 ssize_t recv(i32 fd, void *buffer, size_t length, i32 flags);
+ssize_t sendmsg(i32 fd, const struct msghdr *message, i32 flags);
+ssize_t recvmsg(i32 fd, struct msghdr *message, i32 flags);
 i32 shutdown(i32 fd, i32 how);
 
 i32 epoll_create1(i32 flags);

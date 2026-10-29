@@ -220,8 +220,15 @@ static void fd_argument_checks(void)
     EXPECT(84, app_event_create_timer(app, 1, 0, NULL, NULL, &source) == CORE_INVALID_ARGUMENT);
     EXPECT(85, app_event_create_timer(app, 1, 0, count_only, NULL, NULL) ==
                    CORE_INVALID_ARGUMENT);
-    EXPECT(86, source == 99); /* untouched on failure */
-    EXPECT(87, app_destroy(&app) == CORE_OK && close(fd) == 0);
+    EXPECT(86, app_event_update_fd(app, 0, EVENT_READABLE) == CORE_INVALID_ARGUMENT);
+    EXPECT(87, app_event_update_fd(app, 12345, EVENT_READABLE) == CORE_NOT_FOUND);
+    EXPECT(88, app_event_add_fd(app, fd, EVENT_READABLE, count_only, NULL, &source) == CORE_OK);
+    EXPECT(89, app_event_update_fd(app, source, 0) == CORE_INVALID_ARGUMENT);
+    EXPECT(90, app_event_update_fd(app, source, EVENT_READABLE | 0x8000) ==
+                   CORE_INVALID_ARGUMENT);
+    EXPECT(91, app_event_update_fd(app, source, EVENT_READABLE | EVENT_WRITABLE) == CORE_OK);
+    EXPECT(92, app_event_remove(app, source) == CORE_OK);
+    EXPECT(93, app_destroy(&app) == CORE_OK && close(fd) == 0);
 }
 
 /* ---- forbidden operations inside a handler ----------------------------------------- */

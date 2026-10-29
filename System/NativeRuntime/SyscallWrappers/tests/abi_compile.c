@@ -22,6 +22,13 @@ _Static_assert(sizeof(struct sockaddr) == 16, "sockaddr ABI mismatch");
 _Static_assert(sizeof(struct sockaddr_un) == 110, "sockaddr_un ABI mismatch");
 _Static_assert(sizeof(struct sockaddr_in) == 16, "sockaddr_in ABI mismatch");
 _Static_assert(sizeof(struct sockaddr_in6) == 28, "sockaddr_in6 ABI mismatch");
+_Static_assert(sizeof(struct iovec) == 16, "iovec ABI mismatch");
+_Static_assert(sizeof(struct msghdr) == 56, "msghdr ABI mismatch");
+_Static_assert(OFFSET_OF(struct msghdr, msg_iov) == 16,
+               "msghdr layout mismatch");
+_Static_assert(OFFSET_OF(struct msghdr, msg_flags) == 48,
+               "msghdr layout mismatch");
+_Static_assert(sizeof(struct cmsghdr) == 16, "cmsghdr ABI mismatch");
 _Static_assert(sizeof(epoll_data_t) == 8, "epoll_data_t ABI mismatch");
 _Static_assert(sizeof(struct epoll_event) == 12, "epoll_event ABI mismatch");
 _Static_assert(OFFSET_OF(struct epoll_event, data) == 4,

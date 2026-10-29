@@ -96,6 +96,27 @@ struct sockaddr_in6 {
     u32 sin6_scope_id;
 };
 
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
+};
+
+struct msghdr {
+    void *msg_name;
+    socklen_t msg_namelen;
+    struct iovec *msg_iov;
+    size_t msg_iovlen;
+    void *msg_control;
+    size_t msg_controllen;
+    i32 msg_flags;
+};
+
+struct cmsghdr {
+    size_t cmsg_len;
+    i32 cmsg_level;
+    i32 cmsg_type;
+};
+
 typedef union epoll_data {
     void *ptr;
     i32 fd;

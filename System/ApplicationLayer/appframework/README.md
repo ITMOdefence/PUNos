@@ -21,6 +21,10 @@ python3 System/ApplicationLayer/appframework/tests/check_mutations.py
 
 Output: `System/ApplicationLayer/appframework/build/libappframework.a`.
 
+External event-loop clients register non-owned descriptors with
+`app_event_add_fd()`, change read/write interest with `app_event_update_fd()`,
+and unregister them with `app_event_remove()`.
+
 The `messaging` module is started by the application with `app_msg_start()`,
 which reads the `PUNOS_MSG_SECRET` variable out of the `envp` of `main()`.
 Unsolicited frames of the broker (an event, an incoming request, the answer to

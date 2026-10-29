@@ -10,6 +10,8 @@ and the code must match it.
 | [libcore](libcore/README.md) | `<sys/core.h>` | `libpunos_core.a` | Implemented |
 | [libmath](libmath/README.md) | `<sys/math.h>` | `libpunos_math.a` | Implemented |
 | [libmem](libmem/README.md) | `<sys/memory.h>` | `libpunos_mem.a` | Implemented |
+| [librandom](librandom/README.md) | `<sys/random.h>` | `libpunos_random.a` | Implemented |
+| [libgraphics](libgraphics/README.md) | `<sys/graphics.h>` | `libpunos_graphics.a` | Implemented |
 | [libstr](libstr/README.md) | `<sys/string.h>` | `libpunos_str.a` | Implemented |
 | [libfile](libfile/README.md) | `<sys/file.h>` | `libpunos_file.a` | Implemented |
 | [libtime](libtime/README.md) | `<sys/time.h>` | `libpunos_time.a` | Implemented |
@@ -44,6 +46,8 @@ and look for:
 PUNos initserv stub: libcore self-test passed
 PUNos initserv stub: libmath self-test passed
 PUNos initserv stub: libmem self-test passed
+PUNos initserv stub: librandom self-test passed
+PUNos initserv stub: libgraphics self-test passed
 PUNos initserv stub: libstr self-test passed
 PUNos initserv stub: libfile self-test passed
 PUNos initserv stub: libtime self-test passed

@@ -1,6 +1,6 @@
 # Builds and tests every Application Layer library. Libraries are listed in
 # dependency order.
-LIBS := appframework
+LIBS := appframework uilib
 
 .PHONY: all check clean
 

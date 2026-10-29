@@ -533,6 +533,46 @@ static void test_partial_send_and_would_block(void)
     EXPECT(125, ipc_server_close(&server) == CORE_OK);
 }
 
+static void test_descriptor_transfer(void)
+{
+    IpcServerHandle server = NULL;
+    IpcConnectionHandle client = NULL, peer = NULL;
+    IpcConnectionState state;
+    IpcReceiveStatus status = IPC_RECEIVE_STATUS_NO_MESSAGE;
+    IpcMessage message = { 77, { NULL, 0 } };
+    IpcMessage received = { 0 };
+    i32 source_fd = memfd_create("ipclib-test", MFD_CLOEXEC);
+    i32 received_fd = IPC_NO_DESCRIPTOR;
+    bool pending = true;
+
+    EXPECT(128, source_fd >= 0);
+    EXPECT(129, ipc_server_create(&test_endpoint, &server) == CORE_OK);
+    EXPECT(130, ipc_connection_begin_connect(&test_endpoint, &client) == CORE_OK);
+    EXPECT(131, ipc_connection_finish_connect(client, &state) == CORE_OK &&
+                state == IPC_CONNECTION_STATE_OPEN);
+    EXPECT(132, ipc_server_accept(server, &peer) == CORE_OK);
+    EXPECT(133, ipc_connection_send_with_descriptor(client, &message,
+                                                      source_fd) == CORE_OK);
+    EXPECT(134, close(source_fd) == 0);
+    while (pending) {
+        EXPECT(135, ipc_connection_flush(client, &pending) == CORE_OK);
+    }
+    while (status == IPC_RECEIVE_STATUS_NO_MESSAGE) {
+        EXPECT(136, ipc_connection_receive_with_descriptor(
+            peer, &status, &received, &received_fd) == CORE_OK);
+    }
+    EXPECT(137, status == IPC_RECEIVE_STATUS_MESSAGE && received.type == 77);
+    i32 probe_fd = received_fd >= 0 ?
+        fcntl(received_fd, F_DUPFD_CLOEXEC, 0) : -1;
+    EXPECT(138, probe_fd >= 0);
+    if (probe_fd >= 0) (void)close(probe_fd);
+    EXPECT(139, close(received_fd) == 0);
+    EXPECT(140, ipc_message_destroy(&received) == CORE_OK);
+    EXPECT(141, ipc_connection_close(&client) == CORE_OK);
+    EXPECT(142, ipc_connection_close(&peer) == CORE_OK);
+    EXPECT(143, ipc_server_close(&server) == CORE_OK);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     (void)argc;
@@ -553,6 +593,7 @@ int main(int argc, char **argv, char **envp)
     test_connect_failure();
     test_connect_outcomes();
     test_partial_send_and_would_block();
+    test_descriptor_transfer();
 
     destroy_str(&test_endpoint);
 

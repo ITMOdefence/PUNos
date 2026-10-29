@@ -1,5 +1,5 @@
 # Builds and tests every Special Lib. Libraries are listed in dependency order.
-LIBS := ipclib loglib inputlib camlib
+LIBS := ipclib loglib inputlib camlib displaylib
 
 .PHONY: all check clean
 

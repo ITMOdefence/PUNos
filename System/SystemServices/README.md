@@ -1,6 +1,7 @@
 # System Services
 
-This tree contains appserv, logserv, initserv, camserv and IOserv built on the same PUNos CRT,
+This tree contains appserv, logserv, initserv, camserv, IOserv, displayserv,
+compositorserv and windowserv built on the same PUNos CRT,
 Syscall Wrappers, System Libs and Special Libs. No network access is needed:
 
 ```sh
@@ -17,7 +18,7 @@ never launched by initserv. Both generators derive the identical SHA-256
 PlatformRegistryId from the whole canonical registry and reject native app
 ID/path mismatches. Files are not loaded at runtime.
 
-The default registry enables real logserv and appserv. The device services have
+The default registry enables logserv, appserv and the three GUI services. The device services have
 disabled entries with no guessed hardware paths or camera parameters. An
 explicit platform registry can enable them with `/dev/videoN` and
 `/dev/input/eventN` arguments. `PUNOS_REGISTRY=/absolute/path.json`

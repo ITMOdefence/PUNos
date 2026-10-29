@@ -15,6 +15,7 @@
 #define O_APPEND 1024
 #define O_NONBLOCK 2048
 #define O_CLOEXEC 524288
+#define F_DUPFD_CLOEXEC 1030
 
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -34,6 +35,12 @@
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
 #define MAP_FAILED ((void *)-1)
+
+#define MFD_CLOEXEC 1
+#define MFD_ALLOW_SEALING 2
+
+#define GRND_NONBLOCK 1
+#define GRND_RANDOM 2
 
 #define WNOHANG 1
 
@@ -86,6 +93,9 @@
 #define SHUT_WR 1
 #define SHUT_RDWR 2
 #define MSG_NOSIGNAL 16384
+#define MSG_CTRUNC 8
+#define MSG_CMSG_CLOEXEC 0x40000000
+#define SCM_RIGHTS 1
 
 #define EPOLLIN 1
 #define EPOLLOUT 4
@@ -97,6 +107,7 @@
 #define EPOLL_CLOEXEC 524288
 #define EFD_NONBLOCK 2048
 #define EFD_CLOEXEC 524288
+#define EFD_SEMAPHORE 1
 
 #define MS_RDONLY 1UL
 #define MS_NOSUID 2UL

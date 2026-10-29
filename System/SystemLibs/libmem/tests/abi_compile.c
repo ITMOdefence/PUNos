@@ -12,6 +12,12 @@ _Static_assert(__builtin_offsetof(MemoryBlock, size) == 8, "MemoryBlock.size off
 _Static_assert(SAME_TYPE(((MemoryBlock *)0)->data, u8 *), "MemoryBlock.data type");
 _Static_assert(SAME_TYPE(((MemoryBlock *)0)->size, usize), "MemoryBlock.size type");
 
+_Static_assert(__builtin_offsetof(SharedMemory, fd) == 0, "SharedMemory.fd offset");
+_Static_assert(__builtin_offsetof(SharedMemory, data) == 8, "SharedMemory.data offset");
+_Static_assert(__builtin_offsetof(SharedMemory, size) == 16, "SharedMemory.size offset");
+_Static_assert(sizeof(SharedMemory) == 24, "SharedMemory size");
+_Static_assert(sizeof(SharedMemoryMapping) == 16, "SharedMemoryMapping size");
+
 /* MemoryProtection is a u32 bit mask with one bit per right. */
 _Static_assert(SAME_TYPE((MemoryProtection)0, u32), "MemoryProtection must be u32");
 _Static_assert(SAME_TYPE(MEM_READ, MemoryProtection), "MEM_* type");

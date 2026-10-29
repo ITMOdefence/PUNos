@@ -10,6 +10,7 @@ the specification is the contract, and the code must match it.
 | [loglib](loglib/README.md) | `<special/log.h>` | `libpunos_special_log.a` | Linux/QEMU validation pending |
 | [inputlib](inputlib/README.md) | `<special/input.h>` | `libpunos_special_input.a` | Linux/QEMU validation pending |
 | [camlib](camlib/README.md) | `<special/camera.h>` | `libpunos_special_camera.a` | Linux/QEMU validation pending |
+| [displaylib](displaylib/README.md) | `<special/display.h>` | `libpunos_special_display.a` | Linux/QEMU validation pending |
 
 Acceptance requires `make -C System/SpecialLibs check`, mutation checks and a
 full QEMU boot check on the current revision. The
