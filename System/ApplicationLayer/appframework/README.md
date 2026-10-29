@@ -3,7 +3,8 @@
 Application Layer library of PUNos: the skeleton every PUNos application is
 built on — one `AppHandle` with a lifecycle (`app_create` / `app_run` /
 `app_destroy`), an event loop for the application's own fds and timers, a
-logging client of `logserv` and an application-management client of `appserv`.
+logging client of `logserv`, an application-management client of `appserv`
+and a messaging client of `msgserv` for the exchange between applications.
 
 Specification: `DevDoc/ApplicationLayer/appframework.md` (including the table
 of decisions taken while refining it).
@@ -20,6 +21,13 @@ python3 System/ApplicationLayer/appframework/tests/check_mutations.py
 
 Output: `System/ApplicationLayer/appframework/build/libappframework.a`.
 
+The `messaging` module is started by the application with `app_msg_start()`,
+which reads the `PUNOS_MSG_SECRET` variable out of the `envp` of `main()`.
+Unsolicited frames of the broker (an event, an incoming request, the answer to
+an own request) reach the application through `AppMsgHandlers`, never through
+the callback of an own request. The broker's contract is
+`DevDoc/SystemServices/base/msgserv.md`.
+
 ## Test levels
 
 | Level | What | Where |
@@ -34,8 +42,9 @@ tree and requires the tests to notice.
 
 ## Notes for tests
 
-- `libappframework_internal_logserv_endpoint` and
-  `libappframework_internal_appserv_endpoint` redirect the clients to a fake
+- `libappframework_internal_logserv_endpoint`,
+  `libappframework_internal_appserv_endpoint` and
+  `libappframework_internal_msgserv_endpoint` redirect the clients to a fake
   peer; applications never touch them.
 - `test_pump()` (`tests/support.h`) runs the event loop by hand without
   changing the state of the handle.

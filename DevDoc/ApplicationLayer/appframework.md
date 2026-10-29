@@ -24,7 +24,7 @@
 
 - Создаёт и уничтожает `AppHandle`; владеет главным event loop приложения.
 - Даёт `uilib` и приложению возможность регистрировать источники событий.
-- Является неблокирующим IPC-клиентом `logserv` и `appserv`.
+- Является неблокирующим IPC-клиентом `logserv`, `appserv` и `msgserv`.
 - Устанавливает обработчик `SIGTERM`, который запрашивает штатное завершение.
 - Не создаёт процессы, не хранит `ProcessHandle` и не запускает ELF: это делает `appserv`.
 - Не создаёт окна, виджеты и не рисует интерфейс: это делает `uilib`.
@@ -40,6 +40,7 @@
 | `eventloop` | Источники FD и таймеры, ожидание и вызов callback |
 | `applications` | Асинхронный клиент `appserv` |
 | `logging` | Неблокирующий клиент `logserv` |
+| `messaging` | Неблокирующий клиент `msgserv`: личность соединения, подписки, публикации, запрос-ответ |
 | `lifecycle` | Остановка event loop и освобождение ресурсов |
 
 Модули являются частями одной библиотеки, а не самостоятельными публичными
@@ -59,6 +60,7 @@
 | `special/log` | Только константы и значения `LogSeverity` для совместимости с протоколом `logserv`; линковка не требуется |
 | `logserv` | Записи `app_log()` через `/run/punos/logserv.sock` |
 | `appserv` | Каталог и жизненный цикл приложений через `/run/punos/appserv.sock` |
+| `msgserv` | Обмен сообщениями между приложениями через `/run/punos/msgserv.sock` |
 | `uilib` | Не является зависимостью: `uilib` использует `appframework` |
 
 ## Интеграция с приложением
@@ -104,6 +106,52 @@ main()
 оболочки пока является соглашением доверенных компонентов: `appserv` не может
 технически отличить её от другого процесса с доступом к своему endpoint.
 
+## Связь с msgserv
+
+Модуль `messaging` — клиент брокера сообщений, через который приложения
+общаются друг с другом. Контракт брокера описан в
+`DevDoc/SystemServices/base/msgserv.md`; framework реализует его клиентскую
+сторону и ничего к нему не добавляет.
+
+| Операция appframework | Операция msgserv | Результат callback |
+| --- | --- | --- |
+| `app_msg_start()` | `bind` | Результата в callback нет: исход `bind` приходит в `AppMsgLinkHandler` |
+| `app_msg_subscribe()` | `subscribe` | Полезной нагрузки нет |
+| `app_msg_unsubscribe()` | `unsubscribe` | Полезной нагрузки нет |
+| `app_msg_publish()` | `publish` | `delivered_count` и `dropped_count` |
+| `app_msg_request()`, `app_msg_request_application()` | `request` | `AppMsgCorrelationId` запроса |
+| `app_msg_respond()` | `respond` | Полезной нагрузки нет |
+
+Модуль не начинает работу сам: обмен включает приложение вызовом
+`app_msg_start()`, передавая `envp` из `main()` и набор обработчиков.
+`application_id` в `bind` framework берёт из `AppConfig`, а не из аргумента
+операции: личность приложения в обмене — та же, что в журнале и в запросах
+`appserv`. Секрет приложения лежит в переменной environment
+`PUNOS_MSG_SECRET`, которую `appserv` берёт из `applications.json`.
+Приложение без секрета в обмене не участвует: `app_msg_start()` возвращает
+`CORE_UNSUPPORTED`.
+
+Принципиально новое для framework: кадры `event`, `deliver_request` и
+`deliver_response` приходят **незапрошенными**, в любой момент — в том числе
+между запросом приложения и ответом на него. Клиенты `logserv` и `appserv`
+только ждут ответ на свой запрос, такого режима в библиотеке до `messaging`
+не было. Поэтому модуль разделяет три механизма вызова прикладного кода:
+
+| Механизм | Тип | Когда вызывается |
+| --- | --- | --- |
+| Callback своего запроса | `AppMsgCallback` | Ровно один раз на принятый `app_msg_*()`, в порядке постановки |
+| Обработчик входящего кадра | `AppMsgEventHandler`, `AppMsgRequestHandler`, `AppMsgResponseHandler` | При каждом незапрошенном кадре брокера |
+| Обработчик состояния связи | `AppMsgLinkHandler` | После `bind` и при каждом отказе соединения |
+
+Путать их нельзя: это самая вероятная ошибка использования модуля, поэтому
+типы разные.
+
+Соединение с `msgserv` создаётся при `app_msg_start()` и восстанавливается
+самостоятельно с растущим backoff'ом: `msgserv` запускается после `appserv`,
+поэтому приложение, запущенное сразу после загрузки, брокера на первой
+попытке не находит. Framework помнит подписки приложения и восстанавливает их
+после переподключения — приложению не нужно подписываться заново.
+
 ## Типы
 
 Значения перечислений в C получают имя типа в качестве префикса
@@ -126,6 +174,18 @@ main()
 | `AppAppsResult` | Структура: `AppAppsOperation operation` и объединение: `list` (`const AppInfo *items`, `usize count`), `info` (`AppInfo`), `instance` (`AppInstanceId`), `status` (`AppInstanceStatus`) | Действителен только во время callback | Успешный результат; для `Stop` полезной нагрузки нет |
 | `AppAppsCallback` | `void (*)(AppHandle app, AppRequestId request, ErrorCode error, const AppAppsResult *result, void *context)` | Ответ действителен только во время callback | Обработчик асинхронного ответа; `result` равен `NULL`, если `error` не `CORE_OK` |
 | `AppRequestId` | Ненулевой `u64`, растёт на 1 с каждым запросом, начиная с 1 | До callback | Связывает запрос и ответ `appserv`; уникален за время жизни `AppHandle` |
+| `AppMsgClientId` | Ненулевой `u64` | Не требует освобождения | Идентификатор одного соединения с `msgserv`, выданный брокером при `bind`; обозначает соединение, а не приложение и не экземпляр |
+| `AppMsgCorrelationId` | Ненулевой `u64` | Не требует освобождения | Идентификатор запроса, ждущего ответа; выдаётся брокером |
+| `AppMsgOperation` | Перечисление: `Subscribe` = 0, `Unsubscribe` = 1, `Publish` = 2, `Request` = 3, `Respond` = 4 | Не требует освобождения | Операция, ответ на которую пришёл в callback |
+| `AppMsgSender` | Структура: `AppMsgClientId client`, `const char *application_id` | Принадлежит framework на время обработчика | Отправитель события или запроса; оба поля заполнены брокером из подтверждённой личности и не подделываются |
+| `AppMsgEvent` | Структура: `AppMsgSender sender`, `const char *topic`, `u64 sequence`, `Bytes payload` | Действителен только во время обработчика | Незапрошенное событие; разрыв в `sequence` означает пропуск событий |
+| `AppMsgIncoming` | Структура: `AppMsgCorrelationId correlation`, `AppMsgSender sender`, `const char *method`, `Bytes payload` | Действителен только во время обработчика | Незапрошенный запрос к этому соединению; ответ даёт `app_msg_respond()` |
+| `AppMsgAnswer` | Структура: `AppMsgCorrelationId correlation`, `ErrorCode error`, `u32 status`, `Bytes payload` | Действителен только во время обработчика | Исход своего запроса; `status` и `payload` определены только при `error` = `CORE_OK` |
+| `AppMsgResult` | Структура: `AppMsgOperation operation`, `u16 delivered_count`, `u16 dropped_count`, `AppMsgCorrelationId correlation` | Действителен только во время callback | Успешный результат запроса к `msgserv`; какие поля определены, задаёт `operation` |
+| `AppMsgCallback` | `void (*)(AppHandle app, AppRequestId request, ErrorCode error, const AppMsgResult *result, void *context)` | Ответ действителен только во время callback | Обработчик ответа на свой запрос; `result` равен `NULL`, если `error` не `CORE_OK` |
+| `AppMsgEventHandler`, `AppMsgRequestHandler`, `AppMsgResponseHandler` | `void (*)(AppHandle app, const <кадр> *, void *context)` | Данные кадра действительны только во время обработчика | Обработчики незапрошенных кадров брокера |
+| `AppMsgLinkHandler` | `void (*)(AppHandle app, ErrorCode error, AppMsgClientId client, void *context)` | Не владеет данными | Состояние связи: `CORE_OK` и выданный `client` после `bind`, иначе причина отказа и `client` = 0 |
+| `AppMsgHandlers` | Структура: четыре обработчика и `void *context` | Копируется при `app_msg_start()` | Набор обработчиков; `NULL`-обработчик допустим, соответствующие кадры отбрасываются |
 
 `application_id` приложения — 1…64 байта UTF-8; `log_component` — 1…256 байтов
 UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` в
@@ -142,7 +202,14 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | `APP_LOG_COMPONENT_MAX_LENGTH` | `256` | Максимальная длина `log_component`; равна `LOG_COMPONENT_MAX_LENGTH` |
 | `APP_APPS_MAX_PENDING` | `256` | Максимальное число запросов к `appserv`, ожидающих ответа |
 | `APP_LOG_MAX_PENDING` | `256` | Максимальное число записей журнала, ожидающих отправки или подтверждения |
-| `APP_PROTOCOL_VERSION` | `1` | Версия протоколов `appserv` и `logserv`, которую отправляет framework |
+| `APP_PROTOCOL_VERSION` | `1` | Версия протоколов `appserv`, `logserv` и `msgserv`, которую отправляет framework |
+| `APP_MSG_SECRET_VARIABLE` | `"PUNOS_MSG_SECRET"` | Имя переменной environment, несущей секрет приложения для `msgserv` |
+| `APP_MSG_SECRET_MAX_LENGTH` | `128` | Максимальная длина секрета; равна `MSG_SECRET_MAX_LENGTH` |
+| `APP_MSG_TOPIC_MAX_LENGTH` | `128` | Максимальная длина topic; равна `MSG_TOPIC_MAX_LENGTH` |
+| `APP_MSG_METHOD_MAX_LENGTH` | `64` | Максимальная длина method; равна `MSG_METHOD_MAX_LENGTH` |
+| `APP_MSG_PAYLOAD_MAX_SIZE` | `65536` | Максимальный размер `payload`; равен `MSG_PAYLOAD_MAX_SIZE` |
+| `APP_MSG_MAX_PENDING` | `256` | Максимальное число запросов к `msgserv`, ожидающих ответа |
+| `APP_MSG_SUBSCRIPTIONS_MAX` | `32` | Максимальное число подписок одного соединения; равно `MSG_SUBSCRIPTIONS_MAX_PER_CLIENT` |
 
 ## Публичные операции
 
@@ -161,9 +228,19 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | `app_apps_launch(AppHandle app, const char *application_id, AppAppsCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Просит `appserv` запустить приложение |
 | `app_apps_stop(AppHandle app, AppInstanceId instance, AppAppsCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Просит `appserv` отправить SIGTERM |
 | `app_apps_get_status(AppHandle app, AppInstanceId instance, AppAppsCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Запрашивает состояние экземпляра |
+| `app_msg_start(AppHandle app, char **envp, const AppMsgHandlers *handlers)` | `ErrorCode` | Читает секрет из `envp`, запоминает обработчики и начинает подключение к `msgserv` |
+| `app_msg_subscribe(AppHandle app, const char *topic, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Подписывает соединение на topic и запоминает подписку для восстановления |
+| `app_msg_unsubscribe(AppHandle app, const char *topic, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Снимает подписку |
+| `app_msg_publish(AppHandle app, const char *topic, Bytes payload, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Публикует событие в topic |
+| `app_msg_request(AppHandle app, AppMsgClientId target, const char *method, Bytes payload, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Отправляет запрос конкретному соединению — надёжная форма адресации |
+| `app_msg_request_application(AppHandle app, const char *application_id, const char *method, Bytes payload, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Отправляет запрос приложению; брокер отвечает `CORE_NOT_FOUND` при нуле и `CORE_ALREADY_EXISTS` при нескольких подключённых экземплярах |
+| `app_msg_respond(AppHandle app, AppMsgCorrelationId correlation, u32 status, Bytes payload, AppMsgCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Отвечает на доставленный запрос; допустим и после возврата из обработчика, например из таймера |
 
 Параметр `out_request` необязателен: при `NULL` идентификатор не возвращается.
-Остальные `out_*` определены только при `CORE_OK`. `callback` не может быть `NULL`.
+Остальные `out_*` определены только при `CORE_OK`. `callback` не может быть
+`NULL` в `app_apps_*()`; в `app_msg_*()` он допускает `NULL` — приложению,
+которому исход запроса не нужен, callback не обязателен. `payload` может быть
+`{ NULL, 0 }`.
 
 ## Модель событий
 
@@ -175,6 +252,8 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | IPC `uilib` с графическими сервисами | `uilib` | Вызывает обработчик `uilib` |
 | IPC `appserv` | `appframework` | Разбирает ответ и вызывает `AppAppsCallback` |
 | IPC `logserv` | `appframework` | Передаёт очередь записей, принимает подтверждения |
+| IPC `msgserv` | `appframework` | Разбирает ответы и вызывает `AppMsgCallback`; разбирает незапрошенные кадры и вызывает обработчики `AppMsgHandlers` |
+| Таймер переподключения к `msgserv` | `appframework` | Повторяет подключение с растущим backoff'ом |
 | Таймер | Приложение или `uilib` | Вызывает зарегистрированный обработчик с маской `EVENT_READABLE` |
 | `SIGTERM` | `appframework` | Запрашивает выход и пробуждает event loop |
 
@@ -202,6 +281,12 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 - При отказе соединения вся завершаемая пачка запросов удаляется из очереди до
   первого callback. Запросы, созданные из callback, попадают только в новую
   очередь и уходят по новому соединению.
+- Незапрошенный кадр `msgserv` никогда не вызывает `AppMsgCallback`, а ответ
+  на свой запрос никогда не вызывает обработчик входящего кадра. Кадр
+  `deliver_response` относится к запросу этого приложения, но приходит
+  незапрошенно и попадает в `AppMsgResponseHandler`, а не в callback
+  `app_msg_request()`: callback сообщает только, что брокер принял запрос и
+  выдал `correlation_id`.
 
 ## Жизненный цикл и владение ресурсами
 
@@ -238,6 +323,7 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | `app_event_remove` | OK | OK | OK | OK |
 | `app_log` | OK | OK | STATE | STATE |
 | `app_apps_*` | OK | OK | STATE | STATE |
+| `app_msg_*` | OK | OK | STATE | STATE |
 
 Вызов из потока, не являющегося владельцем, возвращает `CORE_INVALID_STATE`
 для всех операций, кроме `app_request_quit()`.
@@ -245,7 +331,8 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | Ресурс | Владелец | Освобождение |
 | --- | --- | --- |
 | `AppHandle` и event loop | `appframework` | `app_destroy()` |
-| Клиенты `logserv` и `appserv` | `appframework` | `app_destroy()` или отказ соединения |
+| Клиенты `logserv`, `appserv` и `msgserv` | `appframework` | `app_destroy()` или отказ соединения |
+| Копия секрета `msgserv` и таблица подписок | `appframework` | `app_destroy()` |
 | Очередь запросов и копии ответов | `appframework` | Callback или `app_destroy()` |
 | Внешний FD | Вызывающий код или `uilib` | Владелец закрывает его после `app_event_remove()` |
 | Окна и виджеты | `uilib` | По контракту `uilib`, до `app_destroy()` |
@@ -256,10 +343,12 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 Порядок `app_destroy()`:
 
 1. Состояние становится `Stopping`.
-2. Каждый висящий запрос к `appserv` получает callback с `CORE_INVALID_STATE`,
-   в порядке постановки. Состояние при этом `Stopping`: из такого callback
-   операции подчиняются таблице выше, а повторный `app_destroy()` возвращает
-   `CORE_INVALID_STATE`.
+2. Каждый висящий запрос к `appserv`, а затем к `msgserv`, получает callback с
+   `CORE_INVALID_STATE`, в порядке постановки. Состояние при этом `Stopping`:
+   из такого callback операции подчиняются таблице выше, а повторный
+   `app_destroy()` возвращает `CORE_INVALID_STATE`. Обработчики незапрошенных
+   кадров при этом не вызываются: кадры, пришедшие и не разобранные к моменту
+   остановки, отбрасываются.
 3. Делается одна неблокирующая попытка передать накопленные записи `logserv`,
    включая запись об уничтожении; доставка не гарантируется.
 4. Закрываются соединения, удаляются источники и event loop, восстанавливается
@@ -339,6 +428,61 @@ PID и TID берутся при вызове `app_log()` через `getpid()` 
   сокета закрывают соединение; все записи, не подтверждённые `logserv`,
   отбрасываются без повторной отправки. Это не влияет на `app_run()`.
 
+## Протокол клиента msgserv
+
+Framework всегда отправляет `protocol_version = 1`. Номера типов, раскладка
+полей и коды ошибок определены в `DevDoc/SystemServices/base/msgserv.md`;
+клиент строит запросы так:
+
+| Операция | `message_type` | Payload запроса |
+| --- | --- | --- |
+| `app_msg_start()` | 1 | `u16` версия, `text application_id`, `text` секрет |
+| `app_msg_subscribe()` | 3 | `u16` версия, `text topic` |
+| `app_msg_unsubscribe()` | 5 | `u16` версия, `text topic` |
+| `app_msg_publish()` | 7 | `u16` версия, `text topic`, `blob payload` |
+| `app_msg_request()` | 9 | `u16` версия, `u8` 0, `u64 client_id`, `text method`, `blob payload` |
+| `app_msg_request_application()` | 9 | `u16` версия, `u8` 1, `text application_id`, `text method`, `blob payload` |
+| `app_msg_respond()` | 11 | `u16` версия, `u64 correlation_id`, `u32 status`, `blob payload` |
+
+Разбор принятых кадров:
+
+- Ответы приходят в порядке запросов, как у `appserv`: идентификатора запроса в
+  протоколе нет, поэтому framework ведёт очередь FIFO и требует для первого
+  запроса очереди тип «запрос + 1».
+- Кадры 20, 21 и 22 не связаны с очередью запросов: они могут прийти в любой
+  момент, в том числе между запросом и ответом, и попадают в обработчики
+  `AppMsgHandlers`. Кадр с типом 20…22 при пустой очереди запросов — штатная
+  ситуация, а не нарушение протокола.
+- Успешный ответ проверяется строго: точный размер, корректный UTF-8 в
+  `application_id`, topic и method, длины не больше `APP_MSG_*` и ненулевые
+  `client_id` и `correlation_id`.
+- Ответ с ошибкой должен содержать не менее 4 байтов; код ошибки 1…13.
+  Код передаётся в callback без изменений, включая `CORE_UNSUPPORTED`, если
+  брокер отверг версию протокола.
+- Нарушение любого из этих правил, ответ без запроса и неожиданный тип ответа
+  закрывают соединение, завершают запросы очереди с `CORE_IO_ERROR`, вызывают
+  `AppMsgLinkHandler` с той же ошибкой и запускают таймер переподключения; в
+  `logserv` пишется запись.
+
+Соединение, очередь и подписки:
+
+- `app_msg_start()` возвращает `CORE_OK`, как только подключение начато.
+  Успех или отказ `bind` приходит в `AppMsgLinkHandler`. Запросы, сделанные до
+  `bind`, ждут в очереди framework: брокер до `bind` ничего другого не
+  принимает.
+- Недоступный брокер не является отказом `app_msg_start()`: заводится таймер
+  повторного подключения с backoff'ом от 50 мс до 3200 мс.
+- Отказ `bind` по правам (`CORE_PERMISSION_DENIED`, `CORE_NOT_FOUND`) не
+  повторяется: environment работающего процесса не меняется, и повтор ничего
+  не изменит. Остальные отказы ведут к переподключению.
+- Framework помнит до `APP_MSG_SUBSCRIPTIONS_MAX` подписок и после `bind`
+  отправляет их заново. Восстановленные подписки callback не вызывают: их
+  запросило не приложение.
+- Очередь ограничена `APP_MSG_MAX_PENDING`. Переполнение очереди framework и
+  `CORE_OVERFLOW` от `ipclib` возвращаются как `CORE_WOULD_BLOCK`.
+- Повторный `app_msg_start()` возвращает `CORE_ALREADY_EXISTS`; остальные
+  `app_msg_*()` до `app_msg_start()` — `CORE_INVALID_STATE`.
+
 ## Контракты
 
 1. Все публичные операции возвращают `ErrorCode` из `sys/core`; `CORE_OK`
@@ -379,6 +523,22 @@ PID и TID берутся при вызове `app_log()` через `getpid()` 
     не обращается к освобождённой памяти.
 12. Если выход запрошен до `app_run()`, `app_run()` возвращается сразу с
     `CORE_OK`.
+13. Личность в обмене подтверждается секретом из environment, а не содержимым
+    кадра. Framework копирует секрет при `app_msg_start()`, не хранит
+    указатель в `envp`, не передаёт секрет ни в `logserv`, ни в кадры, кроме
+    `bind`, и не предоставляет приложению операции его прочитать.
+14. Поля отправителя в `AppMsgEvent` и `AppMsgIncoming` framework берёт только
+    из кадра брокера и не позволяет приложению их задать: подделать
+    отправителя нельзя ни на стороне клиента, ни на стороне брокера.
+15. Каждый принятый запрос (`CORE_OK` из `app_msg_*()`) получает ровно один
+    `AppMsgCallback`, если он не `NULL`. Обработчики незапрошенных кадров
+    вызываются независимо от очереди запросов.
+16. `app_msg_respond()` не обязан вызываться из обработчика запроса: ответ
+    допустим позже, например из таймера, пока соединение открыто и дедлайн
+    брокера (`MSG_REQUEST_TIMEOUT_MS`) не истёк.
+17. Framework не хранит сообщения и не повторяет их: доставка at-most-once по
+    контракту `msgserv`. Разрыв в `sequence` события передаётся приложению как
+    есть, framework его не сглаживает.
 
 ## Конфигурация
 
@@ -409,10 +569,16 @@ Framework передаёт в `logserv` создание и уничтожени
 | `CORE_OUT_OF_MEMORY` | Нельзя создать контекст, очередь или копию ответа |
 | `CORE_WOULD_BLOCK` | IPC-сообщение нельзя немедленно поставить в очередь, очередь запросов или записей переполнена |
 | `CORE_IO_ERROR` | Ошибка event loop, соединения или повреждённый IPC-кадр; завершение запросов при отказе соединения |
-| `CORE_UNSUPPORTED` | Сервис ответил, что версия протокола не равна v1 |
+| `CORE_UNSUPPORTED` | Сервис ответил, что версия протокола не равна v1; в `envp` нет `APP_MSG_SECRET_VARIABLE` либо его значение пусто или слишком длинное |
+| `CORE_ALREADY_EXISTS` | Повторный `app_msg_start()`; подписка уже есть; подключено несколько экземпляров адресата (код брокера) |
+| `CORE_PERMISSION_DENIED` | Код брокера: нет права на topic, метод или адресата; секрет не совпал |
+| `CORE_TIMEOUT` | Код брокера в `AppMsgAnswer`: на запрос не ответили за отведённое время |
 
-Остальные коды `ErrorCode` из ответа `appserv` (`CORE_NOT_FOUND`,
+Остальные коды `ErrorCode` из ответов `appserv` и `msgserv` (`CORE_NOT_FOUND`,
 `CORE_INVALID_STATE` и другие) передаются в callback без изменений.
+Транспортный `error` и прикладной `status` в `AppMsgAnswer` — разные поля:
+`status` задаёт отвечающее приложение и определён только при `error` =
+`CORE_OK`.
 
 ## Пример использования
 
@@ -461,11 +627,18 @@ app_destroy(&app);
 | 23 | Пачка запросов, завершаемая при отказе соединения, и `app_apps_*()` из callback этой пачки | Пачка удаляется из очереди до первого callback; новые запросы идут только по новому соединению |
 | 24 | Ошибка записи в сокет внутри `app_apps_*()` | Запрос не принимается; завершение ранее принятых откладывается до event loop (callback только из `app_run()`) |
 | 25 | `app_destroy()` в одном потоке и `SIGTERM`-обработчик, уже работающий в другом | `app_destroy()` ждёт завершения таких обработчиков; нужен счётчик выполняющихся обработчиков |
+| 26 | Откуда модуль `messaging` берёт секрет: спецификация брокера говорит «из environment», а в PUNos нет глобального `environ` | `app_msg_start()` принимает `envp` из `main()`; секрет передаёт приложение, framework его копирует |
+| 27 | Приложение без `PUNOS_MSG_SECRET` | `app_msg_start()` возвращает `CORE_UNSUPPORTED`: без секрета участие в обмене невозможно, и это не ошибка аргумента |
+| 28 | `msgserv` стартует после `appserv`, поэтому первое подключение приложения часто неудачно | Переподключение с backoff'ом 50…3200 мс внутри framework; отказ `bind` по правам не повторяется |
+| 29 | Подписки после переподключения: восстанавливает их framework или приложение | Framework помнит до `APP_MSG_SUBSCRIPTIONS_MAX` подписок и отправляет их заново; callback у восстановленных подписок нет |
+| 30 | Ответ на доставленный запрос только из обработчика или и позже | Допустим позже: `correlation_id` живёт до ответа, дедлайна брокера или обрыва |
 
 Детали реализации, не входящие в контракт: пачка ожидания event loop содержит
 не более 16 событий; внутренние функции, нужные тестам, имеют префикс
 `libappframework_internal_` и объявлены в `src/internal.h`.
-Для тестов уровня 2 и 3 адреса `logserv` и `appserv` лежат в изменяемых переменных
-`libappframework_internal_logserv_endpoint` и `libappframework_internal_appserv_endpoint`;
+Для тестов уровня 2 и 3 адреса `logserv`, `appserv` и `msgserv` лежат в изменяемых
+переменных `libappframework_internal_logserv_endpoint`,
+`libappframework_internal_appserv_endpoint` и
+`libappframework_internal_msgserv_endpoint`;
 приложение их не использует. Имена самотестов в образе — `appfw-<имя>-selftest`
 (дефис в сообщении `initserv` недопустим: его ищет `check-qemu-boot.sh`).
