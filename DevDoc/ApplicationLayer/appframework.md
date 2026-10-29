@@ -221,6 +221,7 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | `app_destroy(AppHandle *app)` | `ErrorCode` | Завершает висящие запросы, закрывает IPC-клиенты, освобождает контекст и записывает `NULL` |
 | `app_event_add_fd(AppHandle app, i32 fd, EventMask mask, AppEventHandler handler, void *context, AppEventSourceId *out_source)` | `ErrorCode` | Регистрирует невладеющий FD; `mask` — непустая комбинация `EVENT_READABLE` и `EVENT_WRITABLE` |
 | `app_event_create_timer(AppHandle app, DurationMs delay_ms, DurationMs period_ms, AppEventHandler handler, void *context, AppEventSourceId *out_source)` | `ErrorCode` | Регистрирует таймер; `period_ms = 0` — одноразовый, `delay_ms = 0` — срабатывание при ближайшем ожидании |
+| `app_event_update_fd(AppHandle app, AppEventSourceId source, EventMask mask)` | `ErrorCode` | Меняет набор событий уже зарегистрированного FD приложения; `mask` — непустая комбинация `EVENT_READABLE` и `EVENT_WRITABLE` |
 | `app_event_remove(AppHandle app, AppEventSourceId source)` | `ErrorCode` | Удаляет источник; внешний FD не закрывается |
 | `app_log(AppHandle app, AppLogLevel level, const char *message)` | `ErrorCode` | Неблокирующе ставит запись в очередь `logserv`; `message` — UTF-8 с завершающим `NUL` |
 | `app_apps_list(AppHandle app, AppAppsCallback callback, void *context, AppRequestId *out_request)` | `ErrorCode` | Запрашивает каталог у `appserv` |
@@ -249,7 +250,7 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 
 | Источник | Кто регистрирует | Действие framework |
 | --- | --- | --- |
-| IPC `uilib` с графическими сервисами | `uilib` | Вызывает обработчик `uilib` |
+| IPC `uilib` с графическими сервисами | `uilib` | Вызывает обработчик `uilib`; интерес к чтению и записи `uilib` меняет через `app_event_update_fd()` |
 | IPC `appserv` | `appframework` | Разбирает ответ и вызывает `AppAppsCallback` |
 | IPC `logserv` | `appframework` | Передаёт очередь записей, принимает подтверждения |
 | IPC `msgserv` | `appframework` | Разбирает ответы и вызывает `AppMsgCallback`; разбирает незапрошенные кадры и вызывает обработчики `AppMsgHandlers` |
@@ -320,7 +321,7 @@ UTF-8 (`LOG_COMPONENT_MAX_LENGTH`). Поля `application_id` и `display_name` 
 | `app_request_quit` | OK | OK | OK | OK |
 | `app_destroy` | OK | STATE | OK | OK |
 | `app_event_add_fd`, `app_event_create_timer` | OK | OK | STATE | STATE |
-| `app_event_remove` | OK | OK | OK | OK |
+| `app_event_update_fd`, `app_event_remove` | OK | OK | OK | OK |
 | `app_log` | OK | OK | STATE | STATE |
 | `app_apps_*` | OK | OK | STATE | STATE |
 | `app_msg_*` | OK | OK | STATE | STATE |
@@ -509,6 +510,11 @@ Framework всегда отправляет `protocol_version = 1`. Номера
 8. `app_log()` не завершает приложение при недоступности `logserv`; она
    возвращает ошибку, а следующая запись повторяет попытку подключения.
 9. `appframework` не владеет FD, переданным в `app_event_add_fd()`.
+   `app_event_update_fd()` работает только с источниками приложения: для
+   внутреннего источника framework она возвращает `CORE_NOT_FOUND`, как и
+   `app_event_remove()`, а для источника-таймера — `CORE_NOT_FOUND` от
+   `sys/eventloop`. Нулевой `source`, нулевая `mask` и биты вне
+   `EVENT_READABLE | EVENT_WRITABLE` дают `CORE_INVALID_ARGUMENT`.
 10. Если установка обработчика через `sigaction()` завершается ошибкой,
     `app_create()` сохраняет `errno`, освобождает уже созданные ресурсы и
     преобразует ошибку через `core_error_from_errno()`. `app_destroy()`
