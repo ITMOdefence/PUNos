@@ -739,6 +739,29 @@ static void answer_with_zero_correlation_is_refused(void)
     fake_peer_drop(&msgserv);
 }
 
+/* An answer nobody asked for drops the connection; the module reconnects. */
+static void unsolicited_answer_is_a_violation(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    bool reconnected = false;
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    CHECK(bind_client(app, 16));
+    /* publish_result with nothing pending. */
+    CHECK(fake_peer_reply(&msgserv, 8, CORE_OK));
+    for (usize attempt = 0; attempt < 200 && !reconnected; ++attempt) {
+        test_pump(app, 2);
+        reconnected = fake_peer_accept(&msgserv);
+    }
+    CHECK(reconnected);
+    CHECK(record.answers == 0);
+    CHECK(app_destroy(&app) == CORE_OK);
+    fake_peer_drop(&msgserv);
+}
+
 /* The error of the broker reaches the callback unchanged. */
 static void service_error_passed_on(void)
 {
@@ -905,6 +928,7 @@ int main(void)
     wrong_reply_kind();
     zero_correlation_is_a_violation();
     answer_with_zero_correlation_is_refused();
+    unsolicited_answer_is_a_violation();
     service_error_passed_on();
     destroy_with_pending();
     broker_not_running();

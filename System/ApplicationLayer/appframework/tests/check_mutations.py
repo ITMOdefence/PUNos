@@ -83,6 +83,9 @@ MUTATIONS = [
     Mutation("messaging: subscriptions not restored after reconnect", MESSAGING, (
         ("        if (!entry->used) {\n            continue;\n        }\n        result = libappframework_internal_msg_encode(APP_MSG_OPERATION_SUBSCRIBE,",
          "        if (!entry->used || true) {\n            continue;\n        }\n        result = libappframework_internal_msg_encode(APP_MSG_OPERATION_SUBSCRIBE,"),)),
+    Mutation("messaging: answer nobody asked for accepted", MESSAGING, (
+        ("if (client->count == 0 || type != reply_type(request_at(client, 0)->operation)) {",
+         "if (client->count != 0 && type != reply_type(request_at(client, 0)->operation)) {"),)),
     Mutation("messaging: permanent refusal retried forever", MESSAGING, (
         ("if (client->retry != 0 || client->permanent || !client->started) {",
          "if (client->retry != 0 || !client->started) {"),)),
