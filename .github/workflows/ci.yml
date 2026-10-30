@@ -99,7 +99,7 @@ jobs:
       - name: Repeat Application Layer tests
         run: |
           for test in lifecycle_runtime create_runtime run_runtime fault_runtime \
-                      logserv_runtime apps_wire_runtime apps_runtime; do
+                      logserv_runtime apps_wire_runtime apps_runtime messaging_runtime; do
               for run in $(seq 30); do
                   "System/ApplicationLayer/appframework/build/${test}" > /dev/null \
                       || { echo "${test} failed on run ${run}"; exit 1; }

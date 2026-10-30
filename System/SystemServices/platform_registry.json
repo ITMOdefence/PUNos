@@ -80,6 +80,16 @@
       "critical": true,
       "restart": "restart",
       "terminates_on_sigterm": true
+    },
+    {
+      "service_id": "msgserv",
+      "executable": "/punos/bin/msgserv",
+      "arguments": [],
+      "environment": [],
+      "enabled": true,
+      "critical": false,
+      "restart": "restart",
+      "terminates_on_sigterm": true
     }
   ],
   "native_apps": []

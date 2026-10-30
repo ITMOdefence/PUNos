@@ -41,7 +41,8 @@ APPFRAMEWORK_SELFTESTS := $(APPLICATION_LAYER_DIR)/appframework/build/lifecycle_
                           $(APPLICATION_LAYER_DIR)/appframework/build/fault_runtime \
                           $(APPLICATION_LAYER_DIR)/appframework/build/logserv_runtime \
                           $(APPLICATION_LAYER_DIR)/appframework/build/apps_wire_runtime \
-                          $(APPLICATION_LAYER_DIR)/appframework/build/apps_runtime
+                          $(APPLICATION_LAYER_DIR)/appframework/build/apps_runtime \
+                          $(APPLICATION_LAYER_DIR)/appframework/build/messaging_runtime
 
 CPPFLAGS := -I$(NATIVE_DIR)/include -I$(SYSCALL_DIR)/include
 CFLAGS := -std=c11 -ffreestanding -nostdinc -fno-builtin \
