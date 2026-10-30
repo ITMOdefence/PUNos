@@ -17,6 +17,7 @@ APPS = LIBRARY + "/src/applications.c"
 APPLICATION = LIBRARY + "/src/application.c"
 EVENTLOOP = LIBRARY + "/src/eventloop.c"
 RUNTIME = LIBRARY + "/src/runtime.c"
+MESSAGING = LIBRARY + "/src/messaging.c"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,24 @@ MUTATIONS = [
         ("while (__atomic_load_n(&handlers_running, __ATOMIC_SEQ_CST) != 0) {", "while (false) {"),)),
     Mutation("events: internal source removable by the application", EVENTLOOP, (
         ("entry == NULL || entry->internal", "entry == NULL"),)),
+    Mutation("messaging: pending limit off by one", MESSAGING, (
+        ("return client->count + client->ending >= APP_MSG_MAX_PENDING;",
+         "return client->count + client->ending > APP_MSG_MAX_PENDING;"),)),
+    Mutation("messaging: ipclib overflow is not WouldBlock", MESSAGING, (
+        ("if (result == CORE_OVERFLOW) {\n        return CORE_WOULD_BLOCK;\n    }\n    if (result == CORE_OK) {",
+         "if (false && result == CORE_OVERFLOW) {\n        return CORE_WOULD_BLOCK;\n    }\n    if (result == CORE_OK) {"),)),
+    Mutation("messaging: request_result with correlation 0 accepted", MESSAGING, (
+        ("if (result.correlation == 0) {\n            return false;", "if (false) {\n            return false;"),)),
+    Mutation("messaging: respond with correlation 0 accepted", MESSAGING, (
+        ("answer.correlation == 0 || error > (u32)LAST_ERROR_CODE", "error > (u32)LAST_ERROR_CODE"),)),
+    Mutation("messaging: empty secret accepted", MESSAGING, (
+        ("secret == NULL || secret_length == 0 ||", "secret == NULL ||"),)),
+    Mutation("messaging: subscriptions not restored after reconnect", MESSAGING, (
+        ("        if (!entry->used) {\n            continue;\n        }\n        result = libappframework_internal_msg_encode(APP_MSG_OPERATION_SUBSCRIBE,",
+         "        if (!entry->used || true) {\n            continue;\n        }\n        result = libappframework_internal_msg_encode(APP_MSG_OPERATION_SUBSCRIBE,"),)),
+    Mutation("messaging: permanent refusal retried forever", MESSAGING, (
+        ("if (client->retry != 0 || client->permanent || !client->started) {",
+         "if (client->retry != 0 || !client->started) {"),)),
 ]
 
 
