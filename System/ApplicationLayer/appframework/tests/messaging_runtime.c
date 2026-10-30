@@ -14,6 +14,7 @@
 #include <check.h>
 
 #include "fake_peer.h"
+#include "fault.h"
 
 #define MSGSERV_PATH "/tmp/appframework-test-msgserv.sock"
 #define LOGSERV_PATH "/tmp/appframework-test-logserv3.sock"
@@ -810,6 +811,26 @@ static void pending_limit_is_enforced(void)
     fake_peer_drop(&msgserv);
 }
 
+/* A full ipclib queue is WOULD_BLOCK for the caller, never a transport error. */
+static void full_queue_is_would_block(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    AppRequestId request = 0;
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    CHECK(bind_client(app, 10));
+    fault_plan.send_error = CORE_OVERFLOW;
+    CHECK(app_msg_publish(app, "ui.theme", (Bytes){ (u8 *)"x", 1 }, on_callback, NULL,
+                          &request) == CORE_WOULD_BLOCK);
+    CHECK(app_msg_publish(app, "ui.theme", (Bytes){ (u8 *)"x", 1 }, on_callback, NULL,
+                          &request) == CORE_OK);
+    CHECK(app_destroy(&app) == CORE_OK);
+    fake_peer_drop(&msgserv);
+}
+
 int main(void)
 {
     const char *saved_msg = libappframework_internal_msgserv_endpoint;
@@ -828,6 +849,7 @@ int main(void)
     unsubscribe_is_remembered();
     subscribe_overflow_is_reported();
     pending_limit_is_enforced();
+    full_queue_is_would_block();
     protocol_violation();
     wrong_reply_kind();
     service_error_passed_on();
