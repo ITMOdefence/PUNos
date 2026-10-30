@@ -59,8 +59,8 @@ jobs:
       - name: Application Layer
         run: make -C System/ApplicationLayer check
 
-      # appframework against the real logserv and appserv, in separate processes.
-      - name: appframework with real logserv and appserv
+      # appframework against the real logserv, appserv and msgserv, in separate processes.
+      - name: appframework with real logserv, appserv and msgserv
         run: make -C System/ApplicationLayer/appframework check-system
 
       - name: Application Layer regression mutation checks

@@ -25,3 +25,5 @@ check-system: $(LIBRARY)
 	$(MAKE) -C $(SPECIAL_LIBS_DIR)/loglib all
 	python3 tests/system/host_integration.py --punos $(abspath $(SYSTEM_DIR)/..) \
 	    --library $(abspath $(LIBRARY))
+	python3 tests/system/messaging_integration.py --punos $(abspath $(SYSTEM_DIR)/..) \
+	    --library $(abspath $(LIBRARY))
