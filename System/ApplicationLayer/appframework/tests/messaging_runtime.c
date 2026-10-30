@@ -789,6 +789,27 @@ static void subscribe_overflow_is_reported(void)
     fake_peer_drop(&msgserv);
 }
 
+/* The pending table is bounded: the 257th request is refused, not queued. */
+static void pending_limit_is_enforced(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    AppRequestId request = 0;
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    for (usize i = 0; i < APP_MSG_MAX_PENDING; ++i) {
+        CHECK(app_msg_request(app, 10, "method", (Bytes){ NULL, 0 }, on_callback, NULL,
+                              &request) == CORE_OK);
+    }
+    CHECK(app_msg_request(app, 10, "method", (Bytes){ NULL, 0 }, on_callback, NULL,
+                          &request) == CORE_WOULD_BLOCK);
+    CHECK(app_destroy(&app) == CORE_OK);
+    CHECK(record.callbacks == APP_MSG_MAX_PENDING);
+    fake_peer_drop(&msgserv);
+}
+
 int main(void)
 {
     const char *saved_msg = libappframework_internal_msgserv_endpoint;
@@ -806,6 +827,7 @@ int main(void)
     reconnect_restores_subscriptions();
     unsubscribe_is_remembered();
     subscribe_overflow_is_reported();
+    pending_limit_is_enforced();
     protocol_violation();
     wrong_reply_kind();
     service_error_passed_on();
