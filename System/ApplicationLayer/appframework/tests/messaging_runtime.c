@@ -758,6 +758,37 @@ static void broker_not_running(void)
     fake_peer_drop(&msgserv);
 }
 
+/* A full subscription table is reported, not silently forgotten on reconnect. */
+static void subscribe_overflow_is_reported(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    IpcMessage frame = { 0, { NULL, 0 } };
+    char topic[8] = "t.00";
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    CHECK(bind_client(app, 10));
+    for (usize i = 0; i < APP_MSG_SUBSCRIPTIONS_MAX; ++i) {
+        topic[2] = (char)('0' + i / 10);
+        topic[3] = (char)('0' + i % 10);
+        CHECK(app_msg_subscribe(app, topic, on_callback, NULL, NULL) == CORE_OK);
+        CHECK(take_frame(app, &frame));
+        (void)ipc_message_destroy(&frame);
+    }
+    topic[2] = 'x';
+    topic[3] = 'x';
+    CHECK(app_msg_subscribe(app, topic, on_callback, NULL, NULL) == CORE_OVERFLOW);
+    for (usize attempt = 0; attempt < 20; ++attempt) {
+        test_pump(app, 2);
+    }
+    /* Rejected locally: no frame was sent for the overflowing subscribe. */
+    CHECK(fake_peer_receive(&msgserv, &frame) == 0);
+    CHECK(app_destroy(&app) == CORE_OK);
+    fake_peer_drop(&msgserv);
+}
+
 int main(void)
 {
     const char *saved_msg = libappframework_internal_msgserv_endpoint;
@@ -774,6 +805,7 @@ int main(void)
     bind_refused_for_good();
     reconnect_restores_subscriptions();
     unsubscribe_is_remembered();
+    subscribe_overflow_is_reported();
     protocol_violation();
     wrong_reply_kind();
     service_error_passed_on();

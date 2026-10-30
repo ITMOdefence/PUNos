@@ -510,6 +510,18 @@ static void fail_connection(AppHandle app, ErrorCode error, const char *diagnost
     schedule_retry(app);
 }
 
+static void wipe_bytes(u8 *data, usize size)
+{
+    volatile u8 *cursor = data;
+
+    if (data == NULL) {
+        return;
+    }
+    for (usize i = 0; i < size; ++i) {
+        cursor[i] = 0;
+    }
+}
+
 static ErrorCode send_bind(AppHandle app)
 {
     AppMsgClient *client = &app->msgserv;
@@ -537,6 +549,7 @@ static ErrorCode send_bind(AppHandle app)
     offset += client->secret_length;
     message = (IpcMessage){ MSG_TYPE_BIND, { block.data, offset } };
     result = ipc_connection_send(client->connection, &message);
+    wipe_bytes(block.data, block.size);
     (void)memory_free(&block);
     return result == CORE_OVERFLOW ? CORE_WOULD_BLOCK : result;
 }
@@ -1083,6 +1096,19 @@ static ErrorCode submit(AppHandle app, AppMsgOperation operation, const char *te
     return CORE_OK;
 }
 
+static bool topic_has_room(AppMsgClient *client, const char *topic, usize length)
+{
+    if (topic_find(client, topic, length) != NULL) {
+        return true;
+    }
+    for (usize i = 0; i < APP_MSG_SUBSCRIPTIONS_MAX; ++i) {
+        if (!client->topics[i].used) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static ErrorCode submit_topic(AppHandle app, AppMsgOperation operation, const char *topic,
                               Bytes payload, AppMsgCallback callback, void *context,
                               AppRequestId *out_request)
@@ -1100,6 +1126,10 @@ static ErrorCode submit_topic(AppHandle app, AppMsgOperation operation, const ch
     if (payload.size > APP_MSG_PAYLOAD_MAX_SIZE ||
         (payload.data == NULL && payload.size != 0)) {
         return CORE_INVALID_ARGUMENT;
+    }
+    if (operation == APP_MSG_OPERATION_SUBSCRIBE &&
+        !topic_has_room(&app->msgserv, topic, length)) {
+        return CORE_OVERFLOW;
     }
     result = submit(app, operation, topic, length, NULL, 0, 0, 0, 0, payload, callback,
                     context, out_request);
@@ -1216,6 +1246,7 @@ void libappframework_internal_msg_shutdown(AppHandle app)
     close_connection(app);
     finish_requests(app, count, CORE_INVALID_STATE);
     (void)memory_free(&client->block);
+    wipe_bytes(client->secret_block.data, client->secret_block.size);
     (void)memory_free(&client->secret_block);
     client->requests = NULL;
     client->head = 0;
