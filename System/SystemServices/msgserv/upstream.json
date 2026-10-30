@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/ITMOdefence/brouk",
+  "commit": "8f858682c372164a36fd83933e70976986ee6e2d",
+  "excluded": ["vendor", ".github", "punos.ref", "secret.salt", "tools/fetch_punos.py", "config/platform_registry.json", "config/applications.json", "config/messaging.sample.json", "tests/__pycache__"],
+  "integration_changes": ["Makefile defaults/setup", "README.md", "tests/test_generator.py SnapshotCase", "upstream.json"]
+}

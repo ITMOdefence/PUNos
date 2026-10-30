@@ -63,3 +63,6 @@ target/
 *.bak
 .cache/
 tmp/
+
+# msgserv secret salt: generated once per build tree, never committed
+/System/SystemServices/msgserv/secret.salt

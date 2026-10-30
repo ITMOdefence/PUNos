@@ -3,11 +3,13 @@ PUNOS_ROOT := $(abspath ../..)
 REGISTRY ?= $(PUNOS_ROOT)/System/SystemServices/platform_registry.json
 APPSERV_ARGS := PUNOS_DIR=$(PUNOS_ROOT) REGISTRY=$(REGISTRY) METADATA=../applications.json
 
-.PHONY: all appserv camserv IOserv displayserv compositorserv windowserv runtime-test check clean
-all: appserv camserv IOserv displayserv compositorserv windowserv
+.PHONY: all appserv msgserv camserv IOserv displayserv compositorserv windowserv runtime-test check clean
+all: appserv msgserv camserv IOserv displayserv compositorserv windowserv
 
 appserv:
 	$(MAKE) -C appserv $(APPSERV_ARGS) all
+msgserv:
+	$(MAKE) -C msgserv PUNOS_DIR=$(PUNOS_ROOT) REGISTRY=$(REGISTRY) METADATA=../applications.json all
 camserv:
 	$(MAKE) -C camserv PUNOS_DIR=$(PUNOS_ROOT) all
 IOserv:
@@ -21,6 +23,7 @@ windowserv:
 
 runtime-test:
 	$(MAKE) -C appserv $(APPSERV_ARGS) build/service_test
+	$(MAKE) -C msgserv PUNOS_DIR=$(PUNOS_ROOT) REGISTRY=$(REGISTRY) METADATA=../applications.json runtime-test
 	$(MAKE) -C logserv PUNOS_DIR=$(PUNOS_ROOT) runtime-test
 	$(MAKE) -C initserv PUNOS_DIR=$(PUNOS_ROOT) runtime-test
 	$(MAKE) -C displayserv runtime-test
@@ -29,9 +32,11 @@ runtime-test:
 
 check:
 	$(MAKE) -C appserv $(APPSERV_ARGS) check
+	$(MAKE) -C msgserv PUNOS_DIR=$(PUNOS_ROOT) REGISTRY=$(REGISTRY) METADATA=../applications.json check
 
 clean:
 	$(MAKE) -C appserv clean
+	$(MAKE) -C msgserv clean
 	$(MAKE) -C logserv clean
 	$(MAKE) -C initserv clean
 	$(MAKE) -C camserv clean
