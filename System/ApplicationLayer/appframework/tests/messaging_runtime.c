@@ -15,6 +15,7 @@
 
 #include "fake_peer.h"
 #include "fault.h"
+#include "internal.h"
 
 #define MSGSERV_PATH "/tmp/appframework-test-msgserv.sock"
 #define LOGSERV_PATH "/tmp/appframework-test-logserv3.sock"
@@ -533,7 +534,9 @@ static void bind_refused_for_good(void)
     }
     CHECK(record.links == 1 && record.link_error == CORE_PERMISSION_DENIED);
     CHECK(record.link_client == 0);
-    /* No new connection appears, however long the loop runs. */
+    /* No retry is armed at all, and no new connection appears however long the
+     * loop runs. */
+    CHECK(app->msgserv.retry == 0 && app->msgserv.permanent);
     for (usize attempt = 0; attempt < 50; ++attempt) {
         test_pump(app, 2);
     }
@@ -684,6 +687,54 @@ static void wrong_reply_kind(void)
         test_pump(app, 2);
     }
     CHECK(record.callbacks == 1 && record.last_error == CORE_IO_ERROR);
+    CHECK(app_destroy(&app) == CORE_OK);
+    fake_peer_drop(&msgserv);
+}
+
+/* Correlation 0 is never issued by msgserv: a request_result with it is a
+ * protocol violation, and the callback sees the connection failure. */
+static void zero_correlation_is_a_violation(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    IpcMessage frame = { 0, { NULL, 0 } };
+    u8 payload[12] = { 0 };
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    CHECK(bind_client(app, 14));
+    CHECK(app_msg_request(app, 7, "method", (Bytes){ NULL, 0 }, on_callback, NULL, NULL) ==
+          CORE_OK);
+    CHECK(take_frame(app, &frame));
+    (void)ipc_message_destroy(&frame);
+    /* request_result: CORE_OK, then correlation 0. */
+    CHECK(fake_peer_send(&msgserv, 10, payload, sizeof(payload)));
+    for (usize attempt = 0; attempt < 100 && record.callbacks == 0; ++attempt) {
+        test_pump(app, 2);
+    }
+    CHECK(record.callbacks == 1 && record.last_error == CORE_IO_ERROR);
+    CHECK(app_destroy(&app) == CORE_OK);
+    fake_peer_drop(&msgserv);
+}
+
+/* A deliver_response with correlation 0 is not an answer to anything. */
+static void answer_with_zero_correlation_is_refused(void)
+{
+    AppHandle app = test_app();
+    AppMsgHandlers handlers = all_handlers();
+    u8 payload[20] = { 0 };
+
+    CHECK(app != NULL);
+    reset();
+    CHECK(app_msg_start(app, test_envp, &handlers) == CORE_OK);
+    CHECK(bind_client(app, 15));
+    /* deliver_response: correlation 0, transport CORE_OK, status 0, empty payload. */
+    CHECK(fake_peer_send(&msgserv, 22, payload, sizeof(payload)));
+    for (usize attempt = 0; attempt < 50; ++attempt) {
+        test_pump(app, 2);
+    }
+    CHECK(record.answers == 0);
     CHECK(app_destroy(&app) == CORE_OK);
     fake_peer_drop(&msgserv);
 }
@@ -852,6 +903,8 @@ int main(void)
     full_queue_is_would_block();
     protocol_violation();
     wrong_reply_kind();
+    zero_correlation_is_a_violation();
+    answer_with_zero_correlation_is_refused();
     service_error_passed_on();
     destroy_with_pending();
     broker_not_running();
