@@ -23,6 +23,16 @@ _Static_assert(APP_APPS_MAX_PENDING == 256, "appserv queue limit");
 _Static_assert(APP_LOG_MAX_PENDING == 256, "logserv queue limit");
 _Static_assert(APP_PROTOCOL_VERSION == 1, "protocol version");
 
+/* Messaging constants. */
+_Static_assert(APP_MSG_MAX_PENDING == 256, "msgserv queue limit");
+_Static_assert(APP_MSG_SUBSCRIPTIONS_MAX == 32, "subscriptions per connection");
+_Static_assert(APP_MSG_TOPIC_MAX_LENGTH == 128, "topic limit");
+_Static_assert(APP_MSG_METHOD_MAX_LENGTH == 64, "method limit");
+_Static_assert(APP_MSG_PAYLOAD_MAX_SIZE == 65536, "payload limit");
+_Static_assert(APP_MSG_SECRET_MAX_LENGTH == 128, "secret limit");
+_Static_assert(sizeof(APP_MSG_SECRET_VARIABLE) == sizeof("PUNOS_MSG_SECRET"),
+               "secret variable name");
+
 /* Scalar types. */
 _Static_assert(sizeof(AppHandle) == sizeof(void *), "AppHandle is a pointer");
 _Static_assert(sizeof(AppEventSourceId) == 8, "AppEventSourceId is u64");
@@ -101,6 +111,13 @@ static void apps_callback(AppHandle app, AppRequestId request, ErrorCode error,
     (void)context;
 }
 
+/* AppMsgOperation. */
+_Static_assert(APP_MSG_OPERATION_SUBSCRIBE == 0, "Subscribe");
+_Static_assert(APP_MSG_OPERATION_UNSUBSCRIBE == 1, "Unsubscribe");
+_Static_assert(APP_MSG_OPERATION_PUBLISH == 2, "Publish");
+_Static_assert(APP_MSG_OPERATION_REQUEST == 3, "Request");
+_Static_assert(APP_MSG_OPERATION_RESPOND == 4, "Respond");
+
 /* The operations have the documented signatures: assigning them to pointers of
  * the exact type fails to compile on any difference. */
 ErrorCode (*const abi_app_create)(const AppConfig *, AppHandle *) = app_create;
@@ -127,5 +144,23 @@ ErrorCode (*const abi_app_apps_stop)(AppHandle, AppInstanceId, AppAppsCallback, 
 ErrorCode (*const abi_app_apps_get_status)(AppHandle, AppInstanceId, AppAppsCallback,
                                            void *, AppRequestId *) = app_apps_get_status;
 
+ErrorCode (*const abi_app_msg_start)(AppHandle, char **, const AppMsgHandlers *) =
+    app_msg_start;
+ErrorCode (*const abi_app_msg_subscribe)(AppHandle, const char *, AppMsgCallback, void *,
+                                         AppRequestId *) = app_msg_subscribe;
+ErrorCode (*const abi_app_msg_unsubscribe)(AppHandle, const char *, AppMsgCallback, void *,
+                                           AppRequestId *) = app_msg_unsubscribe;
+ErrorCode (*const abi_app_msg_publish)(AppHandle, const char *, Bytes, AppMsgCallback,
+                                       void *, AppRequestId *) = app_msg_publish;
+ErrorCode (*const abi_app_msg_request)(AppHandle, AppMsgClientId, const char *, Bytes,
+                                       AppMsgCallback, void *, AppRequestId *) =
+    app_msg_request;
+ErrorCode (*const abi_app_msg_request_application)(AppHandle, const char *, const char *,
+                                                   Bytes, AppMsgCallback, void *,
+                                                   AppRequestId *) =
+    app_msg_request_application;
+ErrorCode (*const abi_app_msg_respond)(AppHandle, AppMsgCorrelationId, u32, Bytes,
+                                       AppMsgCallback, void *, AppRequestId *) =
+    app_msg_respond;
 AppEventHandler const abi_event_handler = event_handler;
 AppAppsCallback const abi_apps_callback = apps_callback;
