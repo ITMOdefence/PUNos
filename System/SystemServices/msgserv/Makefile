@@ -37,7 +37,7 @@ OBJECTS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(SOURCES))) \
 HEADERS := include/msgserv.h src/wire.h src/logger.h
 
 .PHONY: all setup secret dependencies check check-unit check-protocol check-faults \
-        check-generator check-integration runtime-test clean FORCE
+        check-generator check-integration check-mutations runtime-test clean FORCE
 all: $(BUILD_DIR)/msgserv
 
 # Дерево PUNos должно лежать рядом (PUNOS_DIR): заголовки, библиотеки и CRT
@@ -125,6 +125,9 @@ check-integration: all
 	$(PYTHON) tests/integration.py --punos $(PUNOS) --build $(abspath $(BUILD_DIR))
 
 check: all check-generator check-unit check-protocol check-faults check-integration
+
+check-mutations: all
+	$(PYTHON) tests/check_mutations.py --punos $(PUNOS)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -747,6 +747,156 @@ static void check_queue_overflow(void)
     test_turn(&test);
 }
 
+/* Подписчик, у которого право на topic отозвано, молча выпадает из рассылки:
+ * ни кадра, ни учёта в delivered. Отзыв моделируем правкой каталога в тесте,
+ * потому что обычный путь (подписка с проверкой прав) его не допускает. */
+static void check_revoked_subscriber(void)
+{
+    static MsgAppEntry revocable[3];
+    static MsgCatalog revocable_catalog;
+    MsgClientId alpha_id = 0;
+    IpcConnectionHandle alpha;
+    IpcConnectionHandle beta;
+    u8 frame[512];
+    u8 payload[4] = { 1, 2, 3, 4 };
+    IpcMessage reply = { 0, { NULL, 0 } };
+    IpcMessage event = { 0, { NULL, 0 } };
+    MsgReader reader;
+    usize beta_index = 1;
+
+    for (usize i = 0; i < 3; ++i) {
+        revocable[i] = test_entries[i];
+    }
+    revocable_catalog.entries = revocable;
+    revocable_catalog.count = 3;
+    test.broker.catalog = &revocable_catalog;
+
+    alpha = test_bound(&test, SOCKET_PATH, "alpha", TEST_ALPHA_SECRET, &alpha_id);
+    beta = test_bound(&test, SOCKET_PATH, "beta", TEST_BETA_SECRET, NULL);
+    EXPECT(148, alpha != NULL && beta != NULL);
+    EXPECT(149, test_call(&test, beta, MSG_TYPE_SUBSCRIBE, frame,
+                          test_build_topic(frame, "ui.theme"), &reply));
+    EXPECT(150, test_reply_code(&reply) == (u32)CORE_OK);
+    (void)ipc_message_destroy(&reply);
+
+    revocable[beta_index].subscribe_topic_count = 0; /* право отозвано */
+    EXPECT(151, test_call(&test, alpha, MSG_TYPE_PUBLISH, frame,
+                          test_build_publish(frame, sizeof(frame), "ui.theme", payload, 4),
+                          &reply));
+    reader = msg_reader(reply.payload.data, reply.payload.size);
+    EXPECT(152, msg_read_u32(&reader) == (u32)CORE_OK);
+    EXPECT(153, msg_read_u16(&reader) == 0); /* delivered: отозванный не учтён */
+    EXPECT(154, msg_read_u16(&reader) == 0); /* dropped: и не отброшен */
+    (void)ipc_message_destroy(&reply);
+    EXPECT(155, !test_receive(&test, beta, &event));
+
+    revocable[beta_index].subscribe_topic_count = 1;
+    test.broker.catalog = &test_catalog;
+    (void)ipc_connection_close(&alpha);
+    (void)ipc_connection_close(&beta);
+    test_turn(&test);
+}
+
+/* Издатель не получает собственное событие, даже если сам подписан на topic. */
+static void check_no_self_echo(void)
+{
+    static const String self_subscribe[] = { { (char *)"ui.theme", 8 } };
+    static MsgAppEntry echo[3];
+    static MsgCatalog echo_catalog;
+    MsgClientId alpha_id = 0;
+    IpcConnectionHandle alpha;
+    IpcConnectionHandle beta;
+    u8 frame[512];
+    u8 payload[4] = { 1, 2, 3, 4 };
+    IpcMessage reply = { 0, { NULL, 0 } };
+    IpcMessage event = { 0, { NULL, 0 } };
+    MsgReader reader;
+
+    for (usize i = 0; i < 3; ++i) {
+        echo[i] = test_entries[i];
+    }
+    echo[0].subscribe_topics = self_subscribe;
+    echo[0].subscribe_topic_count = 1;
+    echo_catalog.entries = echo;
+    echo_catalog.count = 3;
+    test.broker.catalog = &echo_catalog;
+
+    alpha = test_bound(&test, SOCKET_PATH, "alpha", TEST_ALPHA_SECRET, &alpha_id);
+    beta = test_bound(&test, SOCKET_PATH, "beta", TEST_BETA_SECRET, NULL);
+    EXPECT(156, alpha != NULL && beta != NULL);
+    EXPECT(157, test_call(&test, alpha, MSG_TYPE_SUBSCRIBE, frame,
+                          test_build_topic(frame, "ui.theme"), &reply));
+    EXPECT(158, test_reply_code(&reply) == (u32)CORE_OK);
+    (void)ipc_message_destroy(&reply);
+    EXPECT(159, test_call(&test, beta, MSG_TYPE_SUBSCRIBE, frame,
+                          test_build_topic(frame, "ui.theme"), &reply));
+    EXPECT(160, test_reply_code(&reply) == (u32)CORE_OK);
+    (void)ipc_message_destroy(&reply);
+
+    EXPECT(161, test_call(&test, alpha, MSG_TYPE_PUBLISH, frame,
+                          test_build_publish(frame, sizeof(frame), "ui.theme", payload, 4),
+                          &reply));
+    reader = msg_reader(reply.payload.data, reply.payload.size);
+    EXPECT(162, msg_read_u32(&reader) == (u32)CORE_OK);
+    EXPECT(163, msg_read_u16(&reader) == 1); /* delivered: только beta */
+    (void)ipc_message_destroy(&reply);
+    EXPECT(164, test_receive(&test, beta, &event));
+    (void)ipc_message_destroy(&event);
+    EXPECT(165, !test_receive(&test, alpha, &event));
+
+    test.broker.catalog = &test_catalog;
+    (void)ipc_connection_close(&alpha);
+    (void)ipc_connection_close(&beta);
+    test_turn(&test);
+}
+
+/* Ответить на запрос может только адресат: чужое соединение с тем же
+ * correlation_id получает отказ, а запрос остаётся ждать настоящего адресата. */
+static void check_respond_from_foreign(void)
+{
+    MsgClientId beta_id = 0;
+    IpcConnectionHandle alpha = test_bound(&test, SOCKET_PATH, "alpha", TEST_ALPHA_SECRET,
+                                           NULL);
+    IpcConnectionHandle beta = test_bound(&test, SOCKET_PATH, "beta", TEST_BETA_SECRET,
+                                          &beta_id);
+    IpcConnectionHandle gamma = test_bound(&test, SOCKET_PATH, "gamma", TEST_GAMMA_SECRET,
+                                           NULL);
+    u8 frame[512];
+    IpcMessage reply = { 0, { NULL, 0 } };
+    IpcMessage delivered = { 0, { NULL, 0 } };
+    MsgReader reader;
+    MsgCorrelationId correlation = 0;
+
+    EXPECT(166, alpha != NULL && beta != NULL && gamma != NULL);
+    EXPECT(167, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
+                          build_request_by_client(frame, sizeof(frame), beta_id, "open_image",
+                                                  NULL, 0),
+                          &reply));
+    reader = msg_reader(reply.payload.data, reply.payload.size);
+    EXPECT(168, msg_read_u32(&reader) == (u32)CORE_OK);
+    correlation = msg_read_u64(&reader);
+    (void)ipc_message_destroy(&reply);
+    EXPECT(169, test_receive(&test, beta, &delivered));
+    (void)ipc_message_destroy(&delivered);
+
+    EXPECT(170, test_call(&test, gamma, MSG_TYPE_RESPOND, frame,
+                          build_respond(frame, sizeof(frame), correlation, 1, NULL, 0),
+                          &reply));
+    EXPECT(171, test_reply_code(&reply) == (u32)CORE_PERMISSION_DENIED);
+    (void)ipc_message_destroy(&reply);
+
+    EXPECT(172, test_call(&test, beta, MSG_TYPE_RESPOND, frame,
+                          build_respond(frame, sizeof(frame), correlation, 2, NULL, 0),
+                          &reply));
+    EXPECT(173, test_reply_code(&reply) == (u32)CORE_OK);
+    (void)ipc_message_destroy(&reply);
+
+    (void)ipc_connection_close(&alpha);
+    (void)ipc_connection_close(&beta);
+    (void)ipc_connection_close(&gamma);
+    test_turn(&test);
+}
+
 int main(void)
 {
     EXPECT(147, test_broker_start(&test, SOCKET_PATH));
@@ -766,6 +916,9 @@ int main(void)
     check_bind_timeout();
     check_clients_limit();
     check_queue_overflow();
+    check_revoked_subscriber();
+    check_no_self_echo();
+    check_respond_from_foreign();
     test_broker_stop(&test);
     check_passed();
     return 0;
