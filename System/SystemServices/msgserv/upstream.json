@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/ITMOdefence/brouk",
-  "commit": "f5367f8",
+  "commit": "8628eebfc686fecb2f38a180d63cce24522e3241",
   "excluded": [
     "vendor",
     ".github",
