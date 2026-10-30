@@ -612,18 +612,24 @@ static ErrorCode resubscribe(AppHandle app)
 static ErrorCode become_bound(AppHandle app, AppMsgClientId client_id)
 {
     AppMsgClient *client = &app->msgserv;
-    ErrorCode result;
+    ErrorCode result = CORE_OK;
 
     client->bound = true;
     client->client_id = client_id;
     client->backoff_ms = APP_MSG_BACKOFF_FIRST_MS;
-    result = resubscribe(app);
+    /* Сначала то, что ждало bind, в порядке очереди, и только потом восстановление
+     * подписок: resubscribe() дописывает свои записи в конец FIFO, а ответы брокера
+     * сопоставляются с головой очереди по типу. Иначе ответ на восстановленную
+     * подписку встал бы в очередь раньше ответа на запрос, отправленного до bind. */
     for (usize i = 0; result == CORE_OK && i < client->count; ++i) {
         AppMsgRequest *request = request_at(client, i);
 
         if (!request->sent) {
             result = send_request(app, request);
         }
+    }
+    if (result == CORE_OK) {
+        result = resubscribe(app);
     }
     if (result == CORE_OK) {
         result = flush(app);
