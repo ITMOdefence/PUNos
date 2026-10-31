@@ -897,6 +897,56 @@ static void check_respond_from_foreign(void)
     test_turn(&test);
 }
 
+/* A full recipient queue rejects a request without leaking a pending slot. */
+static void check_request_target_queue_full(void)
+{
+    MsgClientId beta_id = 0;
+    IpcConnectionHandle alpha = test_bound(&test, SOCKET_PATH, "alpha", TEST_ALPHA_SECRET,
+                                           NULL);
+    IpcConnectionHandle beta = test_bound(&test, SOCKET_PATH, "beta", TEST_BETA_SECRET,
+                                          &beta_id);
+    MsgClient *beta_state = NULL;
+    MsgClient *alpha_state = NULL;
+    u8 frame[512];
+    IpcMessage reply = { 0, { NULL, 0 } };
+
+    EXPECT(188, alpha != NULL && beta != NULL);
+    for (MsgClient *client = test.broker.clients; client != NULL; client = client->next) {
+        if (client->id == beta_id) {
+            beta_state = client;
+        } else if (client->entry != NULL &&
+                   msg_bytes_equal((const u8 *)client->entry->application_id.data,
+                                   client->entry->application_id.length,
+                                   (const u8 *)"alpha", 5)) {
+            alpha_state = client;
+        }
+    }
+    EXPECT(189, beta_state != NULL && alpha_state != NULL);
+
+    /* Fill the broker's recipient queue directly for a deterministic boundary. */
+    beta_state->queue_bytes = MSG_QUEUE_MAX_BYTES;
+    EXPECT(190, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
+                          build_request_by_client(frame, sizeof(frame), beta_id,
+                                                  "open_image", NULL, 0),
+                          &reply));
+    EXPECT(191, test_reply_code(&reply) == (u32)CORE_WOULD_BLOCK);
+    EXPECT(192, alpha_state->pending_count == 0);
+    (void)ipc_message_destroy(&reply);
+
+    beta_state->queue_bytes = 0;
+    EXPECT(193, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
+                          build_request_by_client(frame, sizeof(frame), beta_id,
+                                                  "open_image", NULL, 0),
+                          &reply));
+    EXPECT(194, test_reply_code(&reply) == (u32)CORE_OK);
+    EXPECT(195, alpha_state->pending_count == 1);
+    (void)ipc_message_destroy(&reply);
+
+    (void)ipc_connection_close(&alpha);
+    (void)ipc_connection_close(&beta);
+    test_turn(&test);
+}
+
 int main(void)
 {
     EXPECT(147, test_broker_start(&test, SOCKET_PATH));
@@ -919,6 +969,7 @@ int main(void)
     check_revoked_subscriber();
     check_no_self_echo();
     check_respond_from_foreign();
+    check_request_target_queue_full();
     test_broker_stop(&test);
     check_passed();
     return 0;
