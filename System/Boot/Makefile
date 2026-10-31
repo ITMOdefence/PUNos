@@ -52,13 +52,21 @@ INIT_OBJECT := $(BUILD_DIR)/init.o
 STUB_OBJECT := $(BUILD_DIR)/initserv_stub.o
 INIT := $(BUILD_DIR)/init
 STUB := $(BUILD_DIR)/initserv-smoke
+ifeq ($(PUNOS_IMAGE_MODE),smoke)
+SMOKE_MESSAGING_PROBE := $(BUILD_DIR)/msgserv-bootcheck
+endif
 
 .PHONY: all clean native-runtime system-services $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) $(APPFRAMEWORK_SELFTESTS)
 
-all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) $(APPFRAMEWORK_SELFTESTS) system-services
+all: $(INIT) $(BUILD_DIR)/init-smoke $(STUB) $(BUILD_DIR)/services-bootcheck $(SMOKE_MESSAGING_PROBE) $(SYSCALL_SELFTEST) $(SYSTEM_LIBS_SELFTESTS) $(SPECIAL_LIBS_SELFTESTS) $(APPFRAMEWORK_SELFTESTS) system-services
 
 system-services:
 	$(MAKE) -C $(SYSTEM_SERVICES_DIR) REGISTRY=$(REGISTRY) all runtime-test
+ifeq ($(PUNOS_IMAGE_MODE),smoke)
+	$(MAKE) -C $(SYSTEM_SERVICES_DIR)/msgserv BUILD_DIR=build/qemu-smoke \
+	    CONFIG=tests/qemu/messaging.json METADATA=tests/qemu/applications.json \
+	    SALT=tests/qemu/salt all
+endif
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -105,3 +113,12 @@ $(BUILD_DIR)/init-smoke: $(BUILD_DIR)/init_smoke.o $(CRT0) $(CRT_LIBRARY) $(SYSC
 $(BUILD_DIR)/services-bootcheck: ServicesProbe/probe.c system-services
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(foreach lib,core mem str time thread eventloop,-I../SystemLibs/lib$(lib)/include) -I../SpecialLibs/ipclib/include -c $< -o $(BUILD_DIR)/services_probe.o
 	$(CC) -nostdlib -no-pie -Wl,-e,_start $(CRT0) $(BUILD_DIR)/services_probe.o -Wl,--start-group $(foreach lib,core mem str time thread eventloop,../SystemLibs/lib$(lib)/build/libpunos_$(lib).a) ../SpecialLibs/ipclib/build/libpunos_special_ipc.a $(CRT_LIBRARY) $(SYSCALL_LIBRARY) -Wl,--end-group -o $@
+
+$(BUILD_DIR)/msgserv-bootcheck: ServicesProbe/msgserv_probe.c system-services
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(foreach lib,core mem str time eventloop,-I../SystemLibs/lib$(lib)/include) \
+	    -I../SpecialLibs/ipclib/include -I../SystemServices/msgserv/include \
+	    -I../SystemServices/msgserv/src -c $< -o $(BUILD_DIR)/msgserv_probe.o
+	$(CC) -nostdlib -no-pie -Wl,-e,_start $(CRT0) $(BUILD_DIR)/msgserv_probe.o \
+	    -Wl,--start-group $(foreach lib,core mem str time eventloop,../SystemLibs/lib$(lib)/build/libpunos_$(lib).a) \
+	    ../SpecialLibs/ipclib/build/libpunos_special_ipc.a $(CRT_LIBRARY) $(SYSCALL_LIBRARY) \
+	    -Wl,--end-group -o $@

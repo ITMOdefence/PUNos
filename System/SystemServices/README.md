@@ -33,8 +33,10 @@ when implemented; the default native app catalogue is empty.
 
 CI uses `/init-smoke`: it runs freestanding library/service self-tests in the
 explicit `initserv-smoke` executable, then starts the same real initserv and
-uses a test IPC probe to confirm appserv actually serves requests. Normal
-`/init` does not execute those test programs. Both paths mount the same filesystems.
+uses test IPC probes to confirm appserv serves requests and msgserv delivers a
+published event. The smoke image uses a separate test-only messaging catalogue.
+Normal `/init` does not execute those probes or test programs. Both paths mount
+the same filesystems.
 Tests inject failures only in separately linked binaries and cover real native
 threads, futexes, IPC, journal storage and supervised children.
 

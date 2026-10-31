@@ -116,6 +116,16 @@ int main(int argc, char **argv, char **envp)
     i32 probe_status = 0;
     if (probe < 0 || waitpid(probe, &probe_status, 0) != probe || probe_status != 0)
         failed("services probe", EIO);
+
+    pid_t messaging_probe = fork();
+    if (messaging_probe == 0) {
+        char *const args[] = { (char *)"/punos/bin/msgserv-bootcheck", 0 };
+        (void)execve(args[0], args, empty_env); exit(126);
+    }
+    i32 messaging_status = 0;
+    if (messaging_probe < 0 || waitpid(messaging_probe, &messaging_status, 0) != messaging_probe ||
+        messaging_status != 0)
+        failed("msgserv exchange probe", EIO);
 #endif
 
     for (;;) {

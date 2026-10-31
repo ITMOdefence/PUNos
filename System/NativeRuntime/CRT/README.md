@@ -3,8 +3,9 @@
 Minimal freestanding C runtime for native PUNos executables on Linux x86_64.
 
 It provides `_start`, initializes the main `RuntimeThreadState`, installs the
-FS base, calls `main(argc, argv, envp)` and terminates through the public PUNos
-`exit()` wrapper.
+FS base, provides the freestanding `memcpy` and `memset` routines used by C
+aggregate initialization/copying, calls `main(argc, argv, envp)` and
+terminates through the public PUNos `exit()` wrapper.
 
 Build and run the minimal program test from the repository root:
 

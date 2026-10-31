@@ -1,0 +1,6 @@
+{
+  "applications": [
+    { "application_id": "qemu.publisher" },
+    { "application_id": "qemu.subscriber" }
+  ]
+}

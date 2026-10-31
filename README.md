@@ -48,7 +48,9 @@ supervisor и проверяет доступность appserv по IPC.
 
 Обычная загрузка выводит `PUNos initserv: logserv ready` и `services started`.
 Команда `./System/scripts/check-qemu-boot.sh` выбирает проверочный `/init-smoke`,
-проверяет self-test'ы и реальный ответ appserv по IPC.
+проверяет self-test'ы, реальный ответ appserv по IPC и публикацию/приём через
+msgserv. Smoke-образ собирается с отдельным тестовым каталогом messaging и
+воспроизводимо проверяется CI.
 
 Тесты на хосте, без QEMU:
 

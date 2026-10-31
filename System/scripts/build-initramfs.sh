@@ -22,7 +22,8 @@ for command_name in cpio find grep gzip install make nm python3 readelf sort tou
     fi
 done
 
-make --directory "${BOOT_DIR}" REGISTRY="${REGISTRY}" all
+make --directory "${BOOT_DIR}" REGISTRY="${REGISTRY}" \
+    PUNOS_IMAGE_MODE="${IMAGE_MODE}" all
 
 ACTIVE_EXTRA_SERVICES="$(python3 - "${REGISTRY}" <<'PY'
 import json, sys
@@ -138,6 +139,9 @@ if [[ "${IMAGE_MODE}" == smoke ]]; then
     install -m 0755 "${BOOT_DIR}/build/initserv-smoke" "${ROOTFS_DIR}/punos/bin/initserv-smoke"
     install -m 0755 "${BOOT_DIR}/build/init-smoke" "${ROOTFS_DIR}/init-smoke"
     install -m 0755 "${BOOT_DIR}/build/services-bootcheck" "${ROOTFS_DIR}/punos/bin/services-bootcheck"
+    install -m 0755 "${BOOT_DIR}/build/msgserv-bootcheck" "${ROOTFS_DIR}/punos/bin/msgserv-bootcheck"
+    install -m 0755 "${SYSTEM_DIR}/SystemServices/msgserv/build/qemu-smoke/msgserv" \
+        "${ROOTFS_DIR}/punos/bin/msgserv"
     for self_test in "${SELF_TESTS[@]}"; do
         install -m 0755 "${SYSTEM_DIR}/${self_test%%:*}" \
             "${ROOTFS_DIR}/punos/bin/${self_test##*:}"

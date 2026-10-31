@@ -1,0 +1,10 @@
+{
+  "applications": {
+    "qemu.publisher": {
+      "publish_topics": ["qemu.smoke"]
+    },
+    "qemu.subscriber": {
+      "subscribe_topics": ["qemu.smoke"]
+    }
+  }
+}

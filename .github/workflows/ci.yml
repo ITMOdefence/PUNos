@@ -145,6 +145,13 @@ jobs:
       - name: Build smoke image
         run: |
           PUNOS_IMAGE_MODE=smoke ./System/scripts/build-initramfs.sh
+          first="$(sha256sum System/images/punos-initramfs.cpio.gz)"
+          gzip -dc System/images/punos-initramfs.cpio.gz | cpio -t > System/images/smoke-files.txt
+          grep -q '^punos/bin/msgserv$' System/images/smoke-files.txt
+          grep -q '^punos/bin/msgserv-bootcheck$' System/images/smoke-files.txt
+          PUNOS_IMAGE_MODE=smoke ./System/scripts/build-initramfs.sh
+          second="$(sha256sum System/images/punos-initramfs.cpio.gz)"
+          test "${first}" = "${second}"
           mv System/images/punos-initramfs.cpio.gz System/images/punos-smoke.cpio.gz
 
       - uses: actions/upload-artifact@v4
