@@ -33,11 +33,13 @@ CORE_OK = 0
 CORE_NOT_FOUND = 5
 CORE_ALREADY_EXISTS = 6
 CORE_PERMISSION_DENIED = 7
+CORE_WOULD_BLOCK = 11
 CORE_OVERFLOW = 13
 
 PAYLOAD_MAX = 65536
 CONNECTIONS_PER_APPLICATION = 4
 APPLICATIONS = 16  # 16 x 4 = MSG_CLIENTS_MAX
+PENDING_MAX_PER_CLIENT = 256
 
 SALT = b"integration-salt-for-msgserv-tests"
 
@@ -431,6 +433,26 @@ def scenario_request(endpoint, applications):
     server.close()
 
 
+def scenario_pending_limit(endpoint, applications):
+    """Outstanding requests are capped per caller; a response frees a slot."""
+    caller = Client(endpoint).bind(applications[0])
+    server = Client(endpoint).bind(applications[1])
+    for _ in range(PENDING_MAX_PER_CLIENT):
+        assert caller.request(server.client_id, "slow") is not None
+    caller.request(server.client_id, "slow", error=CORE_WOULD_BLOCK)
+
+    _, payload = server.next_unsolicited(DELIVER_REQUEST)
+    correlation = Reader(payload).fixed("<Q")
+    server.respond(correlation, 0)
+    reader = Reader(caller.next_unsolicited(DELIVER_RESPONSE)[1])
+    assert reader.fixed("<Q") == correlation
+    assert reader.fixed("<I") == CORE_OK
+
+    assert caller.request(server.client_id, "slow") is not None
+    caller.close()
+    server.close()
+
+
 def scenario_dead_target(endpoint, applications):
     """Адресат убит: отправитель узнаёт сразу, а не по таймауту."""
     caller = Client(endpoint).bind(applications[0])
@@ -582,6 +604,7 @@ def run(punos, build):
             for name, scenario in (("identity", scenario_identity),
                                    ("publish", scenario_publish),
                                    ("request", scenario_request),
+                                   ("pending_limit", scenario_pending_limit),
                                    ("dead_target", scenario_dead_target),
                                    ("silent_client", scenario_silent_client),
                                    ("many_events", scenario_many_events),

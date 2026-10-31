@@ -126,7 +126,7 @@ void msg_logger_record(void *context, const char *event, const char *application
     MsgLogger *logger = context;
     /* Хватает на самое длинное сообщение: событие, application_id и два
      * числа. Усечения не бывает, потому что имена событий - литералы. */
-    u8 buffer[512] = { 0 };
+    u8 buffer[512];
     usize length = MSG_LOG_HEADER_SIZE + MSG_LOG_COMPONENT_LENGTH;
     usize component = MSG_LOG_HEADER_SIZE;
     MsgWriter header = msg_writer(buffer, MSG_LOG_HEADER_SIZE);

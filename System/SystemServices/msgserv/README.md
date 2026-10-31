@@ -43,7 +43,8 @@ make -C System/SystemServices/msgserv runtime-test
   прав и генерацию секретов.
 - `make -C System/SystemServices/msgserv check-integration` запускает настоящий
   процесс брокера с несколькими AF_UNIX-клиентами и проверяет публикацию,
-  запрос/ответ, права, переполнение очередей и журналирование.
+  запрос/ответ, лимит ожидающих запросов, права, переполнение очередей и
+  журналирование.
 - `make -C System/ApplicationLayer/appframework check-system` включает
   `tests/system/messaging_integration.py`: несколько отдельных процессов
   `appframework` обмениваются событиями и запросами через реальный брокер;
