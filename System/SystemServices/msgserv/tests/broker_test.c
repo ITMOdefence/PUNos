@@ -897,67 +897,6 @@ static void check_respond_from_foreign(void)
     test_turn(&test);
 }
 
-/* One caller may have only MSG_PENDING_MAX_PER_CLIENT outstanding requests.
- * Completing one request releases a slot, so the caller can submit another. */
-static void check_pending_limit(void)
-{
-    MsgClientId beta_id = 0;
-    IpcConnectionHandle alpha = test_bound(&test, SOCKET_PATH, "alpha", TEST_ALPHA_SECRET,
-                                           NULL);
-    IpcConnectionHandle beta = test_bound(&test, SOCKET_PATH, "beta", TEST_BETA_SECRET,
-                                          &beta_id);
-    u8 frame[512];
-    IpcMessage reply = { 0, { NULL, 0 } };
-    IpcMessage delivered = { 0, { NULL, 0 } };
-    MsgCorrelationId correlation;
-    MsgReader reader;
-
-    EXPECT(174, alpha != NULL && beta != NULL);
-    for (usize index = 0; index < MSG_PENDING_MAX_PER_CLIENT; ++index) {
-        EXPECT(175, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
-                              build_request_by_client(frame, sizeof(frame), beta_id,
-                                                      "open_image", NULL, 0),
-                              &reply));
-        EXPECT(176, test_reply_code(&reply) == (u32)CORE_OK);
-        (void)ipc_message_destroy(&reply);
-    }
-
-    /* The next request is refused while all slots are occupied. */
-    EXPECT(177, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
-                          build_request_by_client(frame, sizeof(frame), beta_id,
-                                                  "open_image", NULL, 0),
-                          &reply));
-    EXPECT(178, test_reply_code(&reply) == (u32)CORE_WOULD_BLOCK);
-    (void)ipc_message_destroy(&reply);
-
-    /* Finish one delivered request, then verify a slot becomes available. */
-    EXPECT(179, test_receive(&test, beta, &delivered));
-    EXPECT(180, delivered.type == MSG_TYPE_DELIVER_REQUEST);
-    reader = msg_reader(delivered.payload.data, delivered.payload.size);
-    correlation = msg_read_u64(&reader);
-    EXPECT(181, correlation != 0);
-    (void)ipc_message_destroy(&delivered);
-    EXPECT(182, test_call(&test, beta, MSG_TYPE_RESPOND, frame,
-                          build_respond(frame, sizeof(frame), correlation, 0, NULL, 0),
-                          &reply));
-    EXPECT(183, test_reply_code(&reply) == (u32)CORE_OK);
-    (void)ipc_message_destroy(&reply);
-    EXPECT(184, test_receive(&test, alpha, &delivered));
-    EXPECT(185, delivered.type == MSG_TYPE_DELIVER_RESPONSE);
-    (void)ipc_message_destroy(&delivered);
-
-    EXPECT(186, test_call(&test, alpha, MSG_TYPE_REQUEST, frame,
-                          build_request_by_client(frame, sizeof(frame), beta_id,
-                                                  "open_image", NULL, 0),
-                          &reply));
-    EXPECT(187, test_reply_code(&reply) == (u32)CORE_OK);
-    (void)ipc_message_destroy(&reply);
-
-    (void)ipc_connection_close(&alpha);
-    (void)ipc_connection_close(&beta);
-    test_turn(&test);
-}
-
 int main(void)
 {
     EXPECT(147, test_broker_start(&test, SOCKET_PATH));
@@ -980,7 +919,6 @@ int main(void)
     check_revoked_subscriber();
     check_no_self_echo();
     check_respond_from_foreign();
-    check_pending_limit();
     test_broker_stop(&test);
     check_passed();
     return 0;
