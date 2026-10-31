@@ -25,6 +25,39 @@ make -C System/SystemServices/msgserv check
 make -C System/SystemServices/msgserv runtime-test
 ```
 
+## Как проверить обмен
+
+Текущий контракт `msgserv` — обмен между приложениями одной системы PUNos
+через локальный IPC (`AF_UNIX`). Сетевого транспорта между машинами или
+подсетями в v1 нет. Поэтому проверка брокера — это несколько независимых
+клиентов-приложений, подключённых к одному процессу `msgserv`:
+
+- `make -C System/SystemServices/msgserv check-unit` проверяет маршрутизацию,
+  подписки, права, `client_id`, корреляцию запросов и ответы, таймауты и
+  отключения на настоящем `ipclib` и event loop.
+- `make -C System/SystemServices/msgserv check-protocol` проверяет границы
+  кадров и отклонение повреждённых или неподдерживаемых сообщений.
+- `make -C System/SystemServices/msgserv check-faults` проверяет обработку
+  отказов памяти и IPC.
+- `make -C System/SystemServices/msgserv check-generator` проверяет каталог
+  прав и генерацию секретов.
+- `make -C System/SystemServices/msgserv check-integration` запускает настоящий
+  процесс брокера с несколькими AF_UNIX-клиентами и проверяет публикацию,
+  запрос/ответ, права, переполнение очередей и журналирование.
+- `make -C System/ApplicationLayer/appframework check-system` включает
+  `tests/system/messaging_integration.py`: несколько отдельных процессов
+  `appframework` обмениваются событиями и запросами через реальный брокер;
+  проверяются также переподключение и восстановление подписок после
+  перезапуска `msgserv`.
+
+Успешная публикация должна показать `delivered=2`, а оба подписчика должны
+получить событие с ожидаемым topic и payload. Для request/response проверяются
+`correlation_id`, status и payload; межлежащий event не должен приниматься за
+ответ. Эти проверки доказывают взаимодействие приложений через брокер внутри
+одного экземпляра PUNos. Для доказательства обмена между машинами потребуется
+отдельный сетевой транспорт и отдельный сетевой интеграционный тест — текущая
+реализация такого поведения не обещает.
+
 `PUNOS_DIR` по умолчанию `../../..`, `REGISTRY` и `METADATA` — файлы
 `System/SystemServices/`. Цель `setup` проверяет, что дерево PUNos на месте,
 и заменяет прежнюю `vendor`: снапшот больше не подтягивается из сети.
