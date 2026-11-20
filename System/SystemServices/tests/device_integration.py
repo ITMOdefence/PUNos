@@ -193,7 +193,8 @@ def test_camera(directory, log_endpoint, journal):
             assert recv(first) == (6, b'\0' * 4)
             first.sendall(frame(5))
             assert recv(first) == (6, struct.pack('<I', 3))
-            first.sendall(frame(3, b'\x02\x00'))
+            # V2 is supported; V3 remains an unsupported subscription.
+            first.sendall(frame(3, b'\x03\x00'))
             assert recv(first) == (4, struct.pack('<I', 12))
             first.sendall(frame(99))
             assert recv(first) == (10, struct.pack('<I', 1))

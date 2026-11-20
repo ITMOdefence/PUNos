@@ -71,7 +71,7 @@ ErrorCode camera_configure(CameraHandle camera, const CameraStreamConfig *reques
     trace("configure\n");
     if (camera->scenario == 3) return CORE_UNSUPPORTED;
     *actual = *requested;
-    actual->max_frame_bytes = camera->scenario == 2 ? IPC_MESSAGE_MAX_SIZE :
+    actual->max_frame_bytes = camera->scenario == 2 ? (16u * 1024u * 1024u + 1u) :
                               camera->scenario == 7 ? 262144 :
                               camera->scenario == 9 ? IPC_MESSAGE_MAX_SIZE - 20 : 4;
     camera->max_bytes = actual->max_frame_bytes;
