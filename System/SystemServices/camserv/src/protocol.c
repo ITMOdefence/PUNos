@@ -11,7 +11,7 @@ ErrorCode cam_request_error(const IpcMessage *request, u32 *out_result_type)
     case CAM_SUBSCRIBE:
         *out_result_type = CAM_SUBSCRIBE_RESULT;
         if (request->payload.size != 2) return CORE_INVALID_ARGUMENT;
-        return wire_read(request->payload.data, 2) == 1 ? CORE_OK : CORE_UNSUPPORTED;
+        return wire_read(request->payload.data, 2) == 1 || wire_read(request->payload.data, 2) == 2 ? CORE_OK : CORE_UNSUPPORTED;
     case CAM_UNSUBSCRIBE:
         *out_result_type = CAM_UNSUBSCRIBE_RESULT;
         return request->payload.size == 0 ? CORE_OK : CORE_INVALID_ARGUMENT;

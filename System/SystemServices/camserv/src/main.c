@@ -19,6 +19,7 @@ typedef struct Client {
     IpcConnectionHandle connection;
     EventSourceId source;
     bool subscribed;
+    bool shared, snapshot_sent;
     bool buffered;
 } Client;
 
@@ -188,6 +189,10 @@ static ErrorCode request(CameraService *service, Client *client, const IpcMessag
         error = CORE_INVALID_STATE;
     if (error == CORE_OK && message->type == CAM_UNSUBSCRIBE && !client->subscribed)
         error = CORE_INVALID_STATE;
+    if (error == CORE_OK && message->type == CAM_SUBSCRIBE &&
+        wire_read(message->payload.data, 2) == 1 &&
+        service->config.max_frame_bytes > IPC_MESSAGE_MAX_SIZE - CAM_FRAME_HEADER_SIZE)
+        error = CORE_UNSUPPORTED;
     if (error != CORE_OK) (void)service_logger_record(&service->logger, "rejected IPC request", error);
     if (result_type == CAM_GET_INFO_RESULT) {
         cam_encode_info(bytes, error, error == CORE_OK ? &service->config : NULL);
@@ -198,7 +203,10 @@ static ErrorCode request(CameraService *service, Client *client, const IpcMessag
     if (error == CORE_OK && message->type == CAM_SUBSCRIBE) {
         cam_encode_config(bytes, &service->config);
         sent = queue(client, CAM_READY, bytes, CAM_CONFIG_SIZE);
-        if (sent == CORE_OK) client->subscribed = true;
+        if (sent == CORE_OK) {
+            client->subscribed = true; client->snapshot_sent = false;
+            client->shared = wire_read(message->payload.data, 2) == 2;
+        }
     } else if (error == CORE_OK && message->type == CAM_UNSUBSCRIBE)
         client->subscribed = false;
     return sent;
@@ -230,7 +238,7 @@ static void broadcast(CameraService *service, u32 type, u8 *bytes, usize size)
     while (*link) {
         Client *client = *link;
         ErrorCode error = CORE_OK;
-        if (client->subscribed) {
+        if (client->subscribed && (type != CAM_FRAME || !client->shared)) {
             error = queue(client, type, bytes, size);
             if (error == CORE_OK) error = flush_client(service, client);
         }
@@ -239,6 +247,37 @@ static void broadcast(CameraService *service, u32 type, u8 *bytes, usize size)
             close_client(service, link);
         } else link = &client->next;
     }
+}
+
+static ErrorCode broadcast_snapshot(CameraService *service, const CameraFrame *frame)
+{
+    SharedMemory shared = { .fd = -1 };
+    u8 bytes[CAM_FRAME_HEADER_SIZE];
+    ErrorCode error;
+    bool needed = false;
+    for (Client *c = service->clients; c; c = c->next)
+        if (c->subscribed && c->shared && !c->snapshot_sent) needed = true;
+    if (!needed) return CORE_OK;
+    if (frame->timestamp > ((u64)-1) / 1000000u) return CORE_OVERFLOW;
+    error = memory_shared_create(frame->data.size, &shared);
+    if (error != CORE_OK) return error;
+    for (usize n = 0; n < frame->data.size; ++n) shared.data[n] = frame->data.data[n];
+    wire_write(bytes, 8, frame->sequence);
+    wire_write(bytes + 8, 8, frame->timestamp * 1000000u);
+    wire_write(bytes + 16, 4, frame->data.size);
+    Client **link = &service->clients;
+    while (*link) {
+        Client *c = *link;
+        error = CORE_OK;
+        if (c->subscribed && c->shared && !c->snapshot_sent) {
+            IpcMessage message = { CAM_FRAME_SHARED, { bytes, sizeof(bytes) } };
+            error = ipc_connection_send_with_descriptor(c->connection, &message, shared.fd);
+            if (error == CORE_OK) { c->snapshot_sent = true; error = flush_client(service, c); }
+        }
+        if (error != CORE_OK) close_client(service, link);
+        else link = &c->next;
+    }
+    return memory_shared_close(&shared);
 }
 
 static void read_camera(CameraService *service)
@@ -261,18 +300,23 @@ static void read_camera(CameraService *service)
             return;
         }
         if (frame.data.size > service->config.max_frame_bytes ||
-            frame.data.size > IPC_MESSAGE_MAX_SIZE - CAM_FRAME_HEADER_SIZE) {
+            frame.data.size > CAM_SNAPSHOT_MAX_SIZE) {
             (void)service_logger_record(&service->logger, "oversized camera frame", CORE_OVERFLOW);
         } else if (service->clients) {
             MemoryBlock block;
             usize size;
-            error = memory_allocate(CAM_FRAME_HEADER_SIZE + frame.data.size, &block);
+            error = broadcast_snapshot(service, &frame);
+            if (error != CORE_OK) (void)service_logger_record(&service->logger, "shared frame failed", error);
+            block = (MemoryBlock){0};
+            if (frame.data.size <= IPC_MESSAGE_MAX_SIZE - CAM_FRAME_HEADER_SIZE)
+                error = memory_allocate(CAM_FRAME_HEADER_SIZE + frame.data.size, &block);
+            else error = CORE_WOULD_BLOCK;
             if (error == CORE_OK) {
                 error = cam_encode_frame(block.data, block.size, &frame, &size);
                 if (error == CORE_OK) broadcast(service, CAM_FRAME, block.data, size);
                 (void)memory_free(&block);
             }
-            if (error != CORE_OK)
+            if (error != CORE_OK && error != CORE_WOULD_BLOCK)
                 (void)service_logger_record(&service->logger, "camera frame failed", error);
         }
         error = camera_frame_release(service->camera, &frame);
@@ -321,9 +365,9 @@ int main(int argc, char **argv, char **envp)
     }
     error = camera_configure(service.camera, &requested, &service.config);
     if (error != CORE_OK || service.config.max_frame_bytes == 0 ||
-        service.config.max_frame_bytes > IPC_MESSAGE_MAX_SIZE - CAM_FRAME_HEADER_SIZE) {
-        (void)service_logger_record(&service.logger, "camera configuration failed",
-                                    error == CORE_OK ? CORE_UNSUPPORTED : error);
+        service.config.max_frame_bytes > CAM_SNAPSHOT_MAX_SIZE) {
+        if (error == CORE_OK) error = CORE_UNSUPPORTED;
+        (void)service_logger_record(&service.logger, "camera configuration failed", error);
         goto cleanup;
     }
     error = camera_start(service.camera);

@@ -130,3 +130,15 @@ ErrorCode thread_join(ThreadHandle *thread, ThreadExitStatus *out_status)
     *thread = NULL;
     return CORE_OK;
 }
+
+ErrorCode thread_try_join(ThreadHandle *thread, ThreadExitStatus *out_status)
+{
+    ThreadHandle handle;
+    if (!thread || !*thread || !out_status) return CORE_INVALID_ARGUMENT;
+    handle = *thread;
+    if (__atomic_load_n(&handle->tid, __ATOMIC_ACQUIRE) != 0) return CORE_WOULD_BLOCK;
+    *out_status = __atomic_load_n(&handle->result, __ATOMIC_ACQUIRE);
+    release(handle);
+    *thread = NULL;
+    return CORE_OK;
+}

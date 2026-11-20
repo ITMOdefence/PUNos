@@ -51,7 +51,9 @@ int main(int argc, char **argv, char **envp)
     u32 type;
     EXPECT(9, cam_request_error(&request, &type) == CORE_OK && type == CAM_SUBSCRIBE_RESULT);
     version[0] = 2;
-    EXPECT(10, cam_request_error(&request, &type) == CORE_UNSUPPORTED);
+    EXPECT(10, cam_request_error(&request, &type) == CORE_OK);
+    version[0] = 3;
+    EXPECT(18, cam_request_error(&request, &type) == CORE_UNSUPPORTED);
     request.payload.size = 1;
     EXPECT(11, cam_request_error(&request, &type) == CORE_INVALID_ARGUMENT);
     request.type = 99;

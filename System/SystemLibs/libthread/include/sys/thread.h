@@ -66,4 +66,8 @@ ErrorCode thread_create(ThreadEntry entry, void *argument, ThreadHandle *out_thr
  */
 ErrorCode thread_join(ThreadHandle *thread, ThreadExitStatus *out_status);
 
+/* Nonblocking join. CORE_WOULD_BLOCK preserves the handle and status when
+ * the kernel has not yet cleared the thread id. Otherwise matches join(). */
+ErrorCode thread_try_join(ThreadHandle *thread, ThreadExitStatus *out_status);
+
 #endif

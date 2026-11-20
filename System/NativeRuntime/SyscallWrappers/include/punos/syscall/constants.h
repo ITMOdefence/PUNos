@@ -10,6 +10,11 @@
 #define O_RDONLY 0
 #define O_WRONLY 1
 #define O_RDWR 2
+#define O_EXCL 128
+#define O_DIRECTORY 65536
+#define O_NOFOLLOW 131072
+#define AT_REMOVEDIR 512
+#define EXT4_SUPER_MAGIC 0xef53
 #define O_CREAT 64
 #define O_TRUNC 512
 #define O_APPEND 1024

@@ -9,6 +9,7 @@ BUILD_DIR="${SYSTEM_DIR}/linux-build"
 
 VERSION_FILE="${KERNEL_DIR}/version"
 CONFIG_FILE="${KERNEL_DIR}/configs/x86_64.config"
+PLATFORM_CONFIG="${KERNEL_DIR}/configs/platform.config"
 
 if [[ ! -f "${VERSION_FILE}" ]]; then
     echo "Kernel version file not found: ${VERSION_FILE}" >&2
@@ -27,6 +28,10 @@ fi
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "Kernel configuration not found: ${CONFIG_FILE}" >&2
+    exit 1
+fi
+if [[ ! -f "${PLATFORM_CONFIG}" ]]; then
+    echo "Platform kernel configuration not found: ${PLATFORM_CONFIG}" >&2
     exit 1
 fi
 
@@ -51,12 +56,20 @@ if [[ ! "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 mkdir -p "${BUILD_DIR}"
-cp "${CONFIG_FILE}" "${BUILD_DIR}/.config"
+bash "${SOURCE_DIR}/scripts/kconfig/merge_config.sh" -m -O "${BUILD_DIR}" \
+    "${CONFIG_FILE}" "${PLATFORM_CONFIG}"
 
 echo "Preparing Linux ${KERNEL_VERSION} configuration..."
 make --directory "${SOURCE_DIR}" \
     O="${BUILD_DIR}" \
     olddefconfig
+
+while IFS= read -r setting; do
+    if [[ "${setting}" == CONFIG_*=y ]] && ! grep -Fxq "${setting}" "${BUILD_DIR}/.config"; then
+        echo "Required platform feature was disabled by Kconfig: ${setting}" >&2
+        exit 1
+    fi
+done < "${PLATFORM_CONFIG}"
 
 echo "Building Linux ${KERNEL_VERSION} with ${BUILD_JOBS} jobs..."
 make --directory "${SOURCE_DIR}" \

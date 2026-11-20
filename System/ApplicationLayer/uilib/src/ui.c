@@ -62,6 +62,7 @@ struct UiViewHandle {
     u64 configure_serial;
     u64 commit_serial;
     u64 pending_commit_request;
+    u64 pending_configure_serial;
     GuiWindowConfigureEvent latest_configure;
     bool has_configure;
     u16 damage_count;
@@ -388,7 +389,8 @@ static ErrorCode dispatch_compositor(struct UiContextHandle *context,
                 fail_view(view, response.error);
                 return CORE_OK;
             }
-            if (view->configure_serial != 0 && context->window.open) {
+            if (view->configure_serial != 0 &&
+                view->pending_configure_serial == view->configure_serial && context->window.open) {
                 u8 payload[32];
                 usize size;
                 GuiWindowAckConfigureRequest ack = {
@@ -542,6 +544,7 @@ static ErrorCode dispatch_window(struct UiContextHandle *context,
         if (view != NULL) {
             view->latest_configure = value;
             view->has_configure = true;
+            view->configure_serial = value.configure_serial;
             if (view->configured &&
                 (view->width != value.width || view->height != value.height))
                 destroy_buffer_pool(view, true);
@@ -648,8 +651,8 @@ static ErrorCode connection_close(UiConnection *connection)
     if (!connection->context->stopping && connection->open)
         suspend_connection(connection);
     if (connection->source != 0) {
-        keep_first(&result, app_event_remove(connection->context->app,
-                                             connection->source));
+        ErrorCode error = app_event_remove(connection->context->app, connection->source);
+        if (error != CORE_OK) return error;
         connection->source = 0;
     }
     if (connection->ipc != NULL) {
@@ -681,7 +684,7 @@ static void suspend_connection(UiConnection *connection)
         view->request_id = 0;
         view->state = UI_VIEW_WAITING_CONNECTIONS;
         emit(view, (UiEvent){ .kind = UI_EVENT_SERVICE_ERROR,
-                              .error = CORE_IO_ERROR });
+                              .error = CORE_IO_ERROR, .recoverable = true });
     }
 }
 
@@ -891,6 +894,14 @@ ErrorCode ui_view_acquire_buffer(UiViewHandle view,
     return CORE_WOULD_BLOCK;
 }
 
+ErrorCode ui_view_release_buffer(UiViewHandle view, UiBufferHandle buffer)
+{
+    if (!view || !buffer || buffer->view != view || buffer->state != UI_BUFFER_ACQUIRED)
+        return CORE_INVALID_STATE;
+    buffer->state = UI_BUFFER_FREE;
+    return CORE_OK;
+}
+
 ErrorCode ui_view_damage(UiViewHandle view, const GuiRect *rects,
                          usize count)
 {
@@ -962,6 +973,7 @@ ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer)
 
     if (result == CORE_OK) {
         view->pending_commit_request = commit.prefix.request_id;
+        view->pending_configure_serial = view->configure_serial;
         buffer->state = UI_BUFFER_SUBMITTED;
         view->damage_count = 0;
     }
@@ -1114,6 +1126,17 @@ ErrorCode ui_view_destroy(UiViewHandle *view)
     return result;
 }
 
+ErrorCode ui_after_app_destroy(UiContextHandle context)
+{
+    if (!context) return CORE_INVALID_ARGUMENT;
+    context->stopping = true;
+    context->app = NULL;
+    context->reconnect_source = 0;
+    context->window.source = context->compositor.source = 0;
+    context->window.open = context->compositor.open = false;
+    return CORE_OK;
+}
+
 ErrorCode ui_shutdown(UiContextHandle *context)
 {
     struct UiContextHandle *handle;
@@ -1125,14 +1148,16 @@ ErrorCode ui_shutdown(UiContextHandle *context)
     if (handle->views != NULL) return CORE_INVALID_STATE;
     handle->stopping = true;
     if (handle->reconnect_source != 0) {
-        keep_first(&result, app_event_remove(handle->app,
-                                             handle->reconnect_source));
+        result = app_event_remove(handle->app, handle->reconnect_source);
+        if (result != CORE_OK) return result;
         handle->reconnect_source = 0;
     }
-    keep_first(&result, connection_close(&handle->window));
-    keep_first(&result, connection_close(&handle->compositor));
+    result = connection_close(&handle->window);
+    if (result != CORE_OK) return result;
+    result = connection_close(&handle->compositor);
+    if (result != CORE_OK) return result;
     block = handle->block;
-    keep_first(&result, memory_free(&block));
-    *context = NULL;
+    result = memory_free(&block);
+    if (result == CORE_OK) *context = NULL;
     return result;
 }

@@ -158,3 +158,22 @@ protocol: bind, create system roles, activate, set insets и navigate. Эти
 | `CORE_WOULD_BLOCK` | Нет buffer или заполнена IPC-очередь |
 | `CORE_IO_ERROR` | Shared memory, IPC или повреждённое сообщение |
 | `CORE_UNSUPPORTED` | Версия, формат, role или возможность не поддерживается |
+
+## Расширения для платформенного адаптера GVM
+
+В локальной ветке `codex/platform-api-albc3`:
+
+- `ui_view_release_buffer(view, buffer)` возвращает acquired, ещё не
+  submitted буфер в свободный пул без present.
+- `UiEvent.recoverable` у SERVICE_ERROR отмечает временную потерю сервиса.
+  Клиент сохраняет модель, прекращает доступ к mappings и ждёт восстановления.
+  Окончательные ошибки view имеют recoverable=false.
+- configure serial обновляется и при неизменном размере. ACK относится только
+  к configure serial кадра, для которого принят commit result.
+- `ui_shutdown` сохраняет context при ошибке удаления источников/освобождения
+  памяти для повторной очистки. Callback прекращённого context ничего не делает.
+- `ui_after_app_destroy(context)` отсоединяет source IDs уже уничтоженного
+  AppHandle. Вызывать только после app_destroy и прекращения callbacks, перед
+  повторной очисткой view/context. UI-owned IPC закрывается при shutdown.
+
+Эти ветки проверены синтаксически, runtime-тесты переданы тестировщику.

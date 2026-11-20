@@ -38,6 +38,9 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Platform launch arguments
+        run: python3 -m unittest discover -s System/scripts/tests -v
+
       - name: Syscall Wrappers
         run: make -C System/NativeRuntime/SyscallWrappers check
 

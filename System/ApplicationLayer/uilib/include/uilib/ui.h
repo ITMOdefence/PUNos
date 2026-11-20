@@ -40,6 +40,8 @@ typedef enum UiEventKind {
 typedef struct UiEvent {
     UiEventKind kind;
     ErrorCode error;
+    /* SERVICE_ERROR: true while automatic service reconnection is pending. */
+    bool recoverable;
     union {
         GuiWindowConfigureEvent configure;
         GuiWindowLifecycleEvent lifecycle;
@@ -95,6 +97,9 @@ ErrorCode ui_view_destroy(UiViewHandle *view);
 
 ErrorCode ui_view_acquire_buffer(UiViewHandle view,
                                  UiMappedBuffer *out_mapping);
+/* Returns an unsubmitted acquired buffer to the pool, without presenting. */
+ErrorCode ui_view_release_buffer(UiViewHandle view, UiBufferHandle buffer);
+
 ErrorCode ui_view_damage(UiViewHandle view, const GuiRect *rects,
                          usize count);
 ErrorCode ui_view_present(UiViewHandle view, UiBufferHandle buffer);
@@ -106,7 +111,12 @@ ErrorCode ui_view_respond_close(UiViewHandle view, u64 close_serial,
 ErrorCode ui_get_latest_configure(UiViewHandle view,
                                   GuiWindowConfigureEvent *out_configure);
 
-/* Removes event sources, closes both GUI connections and clears the handle. */
+/* After AppHandle was destroyed, detach its invalid source ids before retrying
+ * shutdown. No callbacks may run. Does not close UI-owned IPC descriptors. */
+ErrorCode ui_after_app_destroy(UiContextHandle context);
+
+/* Removes event sources, closes both GUI connections and clears the handle.
+ * On failure retains the context and remaining ownership for a retry. */
 ErrorCode ui_shutdown(UiContextHandle *context);
 
 #endif

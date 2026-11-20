@@ -385,3 +385,33 @@ _Noreturn void exit(i32 status)
 {
     __punos_raw_exit_group(status);
 }
+
+i32 openat(i32 directory, const char *path, i32 flags, mode_t mode)
+{
+    return (i32)__punos_syscall_result(__punos_syscall4(
+        PUNOS_SYS_OPENAT, (unsigned long)directory, (unsigned long)path, (unsigned long)flags, (unsigned long)mode));
+}
+
+i32 mkdirat(i32 directory, const char *path, mode_t mode)
+{
+    return (i32)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_MKDIRAT, (unsigned long)directory, (unsigned long)path, (unsigned long)mode));
+}
+
+i32 unlinkat(i32 directory, const char *path, i32 flags)
+{
+    return (i32)__punos_syscall_result(__punos_syscall3(
+        PUNOS_SYS_UNLINKAT, (unsigned long)directory, (unsigned long)path, (unsigned long)flags));
+}
+
+i32 renameat(i32 old_directory, const char *old_path, i32 new_directory, const char *new_path)
+{
+    return (i32)__punos_syscall_result(__punos_syscall4(
+        PUNOS_SYS_RENAMEAT, (unsigned long)old_directory, (unsigned long)old_path, (unsigned long)new_directory, (unsigned long)new_path));
+}
+
+i32 fstatfs(i32 fd, struct statfs *info)
+{
+    return (i32)__punos_syscall_result(__punos_syscall2(
+        PUNOS_SYS_FSTATFS, (unsigned long)fd, (unsigned long)info));
+}

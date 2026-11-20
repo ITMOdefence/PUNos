@@ -63,6 +63,16 @@ struct stat {
     i64 __unused[3];
 };
 
+/* Linux x86_64 statfs ABI (120 bytes). */
+struct statfs {
+    i64 f_type, f_bsize;
+    u64 f_blocks, f_bfree, f_bavail, f_files, f_ffree;
+    i32 f_fsid[2];
+    i64 f_namelen, f_frsize, f_flags, f_spare[4];
+};
+
+_Static_assert(sizeof(struct statfs) == 120, "statfs ABI mismatch");
+
 struct sockaddr {
     u16 sa_family;
     char sa_data[14];

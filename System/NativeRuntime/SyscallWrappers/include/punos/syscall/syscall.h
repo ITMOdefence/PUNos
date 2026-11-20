@@ -13,6 +13,11 @@ i32 kill(pid_t pid, i32 signal);
 
 i32 open(const char *path, i32 flags, mode_t mode);
 i32 close(i32 fd);
+i32 openat(i32 directory, const char *path, i32 flags, mode_t mode);
+i32 mkdirat(i32 directory, const char *path, mode_t mode);
+i32 unlinkat(i32 directory, const char *path, i32 flags);
+i32 renameat(i32 old_directory, const char *old_path, i32 new_directory, const char *new_path);
+i32 fstatfs(i32 fd, struct statfs *info);
 ssize_t read(i32 fd, void *buffer, size_t count);
 ssize_t write(i32 fd, const void *buffer, size_t count);
 i64 lseek(i32 fd, off_t offset, i32 origin);

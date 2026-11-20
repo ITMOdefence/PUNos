@@ -105,3 +105,14 @@
 | `thread_current_id(out_thread_id)` | `ThreadId *out_thread_id` | `ErrorCode` | Получает идентификатор текущего потока через `gettid()` |
 | `thread_create(entry, argument, out_thread)` | `ThreadEntry entry`, `void *argument`, `ThreadHandle *out_thread` | `ErrorCode` | Выделяет стек и RuntimeThreadState через `libmem`, создаёт поток через `clone()` и запускает внутренний trampoline, который вызывает `entry` |
 | `thread_join(thread, out_status)` | `ThreadHandle *thread`, `ThreadExitStatus *out_status` | `ErrorCode` | Ожидает обнуления TID ядром через `futex()`, возвращает код `ThreadEntry`, освобождает ресурсы и записывает `NULL` |
+
+## Расширение платформенной ветки
+
+`thread_try_join(ThreadHandle *, ThreadExitStatus *)` проверяет очищенный
+ядром TID. Если поток ещё работает, возвращает `CORE_WOULD_BLOCK`, сохраняя
+handle и выходной статус. При завершённом потоке получает результат,
+освобождает стек/handle и обнуляет handle. Успешный `thread_try_join`
+заменяет единственный `thread_join`. Повторное завершение одного handle
+недопустимо. Это расширение используется файловым адаптером GVM, чтобы
+цикл appframework не ожидал работающий поток. Выполнена синтаксическая
+проверка, выполнение новых веток передано специалисту по тестированию.

@@ -58,6 +58,40 @@ static void required_mount(const char *source, const char *target,
     }
 }
 
+static int persistent_data_requested(void)
+{
+    static const char option[] = "punos.data=/dev/vda";
+    char command_line[4096];
+    i32 file = open("/proc/cmdline", O_RDONLY, 0);
+    if (file < 0) failed("open kernel command line", errno);
+    ssize_t count;
+    do {
+        count = read(file, command_line, sizeof(command_line) - 1);
+    } while (count < 0 && errno == EINTR);
+    i32 error = errno;
+    (void)close(file);
+    if (count < 0) failed("read kernel command line", error);
+    command_line[count] = '\0';
+    for (size_t start = 0; start < (size_t)count; ++start) {
+        if (start != 0 && command_line[start - 1] != ' ') continue;
+        size_t index = 0;
+        while (option[index] != '\0' && command_line[start + index] == option[index]) ++index;
+        if (option[index] == '\0' &&
+            (command_line[start + index] == ' ' || command_line[start + index] == '\n' ||
+             command_line[start + index] == '\0')) return 1;
+    }
+    return 0;
+}
+
+static void mount_persistent_data(void)
+{
+    if (!persistent_data_requested()) return;
+    if (mkdir("/data", 0755) != 0 && errno != EEXIST) failed("create /data", errno);
+    required_mount("/dev/vda", "/data", "ext4", MS_NOSUID | MS_NODEV);
+    if (mkdir("/data/apps", 0755) != 0 && errno != EEXIST) failed("create /data/apps", errno);
+    console_text("PUNos init: persistent data ready\n");
+}
+
 int main(int argc, char **argv, char **envp)
 {
     pid_t initserv_pid;
@@ -76,6 +110,7 @@ int main(int argc, char **argv, char **envp)
     required_mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID);
     required_mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC);
     required_mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NODEV | MS_NOEXEC);
+    mount_persistent_data();
     required_mount("tmpfs", "/run", "tmpfs", MS_NOSUID | MS_NODEV);
     if (mkdir("/run/punos", 0755) != 0 && errno != EEXIST) {
         failed("/run/punos", errno);
